@@ -1,0 +1,71 @@
+syntax = "proto3";
+package hashgram.welcome.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "hashgram/welcome/v1/welcome.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/welcome/types";
+
+// Msg is the x/welcome message service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // ClaimWelcome pays a welcome reward to the subject of a valid eligibility
+  // attestation.
+  //
+  // The sender and the subject are separate on purpose. A brand-new user has
+  // a zero balance and cannot pay gas, so someone else must be able to
+  // submit the claim on their behalf. The reward always goes to the
+  // attestation's subject, never to the sender.
+  rpc ClaimWelcome(MsgClaimWelcome) returns (MsgClaimWelcomeResponse);
+
+  // UpdateParams changes the welcome configuration and attestor set.
+  // Governance only.
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+}
+
+// MsgClaimWelcome claims a welcome reward.
+message MsgClaimWelcome {
+  option (cosmos.msg.v1.signer) = "sender";
+  option (amino.name) = "hashgram/MsgClaimWelcome";
+
+  // sender pays the gas. It has no influence on the destination.
+  string sender = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // attestation is the signed eligibility statement.
+  EligibilityAttestation attestation = 2 [(gogoproto.nullable) = false];
+}
+
+// MsgClaimWelcomeResponse reports the paid reward.
+message MsgClaimWelcomeResponse {
+  // subject is the address that was paid.
+  string subject = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // sequence is the position this claim took in the global ordering.
+  uint64 sequence = 2;
+
+  // amount is what was paid.
+  repeated cosmos.base.v1beta1.Coin amount = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgUpdateParams changes the welcome configuration.
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "hashgram/MsgUpdateWelcomeParams";
+
+  // authority must be the governance module account.
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  Params params = 2 [(gogoproto.nullable) = false];
+}
+
+// MsgUpdateParamsResponse is the response type.
+message MsgUpdateParamsResponse {}

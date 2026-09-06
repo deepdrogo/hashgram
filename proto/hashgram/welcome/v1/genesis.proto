@@ -1,0 +1,38 @@
+syntax = "proto3";
+package hashgram.welcome.v1;
+
+import "gogoproto/gogo.proto";
+import "hashgram/welcome/v1/welcome.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/welcome/types";
+
+// GenesisState is the x/welcome genesis state.
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+
+  // next_sequence is the sequence number the next successful claim receives.
+  // A fresh chain starts at 1, so the first eligible user is user number 1.
+  uint64 next_sequence = 2;
+
+  // claims is the record of every paid reward. Empty at genesis; populated
+  // when restoring an exported chain.
+  repeated ClaimRecord claims = 3 [(gogoproto.nullable) = false];
+
+  // used_nonces records consumed attestation nonces so that an exported and
+  // restored chain does not accept a replay that the original chain had
+  // already rejected.
+  repeated UsedNonce used_nonces = 4 [(gogoproto.nullable) = false];
+
+  // total_paid is the cumulative payout. Derivable from claims, but carried
+  // explicitly so that export and import are exact rather than recomputed.
+  TotalPaid total_paid = 5 [(gogoproto.nullable) = false];
+
+  // claims_paid is the number of rewards paid.
+  uint64 claims_paid = 6;
+}
+
+// UsedNonce is a consumed (attestor, nonce) pair.
+message UsedNonce {
+  string attestor = 1;
+  uint64 nonce = 2;
+}

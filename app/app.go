@@ -112,6 +112,9 @@ import (
 	"github.com/hashgram/hashgram/x/network"
 	networkkeeper "github.com/hashgram/hashgram/x/network/keeper"
 	networktypes "github.com/hashgram/hashgram/x/network/types"
+	"github.com/hashgram/hashgram/x/welcome"
+	welcomekeeper "github.com/hashgram/hashgram/x/welcome/keeper"
+	welcometypes "github.com/hashgram/hashgram/x/welcome/types"
 )
 
 // BuildDate is stamped by the linker; see the Makefile.
@@ -145,6 +148,7 @@ var maccPerms = map[string][]string{
 	// forward coins that already exist and can neither mint nor burn.
 	foundertypes.ModuleName:   nil,
 	feeroutertypes.ModuleName: nil,
+	welcometypes.ModuleName:   nil,
 }
 
 var (
@@ -180,6 +184,7 @@ type HashgramApp struct {
 	NetworkKeeper   networkkeeper.Keeper
 	FounderKeeper   founderkeeper.Keeper
 	FeeRouterKeeper feerouterkeeper.Keeper
+	WelcomeKeeper   welcomekeeper.Keeper
 
 	ModuleManager      *module.Manager
 	BasicModuleManager module.BasicManager
@@ -251,6 +256,7 @@ func NewHashgramApp(
 		networktypes.StoreKey,
 		foundertypes.StoreKey,
 		feeroutertypes.StoreKey,
+		welcometypes.StoreKey,
 	)
 
 	if err := bApp.RegisterStreamingServices(appOpts, keys); err != nil {
@@ -438,6 +444,19 @@ func NewHashgramApp(
 		logger,
 	)
 
+	// x/welcome depends on x/network for the domain-separated digest an
+	// eligibility attestation is signed over, so that an attestation minted
+	// on a devnet or a fork cannot verify here.
+	app.WelcomeKeeper = welcomekeeper.NewKeeper(
+		appCodec,
+		runtime.NewKVStoreService(keys[welcometypes.StoreKey]),
+		app.AccountKeeper,
+		app.BankKeeper,
+		app.NetworkKeeper,
+		govAuthority,
+		logger,
+	)
+
 	// ---------------------------------------------------------------------
 	// Module manager
 	// ---------------------------------------------------------------------
@@ -461,6 +480,7 @@ func NewHashgramApp(
 		network.NewAppModule(appCodec, app.NetworkKeeper),
 		founder.NewAppModule(appCodec, app.FounderKeeper),
 		feerouter.NewAppModule(appCodec, app.FeeRouterKeeper),
+		welcome.NewAppModule(appCodec, app.WelcomeKeeper),
 	)
 
 	app.BasicModuleManager = module.NewBasicManagerFromManager(
@@ -533,12 +553,14 @@ func NewHashgramApp(
 		consensusparamtypes.ModuleName,
 		foundertypes.ModuleName,
 		feeroutertypes.ModuleName,
+		welcometypes.ModuleName,
 	)
 
 	app.ModuleManager.SetOrderExportGenesis(
 		networktypes.ModuleName,
 		foundertypes.ModuleName,
 		feeroutertypes.ModuleName,
+		welcometypes.ModuleName,
 		consensusparamtypes.ModuleName,
 		authtypes.ModuleName,
 		banktypes.ModuleName,

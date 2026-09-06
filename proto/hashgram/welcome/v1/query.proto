@@ -1,0 +1,134 @@
+syntax = "proto3";
+package hashgram.welcome.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "hashgram/welcome/v1/welcome.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/welcome/types";
+
+// Query is the x/welcome query service.
+service Query {
+  // Params returns the welcome configuration and attestor set.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/hashgram/welcome/v1/params";
+  }
+
+  // Status returns the current sequence, tier, remaining pool and totals.
+  rpc Status(QueryStatusRequest) returns (QueryStatusResponse) {
+    option (google.api.http).get = "/hashgram/welcome/v1/status";
+  }
+
+  // Tiers returns the full reward schedule.
+  rpc Tiers(QueryTiersRequest) returns (QueryTiersResponse) {
+    option (google.api.http).get = "/hashgram/welcome/v1/tiers";
+  }
+
+  // Claim returns the claim record for an address, if any.
+  rpc Claim(QueryClaimRequest) returns (QueryClaimResponse) {
+    option (google.api.http).get = "/hashgram/welcome/v1/claim/{subject}";
+  }
+
+  // Claims returns paginated claim records.
+  rpc Claims(QueryClaimsRequest) returns (QueryClaimsResponse) {
+    option (google.api.http).get = "/hashgram/welcome/v1/claims";
+  }
+}
+
+// QueryParamsRequest is the request for Query/Params.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is the response for Query/Params.
+message QueryParamsResponse {
+  Params params = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryStatusRequest is the request for Query/Status.
+message QueryStatusRequest {}
+
+// QueryStatusResponse is the response for Query/Status.
+message QueryStatusResponse {
+  // next_sequence is the sequence number the next successful claim receives.
+  uint64 next_sequence = 1;
+
+  // next_amount is what the next successful claim would be paid. Zero once
+  // the schedule is exhausted.
+  repeated cosmos.base.v1beta1.Coin next_amount = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // claims_paid is how many rewards have been paid.
+  uint64 claims_paid = 3;
+
+  // total_paid is the sum of every reward paid.
+  repeated cosmos.base.v1beta1.Coin total_paid = 4 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // pool_remaining is the balance of the welcome pool module account.
+  repeated cosmos.base.v1beta1.Coin pool_remaining = 5 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // pool_account holds pool_remaining. Its balance is also readable through
+  // an ordinary bank query, so this figure is cross-checkable.
+  string pool_account = 6 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // exhausted is true once the sequence has passed the last funded tier.
+  bool exhausted = 7;
+
+  // enabled mirrors Params.enabled.
+  bool enabled = 8;
+}
+
+// QueryTiersRequest is the request for Query/Tiers.
+message QueryTiersRequest {}
+
+// QueryTiersResponse is the response for Query/Tiers.
+message QueryTiersResponse {
+  // tiers is the compile-time reward schedule, in ascending order of
+  // sequence. It is not governance-adjustable.
+  repeated Tier tiers = 1 [(gogoproto.nullable) = false];
+
+  // max_pool is the worst-case total payout of this schedule, which is what
+  // the welcome pool is funded with at genesis.
+  repeated cosmos.base.v1beta1.Coin max_pool = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryClaimRequest is the request for Query/Claim.
+message QueryClaimRequest {
+  string subject = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// QueryClaimResponse is the response for Query/Claim.
+message QueryClaimResponse {
+  // claimed is false when the address has never received a welcome reward.
+  bool claimed = 1;
+
+  ClaimRecord record = 2 [(gogoproto.nullable) = false];
+}
+
+// QueryClaimsRequest is the request for Query/Claims.
+message QueryClaimsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+// QueryClaimsResponse is the response for Query/Claims.
+message QueryClaimsResponse {
+  repeated ClaimRecord claims = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}

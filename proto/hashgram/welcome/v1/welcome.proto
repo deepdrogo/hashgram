@@ -1,0 +1,185 @@
+syntax = "proto3";
+package hashgram.welcome.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/welcome/types";
+
+// KeyType identifies an attestor's signature scheme.
+enum KeyType {
+  option (gogoproto.goproto_enum_prefix) = false;
+
+  KEY_TYPE_UNSPECIFIED = 0;
+
+  // KEY_TYPE_SECP256K1 is a 33-byte compressed secp256k1 public key, the
+  // scheme ordinary Hashgram accounts and hardware wallets use.
+  KEY_TYPE_SECP256K1 = 1;
+
+  // KEY_TYPE_ED25519 is a 32-byte ed25519 public key, the scheme used by
+  // Hashgram device keys.
+  KEY_TYPE_ED25519 = 2;
+}
+
+// Attestor is a party authorised to vouch that an address belongs to a
+// distinct human being.
+//
+// Attestors are registered by governance, with their public key stated
+// explicitly rather than inferred from an on-chain account. An attestor is a
+// trusted party for eligibility only: it cannot move HASH, change balances,
+// or affect consensus. The worst a fully compromised attestor can do is
+// issue welcome rewards to addresses that did not deserve them, bounded by
+// its own per-epoch cap.
+message Attestor {
+  // address is the bech32 address derived from pubkey, for display and for
+  // nonce bookkeeping.
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // pubkey is the raw public key bytes.
+  bytes pubkey = 2;
+
+  // key_type is the signature scheme.
+  KeyType key_type = 3;
+
+  // name is a human-readable label, e.g. "hashgram-device-attestation-v1".
+  string name = 4;
+
+  // method describes what this attestor actually checks, e.g.
+  // "device-attestation", "proof-of-uniqueness", "account-age". It is
+  // recorded on every claim so that if a method later proves weak, the
+  // affected claims are identifiable.
+  string method = 5;
+
+  // enabled allows governance to suspend an attestor without deleting its
+  // history.
+  bool enabled = 6;
+
+  // max_claims_per_epoch caps how many claims this attestor can authorise per
+  // epoch. This is the blast-radius limit on a compromised attestor.
+  uint64 max_claims_per_epoch = 7;
+}
+
+// EligibilityAttestation is a signed statement that an address is eligible for
+// a welcome reward.
+//
+// This is the pluggable anti-Sybil boundary required by the specification.
+// Creating a private key is free and permissionless; being eligible for a
+// welcome reward is not. The protocol does not care *how* an attestor
+// established uniqueness, only that a registered attestor signed for it. New
+// methods can be added by registering new attestors, with no state-machine
+// change.
+//
+// The protocol deliberately does not require a phone number or any identity
+// document. Those are policies an individual attestor may adopt; they are not
+// part of Hashgram.
+message EligibilityAttestation {
+  // subject is the address that will receive the welcome reward.
+  string subject = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // attestor is the address of the attestor that signed this.
+  string attestor = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // nonce is unique per attestor. A replayed nonce is rejected, so an
+  // attestation cannot be submitted twice.
+  uint64 nonce = 3;
+
+  // expiry_height is the last block at which this attestation is valid.
+  // Attestations must expire: an eternal one is a bearer token that stays
+  // valid long after the check behind it stopped meaning anything.
+  int64 expiry_height = 4;
+
+  // method is the attestation method claimed, which must match the
+  // registered attestor's method.
+  string method = 5;
+
+  // confidence is an anti-abuse score from 0 to 10000 basis points. An
+  // attestor that is unsure can say so, and governance can require a
+  // minimum.
+  uint32 confidence = 6;
+
+  // signature is over the domain-separated digest of the canonical encoding
+  // of every field above. See x/welcome/types.CanonicalAttestationBytes and
+  // the "eligibility-attestation" signing purpose in x/network.
+  bytes signature = 7;
+}
+
+// ClaimRecord is the permanent record of a paid welcome reward.
+message ClaimRecord {
+  // subject is the address that received the reward.
+  string subject = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // sequence is the position in the global welcome ordering, starting at 1.
+  // It determines the tier and therefore the amount.
+  uint64 sequence = 2;
+
+  // amount is what was paid.
+  repeated cosmos.base.v1beta1.Coin amount = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // height is the block at which the reward was paid.
+  int64 height = 4;
+
+  // attestor is the address that vouched for this claim.
+  string attestor = 5 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // method is the attestation method used. Recorded so that if a method is
+  // later found to be weak, the claims that relied on it can be identified.
+  string method = 6;
+}
+
+// Params configures the welcome programme.
+//
+// The tier schedule is deliberately absent: the amounts and thresholds are
+// compile-time constants in app/params, not governance parameters. They are
+// part of the published tokenomics, and a chain that could quietly re-tier
+// them would not have published anything meaningful.
+message Params {
+  // enabled allows governance to pause claims, for instance if an attestor
+  // is found to be compromised.
+  bool enabled = 1;
+
+  // attestors is the registered attestor set.
+  repeated Attestor attestors = 2 [(gogoproto.nullable) = false];
+
+  // min_confidence is the minimum attestation confidence in basis points.
+  uint32 min_confidence = 3;
+
+  // max_attestation_age_blocks bounds how far in the future an attestation's
+  // expiry_height may be set, so that an attestor cannot issue effectively
+  // permanent attestations.
+  int64 max_attestation_age_blocks = 4;
+
+  // epoch_blocks is the length of the epoch used for per-attestor claim caps.
+  uint64 epoch_blocks = 5;
+}
+
+// TotalPaid is the cumulative amount the welcome programme has paid out.
+//
+// A stored total rather than a derived one: summing every claim record on
+// every query would make the cost of answering "how much has been paid?"
+// grow with the number of users.
+message TotalPaid {
+  repeated cosmos.base.v1beta1.Coin amount = 1 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// Tier is one band of the welcome reward schedule, for the Tiers query.
+message Tier {
+  // max_sequence is the last sequence number in this band.
+  uint64 max_sequence = 1;
+
+  // amount is the reward paid to sequences in this band.
+  repeated cosmos.base.v1beta1.Coin amount = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
