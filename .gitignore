@@ -1,0 +1,75 @@
+# ---------------------------------------------------------------------------
+# Hashgram .gitignore
+#
+# SECURITY: this file is a defence-in-depth measure only. The authoritative
+# controls are the `gitleaks` secret scan in CI (.github/workflows/ci.yml) and
+# `hashgramctl mainnet-preflight`. Never rely on .gitignore alone to keep a
+# key out of history.
+# ---------------------------------------------------------------------------
+
+# --- Build output ----------------------------------------------------------
+/build/
+/dist/
+/bin/
+*.exe
+*.test
+*.out
+*.o
+*.a
+*.so
+
+# --- Rust ------------------------------------------------------------------
+target/
+**/target/
+Cargo.lock.orig
+
+# --- Secrets and keys: NEVER COMMIT ---------------------------------------
+*.pem
+*.key
+!**/testdata/**/*.pem
+priv_validator_key.json
+node_key.json
+priv_validator_state.json
+*.mnemonic
+*mnemonic*
+*seed-phrase*
+*seedphrase*
+.env
+.env.*
+!.env.example
+/secrets/
+**/keyring-file/
+**/keyring-test/
+**/keyhash
+
+# --- Runtime / node home ---------------------------------------------------
+/.hashgram/
+/.hashgramd/
+/devnet/
+/testnet-data/
+/localnet/
+*.db
+*.wal
+*.sqlite
+*.sqlite3
+
+# --- Genesis working files (canonical genesis is published separately) -----
+/genesis-work/
+genesis.json.tmp
+
+# --- Logs ------------------------------------------------------------------
+*.log
+/logs/
+
+# --- Editors / OS ----------------------------------------------------------
+.idea/
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# --- Tooling caches --------------------------------------------------------
+/.cache/
+/vendor/
+coverage.out
+coverage.html
