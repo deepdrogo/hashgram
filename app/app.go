@@ -103,6 +103,12 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	hgparams "github.com/hashgram/hashgram/app/params"
+	"github.com/hashgram/hashgram/x/feerouter"
+	feerouterkeeper "github.com/hashgram/hashgram/x/feerouter/keeper"
+	feeroutertypes "github.com/hashgram/hashgram/x/feerouter/types"
+	"github.com/hashgram/hashgram/x/founder"
+	founderkeeper "github.com/hashgram/hashgram/x/founder/keeper"
+	foundertypes "github.com/hashgram/hashgram/x/founder/types"
 	"github.com/hashgram/hashgram/x/network"
 	networkkeeper "github.com/hashgram/hashgram/x/network/keeper"
 	networktypes "github.com/hashgram/hashgram/x/network/types"
@@ -134,6 +140,11 @@ var maccPerms = map[string][]string{
 	stakingtypes.BondedPoolName:    {authtypes.Burner, authtypes.Staking},
 	stakingtypes.NotBondedPoolName: {authtypes.Burner, authtypes.Staking},
 	govtypes.ModuleName:            {authtypes.Burner},
+
+	// Hashgram module accounts. All hold nil permissions: they receive and
+	// forward coins that already exist and can neither mint nor burn.
+	foundertypes.ModuleName:   nil,
+	feeroutertypes.ModuleName: nil,
 }
 
 var (
@@ -166,7 +177,9 @@ type HashgramApp struct {
 	AuthzKeeper           authzkeeper.Keeper
 
 	// Hashgram keepers
-	NetworkKeeper networkkeeper.Keeper
+	NetworkKeeper   networkkeeper.Keeper
+	FounderKeeper   founderkeeper.Keeper
+	FeeRouterKeeper feerouterkeeper.Keeper
 
 	ModuleManager      *module.Manager
 	BasicModuleManager module.BasicManager
@@ -236,6 +249,8 @@ func NewHashgramApp(
 
 		// Hashgram modules
 		networktypes.StoreKey,
+		foundertypes.StoreKey,
+		feeroutertypes.StoreKey,
 	)
 
 	if err := bApp.RegisterStreamingServices(appOpts, keys); err != nil {
@@ -396,6 +411,33 @@ func NewHashgramApp(
 		}
 	}
 
+	// x/founder owns the Founder beneficiary and the accrual ledger. Its only
+	// authority is governance; there is no founder key with special powers
+	// over this module.
+	app.FounderKeeper = founderkeeper.NewKeeper(
+		appCodec,
+		runtime.NewKVStoreService(keys[foundertypes.StoreKey]),
+		app.AccountKeeper,
+		app.BankKeeper,
+		govAuthority,
+		logger,
+	)
+
+	// x/feerouter defines what counts as qualifying protocol revenue and
+	// splits it. It reads the Founder share from x/founder rather than owning
+	// a percentage of its own, so there is exactly one place where that
+	// number lives.
+	app.FeeRouterKeeper = feerouterkeeper.NewKeeper(
+		appCodec,
+		runtime.NewKVStoreService(keys[feeroutertypes.StoreKey]),
+		app.AccountKeeper,
+		app.BankKeeper,
+		app.FounderKeeper,
+		authtypes.FeeCollectorName,
+		govAuthority,
+		logger,
+	)
+
 	// ---------------------------------------------------------------------
 	// Module manager
 	// ---------------------------------------------------------------------
@@ -417,6 +459,8 @@ func NewHashgramApp(
 
 		// Hashgram modules
 		network.NewAppModule(appCodec, app.NetworkKeeper),
+		founder.NewAppModule(appCodec, app.FounderKeeper),
+		feerouter.NewAppModule(appCodec, app.FeeRouterKeeper),
 	)
 
 	app.BasicModuleManager = module.NewBasicManagerFromManager(
@@ -435,9 +479,21 @@ func NewHashgramApp(
 		authtypes.ModuleName,
 	)
 
-	// Slashing runs after distribution so the validator fee pool is empty when
-	// slashing touches it, preserving the CanWithdraw invariant.
+	// Begin-block ordering carries two real constraints.
+	//
+	// x/feerouter MUST precede x/distribution. feerouter takes the Founder
+	// share out of the fee collector and then sweeps explicit service fees
+	// into it; distribution then pays the whole remainder to validators and
+	// delegators, leaving the fee collector empty. Running distribution first
+	// would pay out revenue before the split, and would leave the service-fee
+	// remainder sitting in the fee collector to be taxed a second time on the
+	// next block. See x/feerouter/keeper.BeginBlocker.
+	//
+	// x/slashing MUST follow x/distribution so the validator fee pool is
+	// empty when slashing touches it, preserving the SDK's CanWithdraw
+	// invariant.
 	app.ModuleManager.SetOrderBeginBlockers(
+		feeroutertypes.ModuleName,
 		distrtypes.ModuleName,
 		slashingtypes.ModuleName,
 		evidencetypes.ModuleName,
@@ -451,6 +507,7 @@ func NewHashgramApp(
 		stakingtypes.ModuleName,
 		genutiltypes.ModuleName,
 		feegrant.ModuleName,
+		foundertypes.ModuleName,
 	)
 
 	// genutil must come after staking (pools need genesis-account tokens) and
@@ -474,10 +531,14 @@ func NewHashgramApp(
 		upgradetypes.ModuleName,
 		vestingtypes.ModuleName,
 		consensusparamtypes.ModuleName,
+		foundertypes.ModuleName,
+		feeroutertypes.ModuleName,
 	)
 
 	app.ModuleManager.SetOrderExportGenesis(
 		networktypes.ModuleName,
+		foundertypes.ModuleName,
+		feeroutertypes.ModuleName,
 		consensusparamtypes.ModuleName,
 		authtypes.ModuleName,
 		banktypes.ModuleName,

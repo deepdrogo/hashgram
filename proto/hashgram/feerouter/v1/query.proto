@@ -1,0 +1,64 @@
+syntax = "proto3";
+package hashgram.feerouter.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "hashgram/feerouter/v1/feerouter.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/feerouter/types";
+
+// Query is the x/feerouter query service.
+service Query {
+  // Params returns the routing configuration.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/hashgram/feerouter/v1/params";
+  }
+
+  // Totals returns the cumulative qualifying revenue and its split.
+  rpc Totals(QueryTotalsRequest) returns (QueryTotalsResponse) {
+    option (google.api.http).get = "/hashgram/feerouter/v1/totals";
+  }
+
+  // ServiceRevenue returns cumulative qualifying revenue per service kind.
+  rpc ServiceRevenue(QueryServiceRevenueRequest) returns (QueryServiceRevenueResponse) {
+    option (google.api.http).get = "/hashgram/feerouter/v1/service_revenue";
+  }
+}
+
+// QueryParamsRequest is the request for Query/Params.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is the response for Query/Params.
+message QueryParamsResponse {
+  Params params = 1 [(gogoproto.nullable) = false];
+
+  // revenue_pool is the module account that explicit service fees are paid
+  // into before being split.
+  string revenue_pool = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // pending is what is sitting in the revenue pool awaiting the next split.
+  repeated cosmos.base.v1beta1.Coin pending = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// QueryTotalsRequest is the request for Query/Totals.
+message QueryTotalsRequest {}
+
+// QueryTotalsResponse is the response for Query/Totals.
+message QueryTotalsResponse {
+  RevenueTotals totals = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryServiceRevenueRequest is the request for Query/ServiceRevenue.
+message QueryServiceRevenueRequest {}
+
+// QueryServiceRevenueResponse is the response for Query/ServiceRevenue.
+message QueryServiceRevenueResponse {
+  repeated ServiceRevenue service_revenue = 1 [(gogoproto.nullable) = false];
+}

@@ -1,0 +1,106 @@
+syntax = "proto3";
+package hashgram.feerouter.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/feerouter/types";
+
+// ServiceKind enumerates the sources of qualifying protocol fee revenue.
+//
+// "Qualifying" is a precise term. It means revenue the protocol itself
+// charged for a service, which is exactly the base the Founder share applies
+// to. It does not, and cannot, include value that users transferred to each
+// other.
+enum ServiceKind {
+  option (gogoproto.goproto_enum_prefix) = false;
+
+  // SERVICE_KIND_UNSPECIFIED is invalid.
+  SERVICE_KIND_UNSPECIFIED = 0;
+
+  // SERVICE_KIND_GAS is transaction gas fees collected by the fee collector.
+  SERVICE_KIND_GAS = 1;
+
+  // SERVICE_KIND_USERNAME is username registration and renewal fees.
+  SERVICE_KIND_USERNAME = 2;
+
+  // SERVICE_KIND_IDENTITY is identity and device registration fees charged
+  // beyond the free allowance.
+  SERVICE_KIND_IDENTITY = 3;
+
+  // SERVICE_KIND_STORAGE is protocol-charged media/blob storage fees.
+  SERVICE_KIND_STORAGE = 4;
+
+  // SERVICE_KIND_RELAY is protocol-charged message relay fees.
+  SERVICE_KIND_RELAY = 5;
+
+  // SERVICE_KIND_CALL is protocol-charged call infrastructure fees.
+  SERVICE_KIND_CALL = 6;
+
+  // SERVICE_KIND_OTHER is any future protocol service fee.
+  SERVICE_KIND_OTHER = 99;
+}
+
+// Params configures fee routing.
+message Params {
+  // enabled turns routing on. When false the Founder share is not taken and
+  // all fee revenue flows to validators and delegators as usual. It exists so
+  // that a devnet can run without a configured Founder beneficiary; Mainnet
+  // genesis sets it true.
+  bool enabled = 1;
+}
+
+// RevenueTotals is the cumulative record of qualifying revenue and its split.
+//
+// The identity
+//
+//     total_qualifying == founder_share + validator_share + treasury_share
+//
+// is asserted by an invariant on every block in which routing runs. If it
+// ever fails, the chain halts rather than continuing with a split that does
+// not add up.
+message RevenueTotals {
+  // total_qualifying is all qualifying protocol fee revenue ever routed.
+  repeated cosmos.base.v1beta1.Coin total_qualifying = 1 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // founder_share is the portion credited to the Founder.
+  repeated cosmos.base.v1beta1.Coin founder_share = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // validator_share is the portion left for validators and delegators via
+  // x/distribution.
+  repeated cosmos.base.v1beta1.Coin validator_share = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // treasury_share is reserved for a future governance-set treasury cut. It
+  // is zero under the launch configuration and is present so that adding a
+  // treasury cut later does not change the wire format.
+  repeated cosmos.base.v1beta1.Coin treasury_share = 4 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// ServiceRevenue is the cumulative qualifying revenue for one service kind,
+// so that "which services actually generate revenue?" is answerable on chain.
+message ServiceRevenue {
+  ServiceKind kind = 1;
+
+  repeated cosmos.base.v1beta1.Coin amount = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}

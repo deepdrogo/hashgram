@@ -8,9 +8,9 @@ import (
 
 	"cosmossdk.io/log"
 
+	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 
 	"github.com/hashgram/hashgram/app"
 	hgparams "github.com/hashgram/hashgram/app/params"

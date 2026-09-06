@@ -1,0 +1,71 @@
+syntax = "proto3";
+package hashgram.founder.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "hashgram/founder/v1/founder.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/founder/types";
+
+// Msg is the x/founder message service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // UpdateParams changes the Founder revenue configuration.
+  //
+  // The only valid authority is the governance module account. There is no
+  // founder key, admin key or operator key that can call this.
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+
+  // ClaimFounderRevenue pushes accrued revenue to the configured beneficiary.
+  //
+  // Deliberately permissionless: any address may send it, and the funds always
+  // go to the configured beneficiary regardless of who sent it. This is what
+  // makes "the Founder private key is never needed on a Hashgram server" true
+  // in practice rather than only in principle. The sender pays the gas.
+  rpc ClaimFounderRevenue(MsgClaimFounderRevenue) returns (MsgClaimFounderRevenueResponse);
+}
+
+// MsgUpdateParams changes the Founder revenue configuration.
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "hashgram/MsgUpdateFounderParams";
+
+  // authority must be the governance module account.
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // params is the full replacement parameter set.
+  //
+  // fee_basis_points is validated against a compile-time ceiling, so this
+  // message cannot raise the Founder share above 1%.
+  Params params = 2 [(gogoproto.nullable) = false];
+}
+
+// MsgUpdateParamsResponse is the response type.
+message MsgUpdateParamsResponse {}
+
+// MsgClaimFounderRevenue pushes accrued revenue to the beneficiary.
+message MsgClaimFounderRevenue {
+  option (cosmos.msg.v1.signer) = "sender";
+  option (amino.name) = "hashgram/MsgClaimFounderRevenue";
+
+  // sender is whoever is paying the gas to trigger the payout. It has no
+  // influence on the destination.
+  string sender = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgClaimFounderRevenueResponse reports what was paid and to whom.
+message MsgClaimFounderRevenueResponse {
+  // paid is the amount transferred.
+  repeated cosmos.base.v1beta1.Coin paid = 1 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // beneficiary is the address that was paid.
+  string beneficiary = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}

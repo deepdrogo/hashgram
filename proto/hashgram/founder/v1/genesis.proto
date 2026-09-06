@@ -1,0 +1,20 @@
+syntax = "proto3";
+package hashgram.founder.v1;
+
+import "gogoproto/gogo.proto";
+import "hashgram/founder/v1/founder.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/founder/types";
+
+// GenesisState is the x/founder genesis state.
+message GenesisState {
+  // params configures the beneficiary and the revenue share.
+  Params params = 1 [(gogoproto.nullable) = false];
+
+  // ledger is the accrual/payout record. At genesis it is empty.
+  RevenueLedger ledger = 2 [(gogoproto.nullable) = false];
+
+  // beneficiary_history is the audit trail of beneficiary changes. At genesis
+  // it is empty.
+  repeated BeneficiaryChange beneficiary_history = 3 [(gogoproto.nullable) = false];
+}

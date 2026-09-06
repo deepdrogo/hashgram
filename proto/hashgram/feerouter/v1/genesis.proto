@@ -1,0 +1,18 @@
+syntax = "proto3";
+package hashgram.feerouter.v1;
+
+import "gogoproto/gogo.proto";
+import "hashgram/feerouter/v1/feerouter.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/feerouter/types";
+
+// GenesisState is the x/feerouter genesis state.
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+
+  // totals is the cumulative revenue split. Empty at genesis.
+  RevenueTotals totals = 2 [(gogoproto.nullable) = false];
+
+  // service_revenue is per-service cumulative revenue. Empty at genesis.
+  repeated ServiceRevenue service_revenue = 3 [(gogoproto.nullable) = false];
+}

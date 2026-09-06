@@ -1,0 +1,89 @@
+syntax = "proto3";
+package hashgram.founder.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "hashgram/founder/v1/founder.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/founder/types";
+
+// Query is the x/founder query service.
+//
+// These queries exist so that the Founder, and anyone else, can answer
+// "where is my 1% and where did it go?" from chain state, without trusting an
+// operator's accounting. See docs/FOUNDER_LAUNCH_RUNBOOK.md Part D.
+service Query {
+  // Params returns the beneficiary and revenue share configuration.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/hashgram/founder/v1/params";
+  }
+
+  // Revenue returns accrued, paid and currently-pending Founder revenue.
+  rpc Revenue(QueryRevenueRequest) returns (QueryRevenueResponse) {
+    option (google.api.http).get = "/hashgram/founder/v1/revenue";
+  }
+
+  // BeneficiaryHistory returns every governance-approved beneficiary change.
+  rpc BeneficiaryHistory(QueryBeneficiaryHistoryRequest) returns (QueryBeneficiaryHistoryResponse) {
+    option (google.api.http).get = "/hashgram/founder/v1/beneficiary_history";
+  }
+}
+
+// QueryParamsRequest is the request for Query/Params.
+message QueryParamsRequest {}
+
+// QueryParamsResponse is the response for Query/Params.
+message QueryParamsResponse {
+  Params params = 1 [(gogoproto.nullable) = false];
+
+  // max_fee_basis_points is the compile-time ceiling on fee_basis_points in
+  // the binary serving this query. Reported so that a client can see the cap
+  // exists rather than having to read the source.
+  uint32 max_fee_basis_points = 2;
+}
+
+// QueryRevenueRequest is the request for Query/Revenue.
+message QueryRevenueRequest {}
+
+// QueryRevenueResponse is the response for Query/Revenue.
+message QueryRevenueResponse {
+  // total_accrued is every coin ever credited to the Founder.
+  repeated cosmos.base.v1beta1.Coin total_accrued = 1 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // total_paid is every coin ever pushed to a beneficiary.
+  repeated cosmos.base.v1beta1.Coin total_paid = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // pending is what is sitting in the founder module account right now,
+  // accrued but not yet paid out.
+  repeated cosmos.base.v1beta1.Coin pending = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // module_account is the address holding `pending`. Its balance is also
+  // visible through a plain bank query, so this figure is cross-checkable.
+  string module_account = 4 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  int64 last_payout_height = 5;
+  string last_payout_beneficiary = 6 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// QueryBeneficiaryHistoryRequest is the request for Query/BeneficiaryHistory.
+message QueryBeneficiaryHistoryRequest {}
+
+// QueryBeneficiaryHistoryResponse is the response for Query/BeneficiaryHistory.
+message QueryBeneficiaryHistoryResponse {
+  repeated BeneficiaryChange changes = 1 [(gogoproto.nullable) = false];
+}
