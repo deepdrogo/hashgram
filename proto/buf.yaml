@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------------
+# Hashgram protobuf module.
+#
+# Hashgram's own definitions live under hashgram/. Everything else in this
+# directory (amino/, cosmos/, cosmos_proto/, gogoproto/, google/) is vendored
+# from upstream so that code generation works with no network access and so
+# that the wire format is pinned by file content rather than by a registry
+# tag. Provenance and licences: see VENDORED_PROTOS.md.
+#
+# Lint and breaking-change detection apply to hashgram/ only; the vendored
+# trees are upstream's problem, not ours.
+# ---------------------------------------------------------------------------
+version: v1
+name: buf.build/hashgram/hashgram
+
+breaking:
+  use:
+    - FILE
+  ignore:
+    - amino
+    - cosmos
+    - cosmos_proto
+    - gogoproto
+    - google
+
+lint:
+  use:
+    - STANDARD
+  except:
+    - UNARY_RPC
+    - COMMENT_FIELD
+    - SERVICE_SUFFIX
+    - PACKAGE_VERSION_SUFFIX
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
+  ignore:
+    - amino
+    - cosmos
+    - cosmos_proto
+    - gogoproto
+    - google

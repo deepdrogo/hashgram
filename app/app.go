@@ -103,6 +103,9 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	hgparams "github.com/hashgram/hashgram/app/params"
+	"github.com/hashgram/hashgram/x/network"
+	networkkeeper "github.com/hashgram/hashgram/x/network/keeper"
+	networktypes "github.com/hashgram/hashgram/x/network/types"
 )
 
 // BuildDate is stamped by the linker; see the Makefile.
@@ -161,6 +164,9 @@ type HashgramApp struct {
 	ConsensusParamsKeeper consensusparamkeeper.Keeper
 	FeeGrantKeeper        feegrantkeeper.Keeper
 	AuthzKeeper           authzkeeper.Keeper
+
+	// Hashgram keepers
+	NetworkKeeper networkkeeper.Keeper
 
 	ModuleManager      *module.Manager
 	BasicModuleManager module.BasicManager
@@ -227,6 +233,9 @@ func NewHashgramApp(
 		feegrant.StoreKey,
 		evidencetypes.StoreKey,
 		authzkeeper.StoreKey,
+
+		// Hashgram modules
+		networktypes.StoreKey,
 	)
 
 	if err := bApp.RegisterStreamingServices(appOpts, keys); err != nil {
@@ -365,6 +374,29 @@ func NewHashgramApp(
 	app.EvidenceKeeper = *evidenceKeeper
 
 	// ---------------------------------------------------------------------
+	// Hashgram keepers
+	// ---------------------------------------------------------------------
+
+	// x/network takes no authority: the network identity is written once at
+	// genesis and cannot be changed by any transaction.
+	app.NetworkKeeper = networkkeeper.NewKeeper(
+		appCodec,
+		runtime.NewKVStoreService(keys[networktypes.StoreKey]),
+		logger,
+	)
+
+	// The expected genesis hash is node configuration, not chain state (the
+	// hash of the genesis file cannot be a field inside that file). A
+	// malformed value is fatal: an operator who typed a broken hash intended
+	// to pin something, and starting unpinned would silently give them less
+	// safety than they asked for.
+	if h := cast.ToString(appOpts.Get("hashgram.genesis-hash")); h != "" {
+		if err := app.NetworkKeeper.SetPinnedGenesisHash(h); err != nil {
+			panic(err)
+		}
+	}
+
+	// ---------------------------------------------------------------------
 	// Module manager
 	// ---------------------------------------------------------------------
 
@@ -382,6 +414,9 @@ func NewHashgramApp(
 		consensus.NewAppModule(appCodec, app.ConsensusParamsKeeper),
 		feegrantmodule.NewAppModule(appCodec, app.AccountKeeper, app.BankKeeper, app.FeeGrantKeeper, app.interfaceRegistry),
 		authzmodule.NewAppModule(appCodec, app.AuthzKeeper, app.AccountKeeper, app.BankKeeper, app.interfaceRegistry),
+
+		// Hashgram modules
+		network.NewAppModule(appCodec, app.NetworkKeeper),
 	)
 
 	app.BasicModuleManager = module.NewBasicManagerFromManager(
@@ -420,7 +455,12 @@ func NewHashgramApp(
 
 	// genutil must come after staking (pools need genesis-account tokens) and
 	// after auth (it reads auth params).
+	//
+	// x/network is first: it asserts the genesis chain_id matches the
+	// CometBFT chain-id, and there is no point initialising anything else on
+	// a chain that has already been shown to be the wrong network.
 	app.ModuleManager.SetOrderInitGenesis(
+		networktypes.ModuleName,
 		authtypes.ModuleName,
 		banktypes.ModuleName,
 		distrtypes.ModuleName,
@@ -437,6 +477,7 @@ func NewHashgramApp(
 	)
 
 	app.ModuleManager.SetOrderExportGenesis(
+		networktypes.ModuleName,
 		consensusparamtypes.ModuleName,
 		authtypes.ModuleName,
 		banktypes.ModuleName,

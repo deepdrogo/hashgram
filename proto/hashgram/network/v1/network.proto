@@ -1,0 +1,61 @@
+syntax = "proto3";
+package hashgram.network.v1;
+
+option go_package = "github.com/hashgram/hashgram/x/network/types";
+
+// NetworkInfo is the on-chain cryptographic identity of a Hashgram network.
+//
+// It is written once, during InitGenesis, and there is no message that can
+// change it. Changing it requires a coordinated binary upgrade with a store
+// migration, which the validator set must consciously adopt.
+//
+// Note what is deliberately absent: genesis_hash. The hash of the genesis file
+// cannot live inside the genesis file. It is pinned in node configuration
+// (app.toml [hashgram] genesis-hash), verified at node startup, and verifiable
+// independently by any client that fetches the genesis document over RPC and
+// hashes it. See docs/DECENTRALIZATION.md.
+message NetworkInfo {
+  // network_name is the human-readable label, e.g. "Hashgram Mainnet".
+  string network_name = 1;
+
+  // network_id is the stable machine identifier, e.g. "hashgram-mainnet".
+  string network_id = 2;
+
+  // chain_id must equal the CometBFT chain-id. InitGenesis rejects a genesis
+  // file where these disagree, which catches a tampered or mismatched genesis
+  // before the chain starts rather than after.
+  string chain_id = 3;
+
+  // network_magic is the 4-byte P2P wire discriminator, e.g. ASCII "HGM1".
+  // It is also mixed into every signature domain.
+  bytes network_magic = 4;
+
+  // protocol_major_version is the wire-compatibility generation. Peers must
+  // agree exactly.
+  uint32 protocol_major_version = 5;
+}
+
+// ForkIsolationPolicy records how strictly this network rejects foreign peers.
+//
+// Every field is true on Mainnet. They exist as explicit state rather than as
+// implicit code behaviour so that a client can query what it is relying on,
+// and so that a chain that ever relaxes a check has to say so on-chain.
+message ForkIsolationPolicy {
+  // require_network_id_match rejects peers whose network_id differs.
+  bool require_network_id_match = 1;
+
+  // require_chain_id_match rejects peers whose chain_id differs.
+  bool require_chain_id_match = 2;
+
+  // require_network_magic_match rejects peers whose network_magic differs.
+  bool require_network_magic_match = 3;
+
+  // require_genesis_hash_match rejects peers whose genesis file hashes
+  // differently. This is the check that makes a software fork with a fresh
+  // genesis a separate network.
+  bool require_genesis_hash_match = 4;
+
+  // require_protocol_major_match rejects peers from a different protocol
+  // generation.
+  bool require_protocol_major_match = 5;
+}

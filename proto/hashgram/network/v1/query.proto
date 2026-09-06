@@ -1,0 +1,75 @@
+syntax = "proto3";
+package hashgram.network.v1;
+
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "hashgram/network/v1/network.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/network/types";
+
+// Query is the x/network query service.
+//
+// These queries are how a client answers "am I really talking to Hashgram
+// Mainnet?" without trusting the node's own claims about itself: the client
+// compares the answers against values it shipped with, and separately hashes
+// the genesis document it fetched over CometBFT RPC.
+service Query {
+  // Info returns the immutable on-chain network identity.
+  rpc Info(QueryInfoRequest) returns (QueryInfoResponse) {
+    option (google.api.http).get = "/hashgram/network/v1/info";
+  }
+
+  // ForkIsolation returns the peer-rejection policy in force.
+  rpc ForkIsolation(QueryForkIsolationRequest) returns (QueryForkIsolationResponse) {
+    option (google.api.http).get = "/hashgram/network/v1/fork_isolation";
+  }
+
+  // SigningDomain returns the exact domain-separation string used when signing
+  // for a given purpose on this network.
+  //
+  // Clients and the Rust P2P layer must reproduce this string byte for byte.
+  // Exposing it as a query means a client can assert agreement at runtime
+  // instead of discovering a mismatch as an unexplained signature failure.
+  rpc SigningDomain(QuerySigningDomainRequest) returns (QuerySigningDomainResponse) {
+    option (google.api.http).get = "/hashgram/network/v1/signing_domain/{purpose}";
+  }
+}
+
+// QueryInfoRequest is the request for Query/Info.
+message QueryInfoRequest {}
+
+// QueryInfoResponse is the response for Query/Info.
+message QueryInfoResponse {
+  NetworkInfo info = 1 [(gogoproto.nullable) = false];
+}
+
+// QueryForkIsolationRequest is the request for Query/ForkIsolation.
+message QueryForkIsolationRequest {}
+
+// QueryForkIsolationResponse is the response for Query/ForkIsolation.
+message QueryForkIsolationResponse {
+  ForkIsolationPolicy policy = 1 [(gogoproto.nullable) = false];
+}
+
+// QuerySigningDomainRequest is the request for Query/SigningDomain.
+message QuerySigningDomainRequest {
+  // purpose is one of the signing purposes defined by the protocol, e.g.
+  // "social-event", "device-cert", "service-receipt".
+  string purpose = 1;
+}
+
+// QuerySigningDomainResponse is the response for Query/SigningDomain.
+message QuerySigningDomainResponse {
+  // domain is the full domain string, e.g.
+  // "hashgram/v1/hashgram-mainnet/social-event".
+  string domain = 1;
+
+  // network_magic is prepended to the signing preimage before the
+  // length-prefixed domain and payload.
+  bytes network_magic = 2;
+
+  // preimage_layout documents the exact byte layout that is hashed, so an SDK
+  // author does not have to infer it:
+  //   magic(4) || uint32be(len(domain)) || domain || uint32be(len(payload)) || payload
+  string preimage_layout = 3;
+}

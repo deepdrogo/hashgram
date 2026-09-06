@@ -1,0 +1,16 @@
+syntax = "proto3";
+package hashgram.network.v1;
+
+import "gogoproto/gogo.proto";
+import "hashgram/network/v1/network.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/network/types";
+
+// GenesisState is the x/network genesis state.
+message GenesisState {
+  // info is the immutable network identity.
+  NetworkInfo info = 1 [(gogoproto.nullable) = false];
+
+  // fork_isolation is the peer-rejection policy.
+  ForkIsolationPolicy fork_isolation = 2 [(gogoproto.nullable) = false];
+}
