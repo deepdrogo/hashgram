@@ -112,6 +112,9 @@ import (
 	"github.com/hashgram/hashgram/x/network"
 	networkkeeper "github.com/hashgram/hashgram/x/network/keeper"
 	networktypes "github.com/hashgram/hashgram/x/network/types"
+	"github.com/hashgram/hashgram/x/serviceproof"
+	serviceproofkeeper "github.com/hashgram/hashgram/x/serviceproof/keeper"
+	serviceprooftypes "github.com/hashgram/hashgram/x/serviceproof/types"
 	"github.com/hashgram/hashgram/x/welcome"
 	welcomekeeper "github.com/hashgram/hashgram/x/welcome/keeper"
 	welcometypes "github.com/hashgram/hashgram/x/welcome/types"
@@ -149,6 +152,12 @@ var maccPerms = map[string][]string{
 	foundertypes.ModuleName:   nil,
 	feeroutertypes.ModuleName: nil,
 	welcometypes.ModuleName:   nil,
+
+	// The reward reserve and the provider bond pool are separate accounts
+	// on purpose: mixing posted stake with undistributed rewards would make
+	// "how much is left to pay out?" unanswerable from a bank query.
+	serviceprooftypes.ModuleName:   nil,
+	serviceprooftypes.BondPoolName: nil,
 }
 
 var (
@@ -181,10 +190,11 @@ type HashgramApp struct {
 	AuthzKeeper           authzkeeper.Keeper
 
 	// Hashgram keepers
-	NetworkKeeper   networkkeeper.Keeper
-	FounderKeeper   founderkeeper.Keeper
-	FeeRouterKeeper feerouterkeeper.Keeper
-	WelcomeKeeper   welcomekeeper.Keeper
+	NetworkKeeper      networkkeeper.Keeper
+	FounderKeeper      founderkeeper.Keeper
+	FeeRouterKeeper    feerouterkeeper.Keeper
+	WelcomeKeeper      welcomekeeper.Keeper
+	ServiceProofKeeper serviceproofkeeper.Keeper
 
 	ModuleManager      *module.Manager
 	BasicModuleManager module.BasicManager
@@ -257,6 +267,7 @@ func NewHashgramApp(
 		foundertypes.StoreKey,
 		feeroutertypes.StoreKey,
 		welcometypes.StoreKey,
+		serviceprooftypes.StoreKey,
 	)
 
 	if err := bApp.RegisterStreamingServices(appOpts, keys); err != nil {
@@ -457,6 +468,19 @@ func NewHashgramApp(
 		logger,
 	)
 
+	// x/serviceproof pays useful-service rewards out of a finite reserve. It
+	// depends on x/network for the digests that receipts and challenge
+	// responses are signed over.
+	app.ServiceProofKeeper = serviceproofkeeper.NewKeeper(
+		appCodec,
+		runtime.NewKVStoreService(keys[serviceprooftypes.StoreKey]),
+		app.AccountKeeper,
+		app.BankKeeper,
+		app.NetworkKeeper,
+		govAuthority,
+		logger,
+	)
+
 	// ---------------------------------------------------------------------
 	// Module manager
 	// ---------------------------------------------------------------------
@@ -481,6 +505,7 @@ func NewHashgramApp(
 		founder.NewAppModule(appCodec, app.FounderKeeper),
 		feerouter.NewAppModule(appCodec, app.FeeRouterKeeper),
 		welcome.NewAppModule(appCodec, app.WelcomeKeeper),
+		serviceproof.NewAppModule(appCodec, app.ServiceProofKeeper),
 	)
 
 	app.BasicModuleManager = module.NewBasicManagerFromManager(
@@ -514,6 +539,7 @@ func NewHashgramApp(
 	// invariant.
 	app.ModuleManager.SetOrderBeginBlockers(
 		feeroutertypes.ModuleName,
+		serviceprooftypes.ModuleName,
 		distrtypes.ModuleName,
 		slashingtypes.ModuleName,
 		evidencetypes.ModuleName,
@@ -554,6 +580,7 @@ func NewHashgramApp(
 		foundertypes.ModuleName,
 		feeroutertypes.ModuleName,
 		welcometypes.ModuleName,
+		serviceprooftypes.ModuleName,
 	)
 
 	app.ModuleManager.SetOrderExportGenesis(
@@ -561,6 +588,7 @@ func NewHashgramApp(
 		foundertypes.ModuleName,
 		feeroutertypes.ModuleName,
 		welcometypes.ModuleName,
+		serviceprooftypes.ModuleName,
 		consensusparamtypes.ModuleName,
 		authtypes.ModuleName,
 		banktypes.ModuleName,

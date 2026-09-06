@@ -1,0 +1,252 @@
+syntax = "proto3";
+package hashgram.serviceproof.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "hashgram/serviceproof/v1/evidence.proto";
+import "hashgram/serviceproof/v1/provider.proto";
+import "hashgram/serviceproof/v1/serviceproof.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/serviceproof/types";
+
+// Query is the x/serviceproof query service.
+//
+// These queries are what a future Hashgram Node desktop application reads to
+// show an operator their status, uptime, storage provided, messages relayed,
+// pending and claimed HASH, and service proofs.
+service Query {
+  // Params returns the reward configuration.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/hashgram/serviceproof/v1/params";
+  }
+
+  // Reserve returns the finite reward reserve state.
+  rpc Reserve(QueryReserveRequest) returns (QueryReserveResponse) {
+    option (google.api.http).get = "/hashgram/serviceproof/v1/reserve";
+  }
+
+  // Provider returns one provider's registration and current standing.
+  rpc Provider(QueryProviderRequest) returns (QueryProviderResponse) {
+    option (google.api.http).get = "/hashgram/serviceproof/v1/provider/{operator}";
+  }
+
+  // Providers returns paginated providers.
+  rpc Providers(QueryProvidersRequest) returns (QueryProvidersResponse) {
+    option (google.api.http).get = "/hashgram/serviceproof/v1/providers";
+  }
+
+  // CurrentEpoch returns the open accounting period.
+  rpc CurrentEpoch(QueryCurrentEpochRequest) returns (QueryCurrentEpochResponse) {
+    option (google.api.http).get = "/hashgram/serviceproof/v1/epoch/current";
+  }
+
+  // Epoch returns a settled or open epoch by number.
+  rpc Epoch(QueryEpochRequest) returns (QueryEpochResponse) {
+    option (google.api.http).get = "/hashgram/serviceproof/v1/epoch/{number}";
+  }
+
+  // Rewards returns a provider's credit and earnings.
+  rpc Rewards(QueryRewardsRequest) returns (QueryRewardsResponse) {
+    option (google.api.http).get = "/hashgram/serviceproof/v1/rewards/{operator}";
+  }
+
+  // Assignments returns a provider's storage assignments.
+  rpc Assignments(QueryAssignmentsRequest) returns (QueryAssignmentsResponse) {
+    option (google.api.http).get = "/hashgram/serviceproof/v1/assignments/{provider}";
+  }
+
+  // OpenChallenges returns storage challenges awaiting an answer.
+  rpc OpenChallenges(QueryOpenChallengesRequest) returns (QueryOpenChallengesResponse) {
+    option (google.api.http).get = "/hashgram/serviceproof/v1/challenges/{provider}";
+  }
+
+  // FraudReports returns a provider's fraud history.
+  rpc FraudReports(QueryFraudReportsRequest) returns (QueryFraudReportsResponse) {
+    option (google.api.http).get = "/hashgram/serviceproof/v1/fraud/{provider}";
+  }
+
+  // EmissionSchedule projects the declining emission schedule forward, so an
+  // operator can see the shape of future subsidy rather than having to model
+  // it themselves.
+  rpc EmissionSchedule(QueryEmissionScheduleRequest) returns (QueryEmissionScheduleResponse) {
+    option (google.api.http).get = "/hashgram/serviceproof/v1/emission_schedule";
+  }
+}
+
+message QueryParamsRequest {}
+
+message QueryParamsResponse {
+  Params params = 1 [(gogoproto.nullable) = false];
+
+  // assigners are the addresses permitted to record storage assignments.
+  repeated string assigners = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+message QueryReserveRequest {}
+
+message QueryReserveResponse {
+  ReserveState reserve = 1 [(gogoproto.nullable) = false];
+
+  // remaining is the reserve module account's live balance.
+  repeated cosmos.base.v1beta1.Coin remaining = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // reserve_account holds `remaining` and is readable through a bank query,
+  // so this figure is cross-checkable.
+  string reserve_account = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // bonded is the total posted bond across all providers, held in a separate
+  // module account so that bond and reserve cannot be confused.
+  repeated cosmos.base.v1beta1.Coin bonded = 4 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
+
+message QueryProviderRequest {
+  string operator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+message QueryProviderResponse {
+  Provider provider = 1 [(gogoproto.nullable) = false];
+
+  // active_assignments and total_assigned_bytes summarise what this provider
+  // is actually responsible for, as distinct from what it declared.
+  uint64 active_assignments = 2;
+  uint64 total_assigned_bytes = 3;
+}
+
+message QueryProvidersRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryProvidersResponse {
+  repeated Provider providers = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryCurrentEpochRequest {}
+
+message QueryCurrentEpochResponse {
+  Epoch epoch = 1 [(gogoproto.nullable) = false];
+
+  // blocks_remaining is how many blocks until this epoch settles.
+  int64 blocks_remaining = 2;
+
+  // projected_budget is what this epoch will pay if settled now.
+  repeated cosmos.base.v1beta1.Coin projected_budget = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
+
+message QueryEpochRequest {
+  uint64 number = 1;
+}
+
+message QueryEpochResponse {
+  Epoch epoch = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryRewardsRequest {
+  string operator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+message QueryRewardsResponse {
+  // current is credit accrued in the open epoch, not yet paid.
+  ProviderEpochCredit current = 1 [(gogoproto.nullable) = false];
+
+  // effective_credit is what this provider will actually be paid on after the
+  // per-counterparty concentration discount.
+  //
+  // Reported alongside the raw figures so that an operator whose payout is
+  // lower than their receipts suggest can see why, rather than concluding the
+  // chain miscounted.
+  string effective_credit = 4 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+
+  // largest_client_credit is the biggest single-counterparty contribution in
+  // the open epoch. If it exceeds max_client_concentration_bps of the total,
+  // the discount applies.
+  string largest_client_credit = 5 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+
+  // lifetime_paid is everything this provider has earned.
+  repeated cosmos.base.v1beta1.Coin lifetime_paid = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // recent is the most recent settled epochs, newest first.
+  repeated ProviderEpochCredit recent = 3 [(gogoproto.nullable) = false];
+}
+
+message QueryAssignmentsRequest {
+  string provider = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  cosmos.base.query.v1beta1.PageRequest pagination = 2;
+}
+
+message QueryAssignmentsResponse {
+  repeated StorageAssignment assignments = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}
+
+message QueryOpenChallengesRequest {
+  string provider = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+message QueryOpenChallengesResponse {
+  repeated StorageChallenge challenges = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryFraudReportsRequest {
+  string provider = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+message QueryFraudReportsResponse {
+  repeated FraudReport reports = 1 [(gogoproto.nullable) = false];
+  uint32 current_score = 2;
+  uint32 jail_threshold = 3;
+}
+
+message QueryEmissionScheduleRequest {
+  // epochs is how many future epochs to project. Capped server-side.
+  uint32 epochs = 1;
+}
+
+message QueryEmissionScheduleResponse {
+  repeated EmissionProjection projections = 1 [(gogoproto.nullable) = false];
+}
+
+// EmissionProjection is one epoch of the projected declining schedule.
+message EmissionProjection {
+  uint64 epoch = 1;
+
+  repeated cosmos.base.v1beta1.Coin budget = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  repeated cosmos.base.v1beta1.Coin reserve_after = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}

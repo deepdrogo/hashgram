@@ -1,0 +1,205 @@
+syntax = "proto3";
+package hashgram.serviceproof.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/serviceproof/types";
+
+// ServiceRole is a kind of useful service a node can provide.
+//
+// Users call this "Hashgram Mining". Technically it is Proof of Useful
+// Service: there is no pointless hashing, and nothing is rewarded for merely
+// existing. Every role below is rewarded only against evidence that survives
+// an adversarial reading.
+enum ServiceRole {
+  option (gogoproto.goproto_enum_prefix) = false;
+
+  SERVICE_ROLE_UNSPECIFIED = 0;
+
+  // SERVICE_ROLE_STORAGE stores encrypted blobs and answers retrieval
+  // requests. Rewarded on verified byte-hours: bytes actually assigned to
+  // this provider, held across epochs, scaled by challenge success. Declared
+  // but unused disk earns nothing.
+  SERVICE_ROLE_STORAGE = 1;
+
+  // SERVICE_ROLE_RELAY forwards encrypted envelopes for clients. Rewarded on
+  // receipts signed by the clients that were served, never on the provider's
+  // own counters.
+  SERVICE_ROLE_RELAY = 2;
+
+  // SERVICE_ROLE_CALL provides TURN/SFU call infrastructure. Rewarded on
+  // client-signed session receipts.
+  SERVICE_ROLE_CALL = 3;
+
+  // SERVICE_ROLE_MEDIA serves media manifests and chunks. Rewarded on
+  // client-signed retrieval receipts.
+  SERVICE_ROLE_MEDIA = 4;
+}
+
+// Provider is a registered useful-service node.
+//
+// Registration requires a bond. The bond is what makes fraud expensive: a
+// provider that fails storage challenges or submits forged receipts loses
+// part of it. Without a bond, the cost of being caught would be the cost of
+// generating a new keypair.
+message Provider {
+  // operator is the address that registered and controls this provider.
+  string operator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // reward_address receives earned rewards. It may differ from the operator,
+  // so a node running on a rented server does not need a key that can also
+  // move the earnings. See docs/SECURITY.md on key separation.
+  string reward_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // node_pubkey is the P2P identity key this provider signs receipts and
+  // challenge responses with. Separate from the operator's account key so
+  // that a compromised node cannot spend the operator's HASH.
+  bytes node_pubkey = 3;
+
+  // roles is what this provider offers.
+  repeated ServiceRole roles = 4;
+
+  // bond is the posted stake.
+  repeated cosmos.base.v1beta1.Coin bond = 5 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // declared_storage_bytes is how much disk the operator says they have.
+  //
+  // It is advertising, not entitlement. It determines how much data the
+  // network may assign, and nothing else. An operator who declares a
+  // petabyte and is assigned nothing earns nothing.
+  uint64 declared_storage_bytes = 6;
+
+  // declared_bandwidth_bps is the advertised relay bandwidth limit. Same
+  // status as declared_storage_bytes: it shapes what the network asks of the
+  // node, not what the node is paid.
+  uint64 declared_bandwidth_bps = 7;
+
+  // registered_height is when this provider joined.
+  int64 registered_height = 8;
+
+  // fraud_score accumulates on failed challenges and rejected evidence. Above
+  // the configured threshold the provider is jailed and slashed.
+  uint32 fraud_score = 9;
+
+  // jailed providers earn nothing and receive no new assignments.
+  bool jailed = 10;
+
+  // jailed_until_height is when the provider may request unjailing.
+  int64 jailed_until_height = 11;
+
+  // unbonding_height is set when the operator starts withdrawing. Zero means
+  // the provider is active.
+  int64 unbonding_height = 12;
+
+  // moniker is a human-readable label.
+  string moniker = 13;
+}
+
+// Epoch is one accounting period.
+//
+// Work is credited during an epoch and settled at its end. Settling in
+// batches rather than per receipt is what keeps the reward computation
+// deterministic across nodes: every validator computes the same division of
+// the same budget over the same credited work.
+message Epoch {
+  // number is the epoch index, starting at 0.
+  uint64 number = 1;
+
+  // start_height is the first block in this epoch.
+  int64 start_height = 2;
+
+  // end_height is the last block in this epoch. Zero while the epoch is open.
+  int64 end_height = 3;
+
+  // budget is the emission allocated to this epoch, computed from the
+  // remaining reserve by a deterministic declining schedule.
+  repeated cosmos.base.v1beta1.Coin budget = 4 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // distributed is what was actually paid out of budget.
+  //
+  // Unpaid budget is not burned or lost: it simply stays in the reserve and
+  // is available to later epochs. An early network with few providers
+  // therefore does not waste the reserve.
+  repeated cosmos.base.v1beta1.Coin distributed = 5 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // settled is true once this epoch's rewards have been computed and paid.
+  bool settled = 6;
+
+  // total_credit is the sum of all providers' credited work in this epoch, in
+  // abstract credit units. Rewards are budget * provider_credit / total_credit.
+  string total_credit = 7 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+}
+
+// ProviderEpochCredit is one provider's credited work in one epoch.
+//
+// Credit is deliberately kept as separate per-role figures until settlement,
+// so that "this node was paid for relay work it never did" is answerable from
+// state rather than from a single opaque number.
+message ProviderEpochCredit {
+  string operator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint64 epoch = 2;
+
+  // storage_credit is verified byte-hours, scaled.
+  string storage_credit = 3 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+
+  // relay_credit is from client-signed relay receipts.
+  string relay_credit = 4 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+
+  // retrieval_credit is from client-signed retrieval receipts.
+  string retrieval_credit = 5 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+
+  // call_credit is from client-signed call session receipts.
+  string call_credit = 6 [
+    (cosmos_proto.scalar) = "cosmos.Int",
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+
+  // challenges_issued and challenges_passed drive the storage success rate.
+  uint64 challenges_issued = 7;
+  uint64 challenges_passed = 8;
+
+  // distinct_clients is how many different clients signed receipts for this
+  // provider. Used with the concentration cap: work concentrated in a single
+  // counterparty is discounted, which is what makes two nodes trading fake
+  // traffic unprofitable.
+  uint64 distinct_clients = 9;
+
+  // paid is what was transferred at settlement.
+  repeated cosmos.base.v1beta1.Coin paid = 10 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}

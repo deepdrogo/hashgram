@@ -1,0 +1,151 @@
+syntax = "proto3";
+package hashgram.serviceproof.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/serviceproof/types";
+
+// Params configures the useful-service reward system.
+message Params {
+  // enabled turns reward settlement on.
+  bool enabled = 1;
+
+  // epoch_blocks is the accounting period length.
+  uint64 epoch_blocks = 2;
+
+  // emission_rate_bps is the fraction of the *remaining* reserve released per
+  // epoch, in basis points.
+  //
+  // Taking a fraction of what remains, rather than a fixed amount, gives a
+  // deterministic declining schedule that provably never exhausts the reserve
+  // and never overspends it: after any number of epochs the total emitted is
+  // strictly less than the initial reserve. Early epochs are subsidised more
+  // heavily, which is the intended shape; a mature network is expected to be
+  // funded increasingly by real service-fee revenue rather than by the
+  // reserve.
+  uint32 emission_rate_bps = 3;
+
+  // max_epoch_emission caps a single epoch's budget in absolute terms, so an
+  // early network with a nearly full reserve cannot pay out an
+  // disproportionate amount in one period.
+  repeated cosmos.base.v1beta1.Coin max_epoch_emission = 4 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // min_bond is the stake required to register as a provider.
+  repeated cosmos.base.v1beta1.Coin min_bond = 5 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // max_provider_share_bps caps how much of one epoch's budget a single
+  // provider can receive, in basis points. Without it, one large operator
+  // could take the entire subsidy and the reward system would fund
+  // centralisation.
+  uint32 max_provider_share_bps = 6;
+
+  // max_client_concentration_bps caps how much of a provider's credit may
+  // come from a single counterparty, in basis points.
+  //
+  // This is the defence against two nodes trading fake traffic. Each can
+  // legitimately sign for the other, so no signature check can stop them;
+  // what stops them is that credit sourced overwhelmingly from one
+  // counterparty is discounted to this fraction.
+  uint32 max_client_concentration_bps = 7;
+
+  // challenges_per_epoch is how many storage challenges each provider with
+  // active assignments receives per epoch.
+  uint32 challenges_per_epoch = 8;
+
+  // challenge_response_blocks is how long a provider has to answer.
+  int64 challenge_response_blocks = 9;
+
+  // fraud_score_jail_threshold is the score at which a provider is jailed.
+  uint32 fraud_score_jail_threshold = 10;
+
+  // fraud_score_decay_per_epoch reduces the score each epoch, so that one
+  // bad day does not permanently condemn an otherwise honest operator.
+  uint32 fraud_score_decay_per_epoch = 11;
+
+  // slash_fraction_bps is the fraction of bond slashed when a provider is
+  // jailed for fraud.
+  uint32 slash_fraction_bps = 12;
+
+  // jail_duration_blocks is how long a jailed provider must wait before
+  // requesting unjailing.
+  int64 jail_duration_blocks = 13;
+
+  // unbonding_blocks is how long a bond is locked after the operator starts
+  // withdrawing. It must outlast the window in which fraud could still be
+  // discovered, otherwise an operator could cheat and withdraw before being
+  // caught.
+  int64 unbonding_blocks = 14;
+
+  // receipt_max_age_blocks bounds how long a receipt may be held before
+  // submission.
+  int64 receipt_max_age_blocks = 15;
+
+  // max_receipt_units bounds a single receipt, so one absurd receipt cannot
+  // dominate an epoch before the concentration cap is even applied.
+  uint64 max_receipt_units = 16;
+
+  // storage_credit_per_gib_epoch is the credit units accrued per GiB held for
+  // one full epoch, before the challenge success rate is applied.
+  uint64 storage_credit_per_gib_epoch = 17;
+
+  // relay_credit_per_gib, retrieval_credit_per_gib and
+  // call_credit_per_hour convert receipt units into credit units, which is
+  // how the relative value of the different roles is set.
+  uint64 relay_credit_per_gib = 18;
+  uint64 retrieval_credit_per_gib = 19;
+  uint64 call_credit_per_hour = 20;
+}
+
+// TotalPaid is a cumulative payout figure.
+//
+// Stored rather than derived: summing a provider's entire epoch history on
+// every query would make the cost of answering "how much have I earned?" grow
+// with the age of the chain.
+message TotalPaid {
+  repeated cosmos.base.v1beta1.Coin amount = 1 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// ReserveState tracks the finite useful-service reward reserve.
+message ReserveState {
+  // initial is what the reserve held at genesis: 500,000,000 HASH.
+  repeated cosmos.base.v1beta1.Coin initial = 1 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // total_emitted is what has been paid out of the reserve.
+  //
+  // The invariant total_emitted <= initial is asserted at every settlement.
+  // It cannot be violated by construction either, because there is no mint
+  // function on this chain: the reserve is a module account balance and
+  // rewards are transfers out of it.
+  repeated cosmos.base.v1beta1.Coin total_emitted = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // total_slashed is bond taken from providers for proven fraud. Slashed
+  // bond returns to the reserve rather than being burned, so it funds honest
+  // providers instead of shrinking the supply.
+  repeated cosmos.base.v1beta1.Coin total_slashed = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}

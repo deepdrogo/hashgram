@@ -1,0 +1,229 @@
+syntax = "proto3";
+package hashgram.serviceproof.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "hashgram/serviceproof/v1/evidence.proto";
+import "hashgram/serviceproof/v1/provider.proto";
+import "hashgram/serviceproof/v1/serviceproof.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/serviceproof/types";
+
+// Msg is the x/serviceproof message service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // RegisterProvider registers a useful-service node and posts its bond.
+  rpc RegisterProvider(MsgRegisterProvider) returns (MsgRegisterProviderResponse);
+
+  // UpdateProvider changes a provider's declared capacity, roles or reward
+  // address.
+  rpc UpdateProvider(MsgUpdateProvider) returns (MsgUpdateProviderResponse);
+
+  // SubmitReceipts submits a batch of client-signed service receipts.
+  rpc SubmitReceipts(MsgSubmitReceipts) returns (MsgSubmitReceiptsResponse);
+
+  // AnswerChallenge answers a storage challenge with a Merkle proof.
+  rpc AnswerChallenge(MsgAnswerChallenge) returns (MsgAnswerChallengeResponse);
+
+  // Unjail requests release from jail after the jail period has elapsed.
+  rpc Unjail(MsgUnjail) returns (MsgUnjailResponse);
+
+  // BeginUnbonding starts the bond withdrawal timer.
+  rpc BeginUnbonding(MsgBeginUnbonding) returns (MsgBeginUnbondingResponse);
+
+  // WithdrawBond returns the bond once unbonding has completed.
+  rpc WithdrawBond(MsgWithdrawBond) returns (MsgWithdrawBondResponse);
+
+  // AssignStorage records a storage assignment.
+  //
+  // Restricted to registered assigners, because an assignment is what makes
+  // disk payable and self-assignment would be self-reporting by another
+  // name. In phase 1 the assigner is a governance-registered address; the
+  // Rust storage layer becomes an assigner in phase 2.
+  rpc AssignStorage(MsgAssignStorage) returns (MsgAssignStorageResponse);
+
+  // ReleaseStorage ends a storage assignment.
+  rpc ReleaseStorage(MsgReleaseStorage) returns (MsgReleaseStorageResponse);
+
+  // UpdateParams changes the reward configuration. Governance only.
+  rpc UpdateParams(MsgUpdateParams) returns (MsgUpdateParamsResponse);
+}
+
+// MsgRegisterProvider registers a provider.
+message MsgRegisterProvider {
+  option (cosmos.msg.v1.signer) = "operator";
+  option (amino.name) = "hashgram/MsgRegisterProvider";
+
+  string operator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // reward_address receives earnings. Defaults to operator if empty.
+  string reward_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // node_pubkey is the P2P identity that will sign challenge responses.
+  bytes node_pubkey = 3;
+  KeyType node_key_type = 4;
+
+  repeated ServiceRole roles = 5;
+
+  // bond must meet params.min_bond.
+  repeated cosmos.base.v1beta1.Coin bond = 6 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  uint64 declared_storage_bytes = 7;
+  uint64 declared_bandwidth_bps = 8;
+  string moniker = 9;
+}
+
+// MsgRegisterProviderResponse is the response type.
+message MsgRegisterProviderResponse {}
+
+// MsgUpdateProvider changes a provider's mutable fields.
+message MsgUpdateProvider {
+  option (cosmos.msg.v1.signer) = "operator";
+  option (amino.name) = "hashgram/MsgUpdateProvider";
+
+  string operator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string reward_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  repeated ServiceRole roles = 3;
+  uint64 declared_storage_bytes = 4;
+  uint64 declared_bandwidth_bps = 5;
+  string moniker = 6;
+
+  // additional_bond tops up the existing bond. May be empty.
+  repeated cosmos.base.v1beta1.Coin additional_bond = 7 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgUpdateProviderResponse is the response type.
+message MsgUpdateProviderResponse {}
+
+// MsgSubmitReceipts submits client-signed service receipts.
+message MsgSubmitReceipts {
+  option (cosmos.msg.v1.signer) = "submitter";
+  option (amino.name) = "hashgram/MsgSubmitReceipts";
+
+  // submitter pays the gas. Usually the provider itself, but anybody may
+  // submit: the receipts credit whoever they name, and the signatures are
+  // the clients'.
+  string submitter = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  repeated ServiceReceipt receipts = 2 [(gogoproto.nullable) = false];
+}
+
+// MsgSubmitReceiptsResponse reports how many receipts were accepted.
+message MsgSubmitReceiptsResponse {
+  uint64 accepted = 1;
+  uint64 rejected = 2;
+
+  // rejection_reasons lists why receipts were rejected, in submission order,
+  // so a node operator can fix their setup instead of guessing.
+  repeated string rejection_reasons = 3;
+}
+
+// MsgAnswerChallenge answers a storage challenge.
+message MsgAnswerChallenge {
+  option (cosmos.msg.v1.signer) = "operator";
+  option (amino.name) = "hashgram/MsgAnswerChallenge";
+
+  string operator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  ChallengeResponse response = 2 [(gogoproto.nullable) = false];
+}
+
+// MsgAnswerChallengeResponse reports the verdict.
+message MsgAnswerChallengeResponse {
+  bool passed = 1;
+}
+
+// MsgUnjail requests release from jail.
+message MsgUnjail {
+  option (cosmos.msg.v1.signer) = "operator";
+  option (amino.name) = "hashgram/MsgUnjailProvider";
+
+  string operator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgUnjailResponse is the response type.
+message MsgUnjailResponse {}
+
+// MsgBeginUnbonding starts the bond withdrawal timer.
+message MsgBeginUnbonding {
+  option (cosmos.msg.v1.signer) = "operator";
+  option (amino.name) = "hashgram/MsgBeginUnbonding";
+
+  string operator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgBeginUnbondingResponse reports when the bond becomes withdrawable.
+message MsgBeginUnbondingResponse {
+  int64 completion_height = 1;
+}
+
+// MsgWithdrawBond returns a completed bond.
+message MsgWithdrawBond {
+  option (cosmos.msg.v1.signer) = "operator";
+  option (amino.name) = "hashgram/MsgWithdrawBond";
+
+  string operator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgWithdrawBondResponse reports what was returned.
+message MsgWithdrawBondResponse {
+  repeated cosmos.base.v1beta1.Coin returned = 1 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
+
+// MsgAssignStorage records a storage assignment.
+message MsgAssignStorage {
+  option (cosmos.msg.v1.signer) = "assigner";
+  option (amino.name) = "hashgram/MsgAssignStorage";
+
+  // assigner must be a registered assigner address.
+  string assigner = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  StorageAssignment assignment = 2 [(gogoproto.nullable) = false];
+}
+
+// MsgAssignStorageResponse is the response type.
+message MsgAssignStorageResponse {}
+
+// MsgReleaseStorage ends a storage assignment.
+message MsgReleaseStorage {
+  option (cosmos.msg.v1.signer) = "assigner";
+  option (amino.name) = "hashgram/MsgReleaseStorage";
+
+  string assigner = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  bytes blob_id = 2;
+  string provider = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  uint32 replica_index = 4;
+}
+
+// MsgReleaseStorageResponse is the response type.
+message MsgReleaseStorageResponse {}
+
+// MsgUpdateParams changes the reward configuration.
+message MsgUpdateParams {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "hashgram/MsgUpdateSvcParams";
+
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  Params params = 2 [(gogoproto.nullable) = false];
+
+  // assigners replaces the registered storage-assigner set.
+  repeated string assigners = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgUpdateParamsResponse is the response type.
+message MsgUpdateParamsResponse {}

@@ -1,0 +1,45 @@
+syntax = "proto3";
+package hashgram.serviceproof.v1;
+
+import "gogoproto/gogo.proto";
+import "cosmos_proto/cosmos.proto";
+import "hashgram/serviceproof/v1/evidence.proto";
+import "hashgram/serviceproof/v1/provider.proto";
+import "hashgram/serviceproof/v1/serviceproof.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/serviceproof/types";
+
+// GenesisState is the x/serviceproof genesis state.
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+
+  // reserve tracks the finite useful-service reward reserve.
+  ReserveState reserve = 2 [(gogoproto.nullable) = false];
+
+  // assigners are the addresses permitted to record storage assignments.
+  //
+  // Empty at genesis. Until governance registers one, no storage can be
+  // assigned and therefore no storage rewards can be earned, which is the
+  // correct default: a provider must not be able to assign work to itself.
+  repeated string assigners = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // current_epoch is the open accounting period.
+  uint64 current_epoch = 4;
+
+  // epoch_start_height is when the open epoch began.
+  int64 epoch_start_height = 5;
+
+  // providers, assignments, credits and fraud reports are empty on a fresh
+  // chain and populated when restoring an exported one.
+  repeated Provider providers = 6 [(gogoproto.nullable) = false];
+  repeated StorageAssignment assignments = 7 [(gogoproto.nullable) = false];
+  repeated ProviderEpochCredit credits = 8 [(gogoproto.nullable) = false];
+  repeated Epoch epochs = 9 [(gogoproto.nullable) = false];
+  repeated FraudReport fraud_reports = 10 [(gogoproto.nullable) = false];
+
+  // next_challenge_id is the challenge identifier counter.
+  uint64 next_challenge_id = 11;
+
+  // open_challenges are challenges awaiting an answer.
+  repeated StorageChallenge open_challenges = 12 [(gogoproto.nullable) = false];
+}
