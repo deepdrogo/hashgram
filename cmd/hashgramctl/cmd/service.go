@@ -464,6 +464,10 @@ this validator by.`,
 				}
 			}
 
+			if err := adoptServiceOwnership(paths); err != nil {
+				return err
+			}
+
 			o := newOut()
 			o.row("Node home", paths.NodeHome)
 			o.row("Node key", paths.NodeKeyFile())

@@ -27,8 +27,8 @@ which it is a reasonable request.
 ```mermaid
 flowchart TD
     A["Part A: Founder cold wallet<br/>OFFLINE machine, never a server"] --> B["Part B: Prepare hosts<br/>bootstrap + preflight"]
-    B --> C["Part C: Collect validator gentxs"]
-    C --> D["Part D: Create genesis<br/>public address only"]
+    B --> C["Part C: Preliminary genesis<br/>public address + launch accounts"]
+    C --> D["Part D: Validator gentxs<br/>and finalize-genesis"]
     D --> E["Part E: Publish genesis and,<br/>separately, its hash"]
     E --> F["Part F: Operators join"]
     F --> G["Part G: Start and verify"]
@@ -223,24 +223,68 @@ thing standing between the two.
 
 ---
 
-## Part C — Collect validator gentxs
+## Part C — Create the preliminary genesis
 
-**Where:** the machine that will create genesis.
+**Where:** the genesis machine. The address is the **public** one from A.6.
 
-Each initial validator produces a gentx and sends it to you:
+Genesis allocates the whole 1,000,000,000 HASH, so a validator has nothing
+to bond from unless genesis gives it a balance. Those balances come out of
+the Founder's unlocked 20,000,000 HASH — the Founder pays for the launch
+validators from the Founder's own spendable money, the treasury is untouched,
+and the total stays exactly 1,000,000,000.
+
+### C.1 Each launch validator sends you an operator address
+
+On each validator host, a **hot** operator key in `hashgramd`'s keyring:
 
 ```bash
-# On each validator's host:
-hashgramd genesis gentx <key-name> <amount>uhash \
-  --chain-id hashgram-1 \
-  --moniker <name> \
-  --ip <public-ip>
+hashgramd keys add operator            # or --keyring-backend file with a passphrase
+hashgramd keys show operator -a        # hash1... — send this address to the genesis machine
 ```
 
-Collect them into the genesis machine's config directory:
+Never the Founder cold key, never a key that exists on two machines.
+
+### C.2 Create the preliminary genesis
 
 ```bash
-cp received-gentxs/*.json /var/lib/hashgram/chain/config/gentx/
+hashgramctl init-mainnet-genesis \
+  --founder-address hash1<founder-public-address> \
+  --genesis-account hash1<validator-1-operator>=1000000HASH \
+  --genesis-account hash1<validator-2-operator>=1000000HASH
+```
+
+Amounts take `HASH` or `uhash`. Give each validator its stake plus fee
+change; what a validator does not bond stays spendable in its operator
+account. The sum of all launch accounts must not exceed 20,000,000 HASH.
+
+It prints the full distribution and asks for confirmation. Check:
+
+```text
+founder          199,000,000 - N  HASH   (180,000,000 vests; the rest is spendable)
+launch-1           1,000,000 HASH
+launch-2           1,000,000 HASH
+serviceproof     500,000,000 HASH
+welcome            1,850,000 HASH
+treasury         150,000,000 HASH
+dev_grants        50,000,000 HASH
+liquidity         50,000,000 HASH
+growth            48,150,000 HASH
+TOTAL          1,000,000,000 HASH
+```
+
+And that the Founder address shown is character-for-character the one you
+recorded. This is the last moment at which a wrong address is fixable.
+
+The hash it prints is marked **PRELIMINARY**. It is not the network's
+identity, because the file has no validators yet; Part D changes it.
+
+### C.3 Distribute the preliminary file
+
+Send `genesis.json` to every launch validator. Its preliminary hash lets them
+confirm they received the same file:
+
+```bash
+sha256sum /var/lib/hashgram/chain/config/genesis.json
 ```
 
 ### On the initial validator set
@@ -256,70 +300,81 @@ yours, and a starting set of one is a starting set of one.
 
 ### Part C checklist
 
-- [ ] Gentxs from every initial validator collected
-- [ ] Each gentx's chain id is `hashgram-1`
+- [ ] Founder address matches A.6 exactly, character for character
+- [ ] Every launch validator's operator address is a hot key on its own host
+- [ ] Distribution summary reviewed; total exactly 1,000,000,000 HASH
+- [ ] Preliminary genesis distributed; every validator confirms its sha256
 - [ ] Operators are genuinely independent, not one person with several servers
 - [ ] No single operator holds a decisive share of the initial stake
 
 ---
 
-## Part D — Create genesis
+## Part D — Validator gentxs and the final genesis
 
-**Where:** the genesis machine. Once. Irreversibly.
+**Where:** each validator host, then the genesis machine. Once. Irreversibly.
 
-### D.1 Create it
+### D.1 Each validator creates its gentx
+
+Against the preliminary `genesis.json` from C.3, placed at
+`<node-home>/config/genesis.json`, with the funded operator key:
 
 ```bash
-hashgramctl init-mainnet-genesis --founder-address hash1...
+hashgramd genesis gentx operator 900000000000uhash \
+  --chain-id hashgram-1 \
+  --moniker <name> \
+  --commission-rate 0.10 --commission-max-rate 0.20 --commission-max-change-rate 0.01 \
+  --ip <public-ip>
+# writes config/gentx/gentx-<node-id>.json
 ```
 
-The address is the **public** one from A.6. That is the only thing this
-command needs, and it is the only Founder material this server will ever see.
-The tooling has no code path that generates an address, which is what makes
-that guarantee structural rather than procedural.
+The amount must be less than the launch account balance, leaving fee change.
+Send the gentx file to the genesis machine.
 
-### D.2 Read the summary before confirming
+### D.2 Finalise on the genesis machine
 
-It prints the full distribution and asks for confirmation. Check:
-
-```text
-Founder                200,000,000 HASH   (20,000,000 unlocked + 180,000,000 vesting)
-Service reserve        500,000,000 HASH
-Treasury               150,000,000 HASH
-Growth                  50,000,000 HASH
-Dev grants              50,000,000 HASH
-Liquidity               50,000,000 HASH
-                     ─────────────────
-Total                1,000,000,000 HASH
+```bash
+cp received-gentxs/*.json /var/lib/hashgram/chain/config/gentx/
+hashgramctl finalize-genesis
 ```
 
-And that the Founder address shown is character-for-character the one you
-recorded. This is the last moment at which a wrong address is fixable.
+It runs `collect-gentxs` and `validate-genesis`, refuses a genesis with no
+validators, computes the hash over the final bytes and pins it in
+`/etc/hashgram/network.json` and `app.toml`. It refuses to run twice without
+`--force`, because finalising again would change the network's identity.
 
 ### D.3 Record the genesis hash
 
-It prints the hash and pins it in the node's network configuration.
-
 ```text
-Genesis hash: ________________________________________________________________
+GENESIS HASH  ________________________________________________________________
 ```
 
-Write it down. Now, before doing anything else.
+Write it down. Now, before doing anything else. Confirm it independently:
+
+```bash
+sha256sum /var/lib/hashgram/chain/config/genesis.json
+hashgramctl network-info
+```
 
 ### D.4 Confirm determinism, ideally with a second person
 
-The same inputs produce a byte-identical genesis file. Have someone else
-rebuild it from the same inputs and confirm they get the same hash.
+The same inputs (Founder address, launch accounts, genesis time, gentxs)
+produce a byte-identical file. Have someone else rebuild it from the same
+inputs and confirm they get the same hash. A genesis nobody else can
+reproduce is a genesis everybody has to trust, and this is the cheapest
+possible moment to remove that requirement.
 
-A genesis nobody else can reproduce is a genesis everybody has to trust, and
-this is the cheapest possible moment to remove that requirement.
+Tested end to end on this tooling: preliminary genesis with one launch
+account, gentx, `finalize-genesis`, `mainnet-preflight` (every check except
+disk space on the development host), `hashgramd start` producing blocks on
+`hashgram-1` with supply exactly 1,000,000,000,000,000 uhash and the Founder
+holding exactly 200,000,000 minus the launch funding.
 
 ### Part D checklist
 
-- [ ] Founder address matches A.6 exactly, character for character
-- [ ] Distribution summary reviewed and correct
-- [ ] Total is exactly 1,000,000,000 HASH
-- [ ] Genesis hash written down
+- [ ] A gentx from every launch validator, each with chain id `hashgram-1`
+- [ ] `finalize-genesis` reported the expected validator count
+- [ ] Genesis hash written down off the machine
+- [ ] `network-info` and `sha256sum` agree with it
 - [ ] Hash independently reproduced by a second person from the same inputs
 
 ---
@@ -423,13 +478,14 @@ hashgramd query bank total --denom uhash
 hashgramctl wallet-info hash1...
 ```
 
-- Total balance: 200,000,000 HASH
-- Spendable now: 20,000,000 HASH
-- Vesting: 180,000,000 HASH across 96 monthly periods
+- Total balance: 200,000,000 HASH minus the launch funding from C.2
+- Spendable now: 20,000,000 HASH minus the launch funding
+- Vesting: 180,000,000 HASH across 96 monthly periods, unchanged
 
-If the spendable figure is 200,000,000, the vesting account was not created
-and something went wrong in Part D. Stop and investigate before anyone
-transacts.
+With a single 1,000,000 HASH launch account that reads 199,000,000 total,
+19,000,000 spendable, 180,000,000 vesting. If the spendable figure equals the
+total, the vesting account was not created and something went wrong in
+Part C. Stop and investigate before anyone transacts.
 
 ### G.4 The Founder revenue share is 1% and applies to fees only
 
@@ -487,8 +543,8 @@ pinned genesis hash in `join-mainnet`.
 
 - [ ] Blocks producing steadily
 - [ ] Total supply exactly 1,000,000,000,000,000 uhash
-- [ ] Founder holds exactly 200,000,000 HASH
-- [ ] Exactly 20,000,000 HASH spendable, 180,000,000 vesting over 8 years
+- [ ] Founder holds exactly 200,000,000 HASH minus the launch funding you chose
+- [ ] Exactly 180,000,000 HASH vesting over 8 years; the remainder spendable
 - [ ] Founder fee share is exactly 100 bps
 - [ ] A transfer is untaxed: 100 sent is 100 received
 - [ ] No mint module; `supply_over_ceiling` is zero
@@ -639,8 +695,9 @@ Everything in one place. All of it before announcing the network.
 
 **Genesis**
 - [ ] Founder address verified character for character
+- [ ] Launch accounts are validator hot keys, funded from the Founder's unlocked portion only
 - [ ] Total exactly 1,000,000,000 HASH
-- [ ] Hash written down
+- [ ] `finalize-genesis` run once; final hash written down
 - [ ] Hash independently reproduced by a second person
 
 **Publication**

@@ -53,7 +53,10 @@ not this server. See docs/FOUNDER_LAUNCH_RUNBOOK.md.
 Typical first launch on a fresh Ubuntu server:
 
   sudo ./scripts/install/bootstrap-ubuntu.sh
-  hashgramctl init-mainnet-genesis --founder-address hash1...
+  hashgramctl init-mainnet-genesis --founder-address hash1... \
+      --genesis-account hash1<validator-operator>=1000000HASH
+  hashgramd genesis gentx <key> 900000000000uhash --chain-id hashgram-1 ...
+  hashgramctl finalize-genesis
   hashgramctl mainnet-preflight
   hashgramctl start
   hashgramctl chain-status
@@ -70,6 +73,14 @@ Joining an existing network from a second server:
 			home := flagNodeHome
 			if home == "" {
 				home = app.DefaultNodeHome
+				// On a bootstrapped host the service's home wins over the
+				// invoking user's dotfile directory, unless the operator
+				// pinned one explicitly through HASHGRAM_HOME.
+				if os.Getenv(app.EnvNodeHome) == "" {
+					if prod, ok := productionNodeHome(flagDataDir); ok {
+						home = prod
+					}
+				}
 			}
 
 			// Resolve the three directory flags to absolute, cleaned paths
@@ -100,7 +111,7 @@ Joining an existing network from a second server:
 	root.PersistentFlags().StringVar(&flagDataDir, "data-dir",
 		hgconfig.DefaultDataDir, "node data directory")
 	root.PersistentFlags().StringVar(&flagNodeHome, "home", "",
-		"hashgramd node home (defaults to $HASHGRAM_HOME or $HOME/.hashgram)")
+		"hashgramd node home (defaults to $HASHGRAM_HOME, else /var/lib/hashgram/chain when it exists, else $HOME/.hashgram)")
 	root.PersistentFlags().StringVar(&flagNodeAPI, "node-api", hgrpc.NodeAPIAddr,
 		"local API of hashgram-node (loopback)")
 	root.PersistentFlags().StringVar(&flagRPC, "rpc",
@@ -114,6 +125,7 @@ Joining an existing network from a second server:
 		cmdInstall(),
 		cmdInit(),
 		cmdInitMainnetGenesis(),
+		cmdFinalizeGenesis(),
 		cmdJoinMainnet(),
 		cmdUpdate(),
 

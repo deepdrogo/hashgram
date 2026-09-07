@@ -62,6 +62,36 @@ type Config struct {
 	// VotingPeriod overrides the governance voting period. Zero uses the
 	// default for the network type.
 	VotingPeriod time.Duration
+
+	// GenesisAccounts are plain accounts funded at genesis so that the
+	// initial validators can bond and pay fees. Genesis already allocates the
+	// whole supply, so these balances are not created: they are transferred
+	// out of the Founder's unlocked 20,000,000 HASH, and the Founder's
+	// balance is reduced by exactly their sum. The vesting schedule, the
+	// treasury reserves and the service reserve are untouched, and the total
+	// stays exactly the maximum supply.
+	//
+	// The Founder pays for the launch validators out of the Founder's own
+	// spendable money. That is the honest source: the treasury is spendable
+	// only by governance, and governance does not exist before block one.
+	GenesisAccounts []GenesisAccount
+}
+
+// GenesisAccount is one funded launch account.
+type GenesisAccount struct {
+	// Address is a PUBLIC Hashgram account address. A validator operator key
+	// or a fee-paying hot key; never the Founder cold address, which already
+	// holds its allocation.
+	Address string
+
+	// Amount is the balance, in base units.
+	Amount sdk.Coins
+}
+
+// MaxGenesisAccountFundingBase is the most the genesis accounts may take in
+// total: the whole unlocked portion of the Founder allocation.
+func MaxGenesisAccountFundingBase() math.Int {
+	return hgparams.HashToBase(hgparams.FounderUnlockedAtGenesisHash)
 }
 
 // Result reports what was built.
@@ -154,7 +184,7 @@ func Build(cdc codec.Codec, defaults map[string]json.RawMessage, cfg Config) (*R
 	// --- accounts and balances -------------------------------------------
 
 	allocations, accounts, balances, err := buildAllocations(
-		founderAddr, treasuryGenesis, genesisTime, cfg.Devnet)
+		founderAddr, treasuryGenesis, genesisTime, cfg.Devnet, cfg.GenesisAccounts)
 	if err != nil {
 		return nil, err
 	}
@@ -235,9 +265,18 @@ func buildAllocations(
 	treasuryGenesis *treasurytypes.GenesisState,
 	genesisTime time.Time,
 	devnet bool,
+	genesisAccounts []GenesisAccount,
 ) ([]Allocation, []authtypes.GenesisAccount, []banktypes.Balance, error) {
 	founderTotal := hashCoins(hgparams.AllocFounderHash)
 	founderVesting := hashCoins(hgparams.FounderVestedHash)
+
+	// Launch accounts come out of the Founder's unlocked portion. Validate
+	// them completely before touching any balance.
+	launchAccounts, launchTotal, err := validateGenesisAccounts(founder, genesisAccounts)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	founderBalance := founderTotal.Sub(launchTotal...)
 
 	periods, endTime := founderVestingSchedule(genesisTime, devnet)
 
@@ -252,20 +291,39 @@ func buildAllocations(
 	accounts := []authtypes.GenesisAccount{founderAccount}
 	balances := []banktypes.Balance{{
 		Address: founder.String(),
-		Coins:   founderTotal,
+		Coins:   founderBalance,
 	}}
 
+	founderDescription := fmt.Sprintf(
+		"Founder allocation (20%%): %s HASH unlocked at genesis, %s HASH vesting over %d monthly periods",
+		commas(hgparams.FounderUnlockedAtGenesisHash),
+		commas(hgparams.FounderVestedHash),
+		len(periods))
+	if !launchTotal.IsZero() {
+		founderDescription += fmt.Sprintf(
+			"; %s HASH of the unlocked portion transferred at genesis to %d launch account(s) below",
+			commasStr(launchTotal.AmountOf(hgparams.BaseCoinDenom).QuoRaw(hgparams.MicroUnit).String()),
+			len(launchAccounts))
+	}
 	allocations := []Allocation{{
-		Name: "founder",
-		Description: fmt.Sprintf(
-			"Founder allocation (20%%): %s HASH unlocked at genesis, %s HASH vesting over %d monthly periods",
-			commas(hgparams.FounderUnlockedAtGenesisHash),
-			commas(hgparams.FounderVestedHash),
-			len(periods)),
-		Address: founder.String(),
-		Amount:  founderTotal,
-		Vesting: founderVesting,
+		Name:        "founder",
+		Description: founderDescription,
+		Address:     founder.String(),
+		Amount:      founderBalance,
+		Vesting:     founderVesting,
 	}}
+
+	for i, la := range launchAccounts {
+		addr := sdk.MustAccAddressFromBech32(la.Address)
+		accounts = append(accounts, authtypes.NewBaseAccountWithAddress(addr))
+		balances = append(balances, banktypes.Balance{Address: la.Address, Coins: la.Amount})
+		allocations = append(allocations, Allocation{
+			Name:        fmt.Sprintf("launch-%d", i+1),
+			Description: "Launch account funded from the Founder's unlocked portion (validator stake and fees)",
+			Address:     la.Address,
+			Amount:      la.Amount,
+		})
+	}
 
 	// Module-held allocations. Each is a module account declared explicitly
 	// in auth genesis: the account keeper panics if it finds a plain
@@ -377,8 +435,9 @@ func denomMetadata() banktypes.Metadata {
 	}
 }
 
-func commas(n int64) string {
-	s := fmt.Sprintf("%d", n)
+func commas(n int64) string { return commasStr(fmt.Sprintf("%d", n)) }
+
+func commasStr(s string) string {
 	if len(s) <= 3 {
 		return s
 	}
@@ -394,4 +453,50 @@ func commas(n int64) string {
 		out = append(out, s[i:i+3]...)
 	}
 	return string(out)
+}
+
+// validateGenesisAccounts checks the launch accounts and returns them with
+// their total.
+//
+// The rules are the ones that keep the distribution table honest: the money
+// comes only from the Founder's unlocked portion and can never exceed it,
+// the Founder's own address cannot be a launch account (it already holds its
+// allocation), module addresses cannot receive plain balances, and an
+// address appears once.
+func validateGenesisAccounts(founder sdk.AccAddress, in []GenesisAccount) ([]GenesisAccount, sdk.Coins, error) {
+	total := sdk.NewCoins()
+	seen := make(map[string]bool, len(in))
+	out := make([]GenesisAccount, 0, len(in))
+	for i, ga := range in {
+		addr, err := sdk.AccAddressFromBech32(ga.Address)
+		if err != nil {
+			return nil, nil, fmt.Errorf("genesis account %d: %q is not a valid Hashgram address: %w", i+1, ga.Address, err)
+		}
+		if addr.Equals(founder) {
+			return nil, nil, fmt.Errorf("genesis account %d is the Founder address; it already holds the Founder allocation", i+1)
+		}
+		if seen[addr.String()] {
+			return nil, nil, fmt.Errorf("genesis account %s is listed twice", addr.String())
+		}
+		seen[addr.String()] = true
+		if !ga.Amount.IsValid() || ga.Amount.IsZero() {
+			return nil, nil, fmt.Errorf("genesis account %s: amount %q must be a positive coin amount", addr.String(), ga.Amount.String())
+		}
+		for _, c := range ga.Amount {
+			if c.Denom != hgparams.BaseCoinDenom {
+				return nil, nil, fmt.Errorf("genesis account %s: only %s can be allocated, not %s",
+					addr.String(), hgparams.BaseCoinDenom, c.Denom)
+			}
+		}
+		total = total.Add(ga.Amount...)
+		out = append(out, GenesisAccount{Address: addr.String(), Amount: ga.Amount})
+	}
+	if total.AmountOf(hgparams.BaseCoinDenom).GT(MaxGenesisAccountFundingBase()) {
+		return nil, nil, fmt.Errorf(
+			"genesis accounts total %s %s but the Founder's unlocked portion is %s %s; "+
+				"launch accounts are funded only from what the Founder can spend at genesis",
+			total.AmountOf(hgparams.BaseCoinDenom), hgparams.BaseCoinDenom,
+			MaxGenesisAccountFundingBase(), hgparams.BaseCoinDenom)
+	}
+	return out, total, nil
 }

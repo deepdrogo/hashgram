@@ -70,6 +70,22 @@ file matches the network you named.
 
 For a devnet, add `--devnet`.
 
+### Where the node home is
+
+`hashgramd.service` runs as `hashgram-chain` from `/var/lib/hashgram/chain`.
+On a host where `bootstrap-ubuntu.sh` created that directory, every
+`hashgramctl` command operates on it by default (unless `HASHGRAM_HOME` or
+`--home` says otherwise), and the commands that write into it as root —
+`init`, `init-mainnet-genesis`, `finalize-genesis`, `join-mainnet` — hand the
+files to the service account afterwards. On a developer machine without that
+directory the default is `~/.hashgram`. `hashgramctl status` prints which one
+is in use; if it is not the one the service reads, nothing else will make
+sense.
+
+`hashgramd` itself does not know about this default: pass `--home
+/var/lib/hashgram/chain` to it explicitly (keys, gentx, queries) or export
+`HASHGRAM_HOME=/var/lib/hashgram/chain` in the operator's shell.
+
 ## Daily commands
 
 ```bash

@@ -17,6 +17,9 @@ import (
 	dbm "github.com/cosmos/cosmos-db"
 
 	"cosmossdk.io/log"
+	"cosmossdk.io/math"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
 
@@ -32,11 +35,12 @@ const EnvFounderAddress = "GENESIS_FOUNDER_ADDRESS"
 
 func cmdInitMainnetGenesis() *cobra.Command {
 	var (
-		founderAddress string
-		moniker        string
-		devnet         bool
-		force          bool
-		outputDir      string
+		founderAddress  string
+		moniker         string
+		devnet          bool
+		force           bool
+		outputDir       string
+		genesisAccounts []string
 	)
 
 	cmd := &cobra.Command{
@@ -60,8 +64,17 @@ or set ` + EnvFounderAddress + ` in the environment.
 The Founder private key must never be present on this machine. See
 docs/FOUNDER_LAUNCH_RUNBOOK.md Part A.
 
-Afterwards, record the printed GENESIS HASH somewhere outside this server.
-It is what every future node and client uses to verify the network.`,
+Genesis allocates the whole supply, so a validator needs a balance to bond
+from. Fund the launch accounts (validator operator keys) with
+--genesis-account; the money comes out of the Founder's unlocked
+20,000,000 HASH and the total stays exactly 1,000,000,000 HASH:
+
+  hashgramctl init-mainnet-genesis --founder-address hash1... \
+      --genesis-account hash1<validator-operator>=1000000000000uhash
+
+The file this writes has NO validators yet. Each validator creates a gentx
+against it, and 'hashgramctl finalize-genesis' collects them and pins the
+FINAL genesis hash. The hash printed here is preliminary.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx, cancel := commandContext()
@@ -90,11 +103,17 @@ It is what every future node and client uses to verify the network.`,
 				simtestutil.NewAppOptionsWithFlagHome(paths.NodeHome),
 			)
 
+			launch, err := parseGenesisAccounts(genesisAccounts)
+			if err != nil {
+				return err
+			}
+
 			genesisTime := time.Now().UTC()
 			result, err := genesis.Build(tempApp.AppCodec(), tempApp.DefaultGenesis(), genesis.Config{
-				FounderAddress: founderAddress,
-				Devnet:         devnet,
-				GenesisTime:    genesisTime,
+				FounderAddress:  founderAddress,
+				Devnet:          devnet,
+				GenesisTime:     genesisTime,
+				GenesisAccounts: launch,
 			})
 			if err != nil {
 				return err
@@ -180,13 +199,18 @@ It is what every future node and client uses to verify the network.`,
 				return err
 			}
 
-			printGenesisResult(cmd.OutOrStdout(), target, genesisHash, identity, moniker)
+			if err := adoptServiceOwnership(paths); err != nil {
+				return err
+			}
+			printGenesisResult(cmd.OutOrStdout(), target, genesisHash, identity, moniker, len(launch))
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVar(&founderAddress, "founder-address", "",
 		"the Founder PUBLIC Hashgram address (hash1...); required")
+	cmd.Flags().StringArrayVar(&genesisAccounts, "genesis-account", nil,
+		"fund a launch account at genesis from the Founder's unlocked portion: <hash1...>=<amount>uhash or <n>HASH (repeatable)")
 	cmd.Flags().StringVar(&moniker, "moniker", "genesis-full", "node moniker")
 	cmd.Flags().BoolVar(&devnet, "devnet", false,
 		"create a DEVNET ONLY network instead of Mainnet")
@@ -257,9 +281,9 @@ func printGenesisSummary(w io.Writer, r *genesis.Result, founderAddress string, 
 	fmt.Fprintf(w, "                 'hashgramd genesis collect-gentxs' before starting.\n")
 }
 
-func printGenesisResult(w io.Writer, path, genesisHash string, identity hgparams.NetworkIdentity, moniker string) {
+func printGenesisResult(w io.Writer, path, genesisHash string, identity hgparams.NetworkIdentity, moniker string, launchAccounts int) {
 	fmt.Fprintf(w, "\n%s\n", strings.Repeat("=", 74))
-	fmt.Fprintf(w, "  GENESIS CREATED\n")
+	fmt.Fprintf(w, "  GENESIS CREATED (PRELIMINARY: no validators yet)\n")
 	fmt.Fprintf(w, "%s\n\n", strings.Repeat("=", 74))
 
 	fmt.Fprintf(w, "  File           %s\n", path)
@@ -269,25 +293,76 @@ func printGenesisResult(w io.Writer, path, genesisHash string, identity hgparams
 	fmt.Fprintf(w, "  Network magic  %s\n", string(identity.NetworkMagic[:]))
 	fmt.Fprintf(w, "  Protocol       v%d\n\n", identity.ProtocolMajorVersion)
 
-	fmt.Fprintf(w, "  GENESIS HASH\n")
+	fmt.Fprintf(w, "  PRELIMINARY GENESIS HASH\n")
 	fmt.Fprintf(w, "  %s\n\n", genesisHash)
 
-	fmt.Fprintf(w, "  This hash is the network's identity. Record it somewhere outside this\n")
-	fmt.Fprintf(w, "  server. Every future node and client uses it to verify they are on the\n")
-	fmt.Fprintf(w, "  same network, and a fork with a different genesis will be rejected.\n\n")
-	fmt.Fprintf(w, "  Verify it yourself at any time:\n")
-	fmt.Fprintf(w, "    sha256sum %s\n\n", path)
+	fmt.Fprintf(w, "  This file has no validator set yet, so this hash is NOT the network's\n")
+	fmt.Fprintf(w, "  identity. Adding the validator gentxs changes the file; the hash that\n")
+	fmt.Fprintf(w, "  'hashgramctl finalize-genesis' prints is the one to record and publish.\n\n")
+	if launchAccounts == 0 {
+		fmt.Fprintf(w, "  WARNING: no --genesis-account was given. Every balance belongs to the\n")
+		fmt.Fprintf(w, "  Founder, the reserves and the treasury, so no validator key can bond\n")
+		fmt.Fprintf(w, "  and the chain cannot start. Re-run with --force and at least one\n")
+		fmt.Fprintf(w, "  --genesis-account <validator-operator>=<amount>uhash.\n\n")
+	}
 
 	fmt.Fprintf(w, "  NEXT STEPS\n")
-	fmt.Fprintf(w, "    1. Back up the genesis file off this server.\n")
-	fmt.Fprintf(w, "    2. Create the validator gentx:\n")
-	fmt.Fprintf(w, "         hashgramd genesis gentx <key-name> <amount>uhash --chain-id %s\n", identity.ChainID)
-	fmt.Fprintf(w, "         hashgramd genesis collect-gentxs\n")
-	fmt.Fprintf(w, "    3. Run the pre-launch checks:\n")
+	fmt.Fprintf(w, "    1. Give this genesis.json to every launch validator. On each validator\n")
+	fmt.Fprintf(w, "       host, with the funded operator key in hashgramd's keyring:\n")
+	fmt.Fprintf(w, "         hashgramd genesis gentx <key-name> <amount>uhash --chain-id %s \\\n", identity.ChainID)
+	fmt.Fprintf(w, "           --moniker <name> --commission-rate 0.10 --commission-max-rate 0.20 \\\n")
+	fmt.Fprintf(w, "           --commission-max-change-rate 0.01\n")
+	fmt.Fprintf(w, "       (writes config/gentx/gentx-<node-id>.json; send that file back here)\n")
+	fmt.Fprintf(w, "    2. Copy every gentx into %s\n", filepath.Join(filepath.Dir(path), "gentx"))
+	fmt.Fprintf(w, "    3. Finalise, which pins the real genesis hash:\n")
+	fmt.Fprintf(w, "         hashgramctl finalize-genesis\n")
+	fmt.Fprintf(w, "    4. Run the pre-launch checks, then start:\n")
 	fmt.Fprintf(w, "         hashgramctl mainnet-preflight\n")
-	fmt.Fprintf(w, "    4. Start the node:\n")
 	fmt.Fprintf(w, "         hashgramctl start\n")
 	fmt.Fprintf(w, "         hashgramctl chain-status\n\n")
+}
+
+// parseGenesisAccounts turns "--genesis-account hash1...=<amount>" flags
+// into builder input. Amounts may be given in base units ("1000000uhash")
+// or whole coins ("1HASH"); nothing else, so a typo in a denomination is an
+// error rather than a silent zero.
+func parseGenesisAccounts(flags []string) ([]genesis.GenesisAccount, error) {
+	out := make([]genesis.GenesisAccount, 0, len(flags))
+	for _, f := range flags {
+		addr, amount, ok := strings.Cut(strings.TrimSpace(f), "=")
+		if !ok || addr == "" || amount == "" {
+			return nil, fmt.Errorf("--genesis-account %q: expected <hash1...>=<amount>uhash", f)
+		}
+		coins, err := parseHashAmount(amount)
+		if err != nil {
+			return nil, fmt.Errorf("--genesis-account %s: %w", addr, err)
+		}
+		out = append(out, genesis.GenesisAccount{Address: strings.TrimSpace(addr), Amount: coins})
+	}
+	return out, nil
+}
+
+// parseHashAmount accepts "<n>uhash" or "<n>HASH" (case-insensitive on the
+// unit) and returns base-unit coins.
+func parseHashAmount(s string) (sdk.Coins, error) {
+	s = strings.TrimSpace(s)
+	lower := strings.ToLower(s)
+	switch {
+	case strings.HasSuffix(lower, hgparams.BaseCoinDenom):
+		n, ok := math.NewIntFromString(strings.TrimSpace(s[:len(s)-len(hgparams.BaseCoinDenom)]))
+		if !ok || !n.IsPositive() {
+			return nil, fmt.Errorf("%q is not a positive whole number of %s", s, hgparams.BaseCoinDenom)
+		}
+		return sdk.NewCoins(sdk.NewCoin(hgparams.BaseCoinDenom, n)), nil
+	case strings.HasSuffix(lower, strings.ToLower(hgparams.HumanCoinDenom)):
+		n, ok := math.NewIntFromString(strings.TrimSpace(s[:len(s)-len(hgparams.HumanCoinDenom)]))
+		if !ok || !n.IsPositive() {
+			return nil, fmt.Errorf("%q is not a positive whole number of %s", s, hgparams.HumanCoinDenom)
+		}
+		return sdk.NewCoins(sdk.NewCoin(hgparams.BaseCoinDenom, n.MulRaw(hgparams.MicroUnit))), nil
+	default:
+		return nil, fmt.Errorf("%q must end in %s or %s", s, hgparams.BaseCoinDenom, hgparams.HumanCoinDenom)
+	}
 }
 
 // consensusParams returns the CometBFT consensus parameters for genesis.

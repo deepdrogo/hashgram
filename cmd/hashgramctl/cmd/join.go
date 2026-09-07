@@ -167,6 +167,9 @@ docs/OPERATIONS.md.`,
 			o.raw("")
 			o.raw("JOINED " + expected.NetworkName)
 			o.raw("")
+			if err := adoptServiceOwnership(paths); err != nil {
+				return err
+			}
 			o.row("Genesis file", target)
 			o.row("Genesis hash", genesisHash)
 			o.row("Network id", expected.NetworkID)

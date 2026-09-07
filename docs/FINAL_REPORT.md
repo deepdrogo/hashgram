@@ -92,13 +92,20 @@ The two claims most worth checking independently, with the exact commands.
 hashgramctl wallet-info <founder-address>
 ```
 
-Expect:
+Expect, for a genesis that funded no launch accounts:
 
 ```text
 Balance           200000000000000 uhash  (200000000 HASH)
 Spendable now     20000000000000 uhash  (20000000 HASH)
 Locked (vesting)  180000000000000 uhash  (180000000 HASH)
 ```
+
+Launch validators are funded at genesis out of the Founder's unlocked
+portion (`--genesis-account`), so a real launch shows the balance and the
+spendable figure reduced by exactly that sum, and the locked figure unchanged.
+The distribution table `init-mainnet-genesis` printed lists every launch
+account by address; the sum of the Founder balance and the launch accounts is
+200,000,000.
 
 Or without trusting `hashgramctl`:
 
@@ -186,13 +193,16 @@ B  Prepare each host
    sudo ./scripts/install/bootstrap-ubuntu.sh
    hashgramctl init --moniker <name>
    sudo ./scripts/install/monitoring.sh
-   hashgramctl mainnet-preflight        # until it passes
 
-C  Collect gentxs from the initial validators
+C  Preliminary genesis, with the launch validators' hot operator addresses
+   hashgramctl init-mainnet-genesis --founder-address hash1... \
+     --genesis-account hash1<operator>=1000000HASH
+   (funded from the Founder's unlocked 20M; total stays 1,000,000,000)
 
-D  hashgramctl init-mainnet-genesis --founder-address hash1...
-   Review the printed distribution. Record the genesis hash.
-   Have a second person rebuild it and confirm the same hash.
+D  Each validator: hashgramd genesis gentx operator <amount>uhash --chain-id hashgram-1 ...
+   Genesis machine: copy gentxs to config/gentx/, then
+   hashgramctl finalize-genesis          # pins the FINAL genesis hash
+   Record the hash. Have a second person rebuild it from the same inputs.
 
 E  Publish the genesis file, and its hash through channels INDEPENDENT of
    the file. A file next to its own hash proves nothing.
@@ -202,7 +212,11 @@ F  Operators join
      --genesis-hash <from an independent source> --peers <id>@<host>:26656
    hashgramctl network-info             # confirm the pin
 
-G  Verify: supply, Founder allocation, vesting, fee share, no mint module
+G  hashgramctl mainnet-preflight && hashgramctl start
+   Verify: supply, Founder allocation, vesting, fee share, no mint module
+
+H  Governance registers the first storage assigner (hashgramctl propose add-assigner)
+I  hashgramctl configure-role relay,store,media,bootstrap on the serving hosts
 ```
 
 Step A cannot be done by this software, and step E is the one most often done
