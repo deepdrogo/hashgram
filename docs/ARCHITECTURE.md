@@ -2,21 +2,23 @@
 
 How the pieces fit together, and why they were split the way they were.
 
-This describes what is built. Phase 2 components are marked as such and are
-described in the future tense.
+This describes what is built. The one thing that is not — the client
+applications — is marked as such; everything else in this document runs and
+is exercised by `scripts/testnet/devnet.sh`, `four-validator.sh` and
+`phase2.sh`.
 
 ## Layers
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │  Clients                          Windows / iOS / Android       │
-│                                   (not built; specs only)       │
+│                    (not built; specs + hashgram-sdk exist)      │
 └─────────────────────────────────────────────────────────────────┘
                 │                              │
                 │ chain queries and txs        │ messaging, social, media
                 ▼                              ▼
 ┌───────────────────────────────┐  ┌──────────────────────────────┐
-│  hashgramd                    │  │  hashgram-node   (Phase 2)   │
+│  hashgramd                    │  │  hashgram-node               │
 │  Cosmos SDK v0.53 + CometBFT  │  │  Rust, libp2p, OpenMLS       │
 │                               │  │                              │
 │  Consensus, state, tokens,    │  │  E2EE messaging, social       │
@@ -203,7 +205,7 @@ and the four-validator test demonstrates the gap:
 3. **Operator tooling is what stops a person being fed a fork.**
    `hashgramctl join-mainnet` requires `--genesis-hash` and refuses any
    genesis that does not match it.
-4. **The Phase 2 P2P handshake will verify all five parts**, closing the
+4. **The Hashgram P2P handshake verifies all five parts**, closing the
    transport-layer gap that CometBFT leaves open.
 
 `scripts/testnet/four-validator.sh` tests all of layers 1 to 3, including the
@@ -302,13 +304,13 @@ One machine, one or more roles. `hashgramctl configure-role` sets them and
 | Role | Service | What it does |
 | --- | --- | --- |
 | `validator` | `hashgramd` | Signs blocks. The role with slashing risk. |
-| `relay` | `hashgram-node` | Forwards encrypted envelopes (Phase 2) |
-| `store` | `hashgram-node` | Stores encrypted blobs (Phase 2) |
-| `media` | `hashgram-node` | Serves media manifests and chunks (Phase 2) |
-| `indexer` | `hashgram-indexer` | PostgreSQL index of public data (Phase 2) |
-| `bootstrap` | `hashgram-node` | Helps new nodes discover peers (Phase 2) |
-| `call` | `coturn` | TURN relay for calls (Phase 2) |
-| `safety` | `hashgram-safety` | Scans **public** content only (Phase 2) |
+| `relay` | `hashgram-node` | Forwards encrypted envelopes and gossip; serves circuit relay |
+| `store` | `hashgram-node` | Holds mailboxes, key packages and blobs; answers storage challenges |
+| `media` | `hashgram-node` | Serves media manifests and chunks |
+| `indexer` | `hashgram-indexer` | PostgreSQL index of chain and public social data |
+| `bootstrap` | `hashgram-node` | Helps new nodes discover peers; serves circuit relay |
+| `call` | `hashgram-node` + `coturn` (+ LiveKit) | TURN credentials and announcements for calls |
+| `safety` | `hashgram-safety` | Reviews **public** content only; signs verdicts |
 
 Full requirements per role, and which roles should not share a machine, in
 [NODE_ROLES.md](NODE_ROLES.md).
@@ -371,18 +373,39 @@ scripts/testnet/   devnet and four-validator acceptance suites
 scripts/dev/       CI pipeline, release build, policy checkers
 tools/             tokenomics simulator
 docs/              this documentation
-node/              Rust workspace (Phase 2, empty)
-sdk/               client SDKs (Phase 2, empty)
+node/              Rust workspace: hashgram-net, -proto, -chain, -identity, -mls, -p2p, -node, -client, fuzz targets
+sdk/rust/          hashgram-sdk, the client SDK
+indexer/, safety/  Go packages behind hashgram-indexer and hashgram-safety
+pkg/               Go protobuf for the off-chain wire types
 ```
+
+## The off-chain node
+
+`hashgram-node` is one process with role-gated services on a libp2p swarm:
+
+```text
+swarm (hashgram-p2p)       QUIC + TCP, Kademlia, Gossipsub, identify, AutoNAT, relay, DCUtR
+  └─ handshake gate        all five identity parts, genesis hash included, before anything is served
+services (hashgram-node)   mailbox + key packages (store)   blobs + replication (store, media)
+                           social event log (all)           safety attestation table (all)
+                           announcements (all)              rewards agent (any earning role, needs operator key)
+                           TURN credential issuance (call)
+local API 127.0.0.1:26672  hashgramctl, indexer, safety engine, same-host clients
+```
+
+Every wire object is protobuf (`proto/hashgram/p2p/v1`), every signed object
+has a canonical preimage shared byte-for-byte with Go, and every decoder is
+bounded before it allocates. `docs/PROTOCOL.md` is the specification.
 
 ## What is not built
 
 Stated plainly so that nothing above reads as more complete than it is:
 
-- The Rust `hashgram-node`: libp2p transport, OpenMLS end-to-end encryption,
-  the offline envelope store, signed social events, content-addressed blob
-  storage, the PostgreSQL indexer, the safety engine, call discovery.
-- Client applications for any platform.
+- Client applications for any platform. `hashgram-sdk` and the developer
+  client exist; Windows, iOS and Android apps do not.
 - A token bridge. Interfaces are sketched; nothing is deployed.
 - Mainnet itself, which requires a Founder address generated on a machine that
   is not this server.
+- Cover traffic or mixing for messaging metadata, end-to-end encryption of
+  SFU group calls, push notifications, call receipts from the reference
+  client. Each is listed in the relevant protocol document's limitations.

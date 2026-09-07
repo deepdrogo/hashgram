@@ -13,14 +13,23 @@ does not repeat them. What follows is what differs on Android.
 
 ---
 
-## 0. What not to build
+## 0. Build in two stages
 
-**There is no messaging, no social feed, no media and no calls.** The
-peer-to-peer layer is Phase 2 and unbuilt: no end-to-end encryption, no
-envelope store, no blob storage, no call signalling.
+**Stage 1: a wallet and an identity manager.** Everything below is about
+stage 1 and has real chain APIs behind it. Ship it first.
 
-Build a wallet and an identity manager. Do not build a chat tab against an
-endpoint that does not exist.
+**Stage 2: messenger, feed, media, calls.** The network layer exists —
+MLS end-to-end encrypted messaging, signed social events, content-addressed
+media, TURN credentials and call signalling — and is exposed by the Rust
+`hashgram-sdk` (`sdk/rust/hashgram-sdk`). Bind it with UniFFI; do not
+reimplement MLS or the transport. The desktop prompt §7 lists the screen
+to SDK call mapping, and `node/hashgram-client` is the reference program
+to copy. The SDK does not include a WebRTC media stack or push
+notifications; the app brings those.
+
+Do not build a chat tab against an HTTP endpoint. Messaging is peer-to-peer
+through the SDK; a REST path such as `/hashgram/messaging/v1/send` does not
+exist and any specification naming one is wrong.
 
 ---
 
@@ -216,12 +225,14 @@ not transmit them, and should not collect analytics on transaction contents.
 
 ## 6. Deliberately out of scope
 
-- Messaging
-- Social feed, posts, reels, stories
-- Media upload or playback
-- Voice and video calls
-- Running a node
-- Validator operations
+Stage 1: messaging, social feed, reels, stories, media, calls (see §0).
+Always: running a node, validator operations, a token bridge.
+
+Stage 2 additions on Android: the vault lives in app-private storage with
+`allowBackup="false"` still in force; mailbox polling runs as a
+`WorkManager` periodic job or a foreground service the user opts into —
+there is no push service. Incoming calls ring only while the app is
+connected.
 
 ---
 
@@ -246,5 +257,6 @@ Everything in the desktop prompt's checklist that applies, plus:
 - [ ] Stale-data indicator when offline
 - [ ] Amounts parsed as `BigInteger` or `BigDecimal`, never `Double`
 - [ ] A devnet build is unmistakable at a glance
-- [ ] Play listing does not claim messaging
-- [ ] No messaging, social or media features
+- [ ] Play listing claims only what the shipped stage provides
+- [ ] Stage 1 has no messaging, social or media features; stage 2 adds them
+      only through `hashgram-sdk`

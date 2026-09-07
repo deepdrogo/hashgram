@@ -185,7 +185,7 @@ Go nor the Rust node uses a JIT.
 | --- | --- | --- | --- |
 | SSH | TCP | Always | Detected from the running sshd, not assumed to be 22 |
 | 26656 | TCP | All chain nodes | CometBFT consensus P2P |
-| 26670 | TCP + UDP | `relay`, `store`, `bootstrap` | Hashgram P2P (Phase 2) |
+| 26670 | TCP + UDP | `relay`, `store`, `media`, `bootstrap`, `call` | Hashgram P2P (QUIC on UDP, TCP fallback) |
 | 3478, 5349 | TCP + UDP | `call` | TURN and TURN over TLS |
 | 49152–65535 | UDP | `call` | TURN relay range |
 
@@ -225,8 +225,11 @@ library. Where care was needed, it was in how they are composed.
 | Merkle trees (storage proofs) | SHA-256, domain-separated leaves and nodes |
 | Addresses | Bech32 with the `hash` prefix |
 | Key derivation | BIP-32/BIP-39/BIP-44, coin type 118 |
-| Content addressing (Phase 2) | BLAKE3 |
-| Messaging (Phase 2) | OpenMLS, RFC 9420 |
+| Content addressing | BLAKE3 |
+| Messaging | OpenMLS, RFC 9420 (`MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519`) |
+| Client vault | Argon2id, XChaCha20-Poly1305 |
+| Private media | XChaCha20-Poly1305 per blob, key shared inside MLS |
+| TURN credentials | HMAC-SHA1 (`use-auth-secret`, the coturn standard) |
 
 ### Canonical signing preimages
 

@@ -19,7 +19,11 @@ extracted from `proto/hashgram/*/v1/query.proto`, transaction types from
 | Cosmos gRPC | 9091 | localhost | as above |
 | Prometheus metrics | 26660 | localhost | SSH tunnel only |
 | Consensus P2P | 26656 | all interfaces | node to node, not for clients |
-| Hashgram P2P | 26670 | all interfaces | Phase 2, not built |
+| Hashgram P2P | 26670 | all interfaces | **clients connect here**: libp2p QUIC (`/udp/26670/quic-v1`) or TCP |
+| hashgram-node local API | 26672 | localhost | same-host clients, `hashgramctl`, indexer, safety engine |
+| hashgram-node metrics | 26671 | localhost | SSH tunnel only |
+| Indexer read API | 1318 | localhost | same-host or behind an operator's reverse proxy |
+| TURN | 3478, 5349 | all interfaces | call nodes only |
 
 **None of the client-facing ports are publicly exposed on a correctly
 configured node.** `hashgramctl mainnet-preflight` fails the launch if the
@@ -361,47 +365,87 @@ visible despite the absolute totals being floats.
 
 ---
 
-## 10. What does not exist
+## 10. The peer-to-peer interfaces
 
-A client must not assume, poll, or provide a placeholder for any of these.
-They have no endpoints because they are unbuilt.
+Everything off-chain is reached over libp2p on port 26670 with the protocol
+in `docs/PROTOCOL.md`. A client is a light swarm: it dials one or more nodes
+(bootstrap multiaddrs with `/p2p/<peer-id>`), completes the Hashgram
+handshake — which verifies the genesis hash, so a client pinned to Mainnet
+cannot be fed a fork's data — learns the nodes' roles, and then:
 
-- Messaging of any kind. No end-to-end encryption, no envelope store, no
-  delivery.
-- Social events: posts, follows, reactions, reposts, channels, reels, stories.
-- Media: upload, storage, retrieval, playback.
-- Voice and video calls, and call signalling.
-- Content-addressed blob storage.
-- The PostgreSQL indexer and any query it would serve.
-- Content safety attestations.
-- Peer-to-peer transport for clients.
+| Need | Protocol | SDK |
+| --- | --- | --- |
+| Publish key packages, deliver and fetch messages | `/hashgram/rpc/1` mailbox bodies; MLS inside | `hashgram_sdk::messaging` |
+| Publish and fetch social events | `EventPublish`, `EventFetch`; gossip on shards | `hashgram_sdk::social` |
+| Upload and download media, private encryption | blob bodies; DHT providers | `hashgram_sdk::blob` |
+| Find call nodes, get TURN credentials, signal | `AnnounceQuery`, `TurnCredentialRequest`; MLS `CallSignal` | `hashgram_sdk::calls` |
+| Pay providers for service | `ReceiptDeliver` | automatic in the SDK |
 
-The chain-level identity registry that messaging will build on **does** exist
-and is tested. The signing domains for social events, content attestations and
-node announcements are defined and have test vectors, so a client can
-implement the signing side ahead of the transport.
+`hashgram-sdk` (`sdk/rust/hashgram-sdk`) implements all of it and
+`hashgram-client` (`node/hashgram-client`) is the reference command line on
+top: `identity`, `wallet`, `message`, `group`, `post`, `reel`, `blob`,
+`call`, `net`. A native application either binds the SDK (recommended) or
+reimplements against the protobuf definitions and the signing vectors.
 
-When those layers are built, this document gains the interfaces they expose.
-Until then, a Hashgram client is a wallet, an identity manager and — for an
-operator — a node console.
+### Keystore
+
+The SDK stores keys in a vault file encrypted with XChaCha20-Poly1305 under
+an Argon2id key derived from a passphrase (`hashgram-identity`). It holds
+the account secret (optional), the identity root seed (optional), this
+device's seed, the MLS state snapshot, the social sequence chain, mailbox
+cursors and seen envelope ids. Nothing in it is ever written in the clear.
+A phone that holds only its device key can message and post; the device
+holding the root key adds and revokes devices.
+
+### Same-host and indexer APIs
+
+On a machine running the node, `127.0.0.1:26672` offers the same services
+over JSON (`/v1/status`, `/v1/peers`, `/v1/social/events`,
+`/v1/social/author/{address}`, `/v1/blobs`, `/v1/blobs/{cid}`,
+`/v1/blobs/{cid}/health`, `/v1/announcements`, `/v1/rewards`,
+`/v1/safety/attestations/{subject}`, `/v1/calls/turn-credentials`, and
+`/v1/chain/{path}` forwarding read queries to the chain). The indexer's read
+API on `127.0.0.1:1318` serves feeds (`docs/SOCIAL_PROTOCOL.md`,
+"Projections"). Both are loopback by default; exposing them is an operator's
+reverse-proxy decision, and a client must treat an indexer as a cache it
+can cross-check against events it verifies itself.
+
+### What still does not exist
+
+- Native applications for Windows, iOS and Android (the prompts describe them).
+- Push notifications: clients poll or stay connected.
+- Call receipts from the reference client; a WebRTC media stack in the SDK.
+- End-to-end encryption of SFU-hosted group calls against the SFU operator.
+- A token bridge.
 
 ---
 
-## 11. Reference implementation
+## 11. Reference implementations
 
-`cmd/hashgram-test-client` is a working client that exercises wallet, staking,
-Founder verification and signing domains against a running chain. Its output
-shows exactly what each query returns.
+`cmd/hashgram-test-client` (Go) exercises wallet, staking, Founder
+verification and signing domains against a running chain.
+`node/hashgram-client` (Rust, on `hashgram-sdk`) exercises everything else.
 
 ```bash
-make build
-scripts/testnet/devnet.sh           # a real chain to talk to
+make build && make rust-release
+scripts/testnet/devnet.sh                     # a real chain to talk to
 
 build/hashgram-test-client wallet balance <address>
-build/hashgram-test-client staking status
 build/hashgram-test-client founder verify
-build/hashgram-test-client sign domains
+
+export HASHGRAM_PASSPHRASE=...                # never a flag
+hashgram-client configure --network devnet --genesis-hash <sha256> \
+  --chain-api http://127.0.0.1:1317 --bootstrap /ip4/127.0.0.1/udp/26670/quic-v1/p2p/<peer-id>
+hashgram-client identity create               # wallet + root + device; prints the recovery phrase once
+hashgram-client identity publish-keys
+hashgram-client message send hash1... "hello"
+hashgram-client message receive
+hashgram-client post "first post" --tag hashgram
+hashgram-client reel publish video.mp4 --caption "..."
+hashgram-client blob upload photo.jpg --mime image/jpeg --private
+hashgram-client call discover
 ```
 
-Copy its behaviour rather than this document's prose where the two could
-disagree.
+Copy their behaviour rather than this document's prose where the two could
+disagree. `scripts/testnet/phase2.sh` runs the full client flow against a
+live network and is the executable form of this specification.

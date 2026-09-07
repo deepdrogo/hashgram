@@ -11,16 +11,20 @@ hashgramctl node-info            # what this machine is configured for
 
 ## The eight roles
 
-| Role | Service | Phase | Purpose |
+| Role | Service | Purpose | Earns |
 | --- | --- | --- | --- |
-| `validator` | `hashgramd` | 1 | Signs blocks |
-| `relay` | `hashgram-node` | 2 | Forwards encrypted envelopes |
-| `store` | `hashgram-node` | 2 | Stores encrypted blobs |
-| `media` | `hashgram-node` | 2 | Serves media manifests and chunks |
-| `indexer` | `hashgram-indexer` | 2 | PostgreSQL index of public data |
-| `bootstrap` | `hashgram-node` | 2 | Helps new nodes find peers |
-| `call` | `coturn` | 2 | TURN relay for calls |
-| `safety` | `hashgram-safety` | 2 | Scans public content only |
+| `validator` | `hashgramd` | Signs blocks | block fees and staking rewards |
+| `relay` | `hashgram-node` | Forwards encrypted envelopes and gossip, serves circuit relay | client-signed relay receipts |
+| `store` | `hashgram-node` | Holds mailboxes, key packages and blobs; answers storage challenges | storage assignments × challenges, retrieval receipts |
+| `media` | `hashgram-node` | Serves media manifests and chunks | retrieval receipts |
+| `indexer` | `hashgram-indexer` | PostgreSQL index of chain and public social data | nothing (an operator service) |
+| `bootstrap` | `hashgram-node` | Helps new nodes find peers, serves circuit relay | relay receipts |
+| `call` | `hashgram-node` + `coturn` (+ LiveKit) | TURN credentials, announcements, optional SFU | call receipts |
+| `safety` | `hashgram-safety` | Reviews public content, signs verdicts | nothing (an operator service) |
+
+Earning roles need a provider operator key and a bonded registration; see
+`docs/SERVICE_REWARDS.md`. `hashgramctl configure-role` creates the key and
+prints the address to fund.
 
 A machine with **no** role still runs `hashgramd` as a full node: it follows
 the chain, serves local queries and relays transactions. That is the default
@@ -81,7 +85,7 @@ between the chain height and this validator's last signed height.
 much larger attack surface, or with anything CPU-hungry: a validator that
 misses precommits because a neighbour process is busy gets jailed.
 
-## relay (Phase 2)
+## relay
 
 Forwards encrypted envelopes between peers and holds them for offline
 recipients.
@@ -98,7 +102,7 @@ credit may come from any single counterparty.
 message content, which is end-to-end encrypted. Metadata is still traffic
 analysis material; see [THREAT_MODEL.md](THREAT_MODEL.md).
 
-## store (Phase 2)
+## store
 
 Stores encrypted blobs and answers retrieval requests.
 
@@ -117,14 +121,14 @@ failed challenge adds 25 to the fraud score; 100 jails and slashes 5% of bond.
 **Before registering,** verify your disks. Jailing costs bond, and the most
 common cause of a failed challenge on an honest node is hardware.
 
-## media (Phase 2)
+## media
 
 Serves media manifests and chunks for public content: images, video, reels.
 
 Similar to `store` but read-heavy and latency-sensitive. Paid on client-signed
 retrieval receipts, per GiB served. Combines naturally with `store`.
 
-## indexer (Phase 2)
+## indexer
 
 Maintains a PostgreSQL index of public chain and social data, so clients can
 run queries the chain cannot answer efficiently.
@@ -142,7 +146,7 @@ PostgreSQL listens on localhost only. The index holds public data that can be
 regenerated, so it is not a confidentiality boundary — but it is a write
 surface, and an exposed database is an exposed database.
 
-## bootstrap (Phase 2)
+## bootstrap
 
 Answers "who else is on this network" for nodes that have just started.
 
@@ -154,7 +158,7 @@ chosen by whoever built the release. That dependence is listed as a
 centralisation point in [DECENTRALIZATION.md](DECENTRALIZATION.md), and more
 independent bootstrap operators is the fix.
 
-## call (Phase 2)
+## call
 
 TURN relay for voice and video, so calls work between peers behind NAT.
 
@@ -170,7 +174,7 @@ Uses `coturn`, reconfigured with a Hashgram realm and fresh credentials.
 **Cannot see** call media: it is end-to-end encrypted between participants.
 It relays bytes it cannot read.
 
-## safety (Phase 2)
+## safety
 
 Scans **public** content — posts, channels, media — against configured
 providers, and publishes signed attestations on chain.
@@ -262,3 +266,17 @@ accrue fraud score on a node that is no longer trying to serve:
 hashgramctl storage             # what is assigned
 # release assignments, wait for the epoch to settle, then remove the role
 ```
+
+## Limitations
+
+- A role earns only after the operator key is funded and the provider is
+  registered; `hashgramctl rewards` shows both. Storage credit also needs a
+  registered assigner on chain (`docs/SERVICE_REWARDS.md`), which Mainnet
+  genesis does not include.
+- `call` with an SFU encrypts media to the SFU, not through it. 1:1 calls are
+  peer-to-peer. Call receipts are not yet produced by the reference client,
+  so the `call` role earns nothing today beyond relay traffic.
+- `safety` implements the hash, text and HTTP-model stages; OCR and video
+  frame extraction are hook points, not built.
+- Roles have been run together and apart on one host. Behaviour across real
+  NATs and separate operators has not yet been observed in production.

@@ -13,18 +13,28 @@ does not repeat them. What follows is what differs on iOS.
 
 ---
 
-## 0. What not to build
+## 0. Build in two stages
 
-**There is no messaging, no social feed, no media and no calls.** The
-peer-to-peer layer is Phase 2 and unbuilt: no end-to-end encryption, no
-envelope store, no blob storage, no call signalling.
+**Stage 1: a wallet and an identity manager.** Everything below is about
+stage 1 and has real chain APIs behind it. Ship it first.
 
-Build a wallet and an identity manager. Do not build a chat tab against an
-endpoint that does not exist.
+**Stage 2: messenger, feed, media, calls.** The network layer exists —
+MLS end-to-end encrypted messaging, signed social events, content-addressed
+media, TURN credentials and call signalling — and is exposed by the Rust
+`hashgram-sdk` (`sdk/rust/hashgram-sdk`). Bind it with UniFFI; do not
+reimplement MLS or the transport. The desktop prompt §7 lists the screen
+to SDK call mapping, and `node/hashgram-client` is the reference program
+to copy. The SDK does not include a WebRTC media stack or push
+notifications; the app brings those.
 
-This matters more on iOS than elsewhere, because App Review will ask what the
-app does, and an app whose main tab is a non-functional messenger is a
-rejection.
+Do not build a chat tab against an HTTP endpoint. Messaging is peer-to-peer
+through the SDK; a REST path such as `/hashgram/messaging/v1/send` does not
+exist and any specification naming one is wrong.
+
+This matters more on iOS than elsewhere: App Review will ask what the app
+does, and a stage 1 build whose main tab is a non-functional messenger is a
+rejection. Ship stage 1 as a wallet; add the messenger when stage 2 works
+end to end against a live network.
 
 ---
 
@@ -195,12 +205,15 @@ generally qualifies for an exemption, but answer it rather than guessing.
 
 ## 6. Deliberately out of scope
 
-- Messaging
-- Social feed, posts, reels, stories
-- Media upload or playback
-- Voice and video calls
-- Running a node
-- Validator operations
+Stage 1: messaging, social feed, reels, stories, media, calls (see §0).
+Always: running a node, validator operations, a token bridge.
+
+Stage 2 additions on iOS: the vault lives in the app sandbox with
+`NSFileProtectionComplete`, is excluded from iCloud backup, and background
+mailbox polling uses `BGAppRefreshTask` — there is no push service.
+Calls need `CallKit` and `PushKit` only if you run your own VoIP push
+relay; Hashgram does not provide one, so document that incoming calls ring
+only while the app is foregrounded or refreshing.
 
 ---
 

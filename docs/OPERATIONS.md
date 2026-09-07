@@ -77,10 +77,16 @@ hashgramctl status         # one screen: height, peers, roles, sync, disk
 hashgramctl health         # exits non-zero if unhealthy; for cron and monitoring
 hashgramctl chain-status   # chain identity, height, validators, supply
 hashgramctl node-info      # this node's identity, roles and build
-hashgramctl peers          # connected peers
+hashgramctl peers          # connected peers, consensus and Hashgram P2P
+hashgramctl storage        # assignments, challenges, blob health (store nodes)
+hashgramctl rewards        # provider registration, credit, payouts
 hashgramctl logs           # service logs
 hashgramctl logs -f        # follow
 ```
+
+Governance actions an operator may need — today, registering a storage
+assigner — are written by `hashgramctl propose <what>` and submitted with
+`hashgramd tx gov`; see `docs/FOUNDER_LAUNCH_RUNBOOK.md` Part H.
 
 `health` is the one to wire into monitoring. It exits non-zero rather than
 printing something a script has to parse.
@@ -335,21 +341,32 @@ jail it and slash 5% of bond.
 
 ## Running the acceptance suites
 
-Both scripts are safe to run on a development host and both clean up after
+All three scripts are safe to run on a development host and clean up after
 themselves.
 
 ```bash
-scripts/testnet/devnet.sh              # single node, 32 acceptance checks
+scripts/testnet/devnet.sh              # single node, economic acceptance checks
 scripts/testnet/devnet.sh stop
 scripts/testnet/devnet.sh clean
 
 scripts/testnet/four-validator.sh      # four validators, resilience, fork isolation
 scripts/testnet/four-validator.sh clean
+
+scripts/testnet/phase2.sh              # + 3 P2P nodes, indexer, safety, two clients
+scripts/testnet/phase2.sh stop
+scripts/testnet/phase2.sh clean
 ```
 
 The four-validator script kills a validator mid-run to prove the chain
 continues on 75% of voting power, restarts it to prove it rejoins, and then
 tries to join two different forks to demonstrate which layer stops each one.
+
+The Phase 2 script needs PostgreSQL on the host (it creates a throwaway
+role and database) and takes about ten minutes. It proves messages decrypt
+only for their recipients, media replicates and repairs, forks are refused at
+the Hashgram handshake, the safety engine's verdict is enforced, storage
+challenges are answered, and the network keeps working after the genesis
+host is destroyed. Its output is reproduced in `docs/FINAL_REPORT.md` §7.
 
 ## CI, locally
 

@@ -158,11 +158,13 @@ and reports what actually happened rather than what was hoped for.
 | CometBFT handshake | Genesis hash | **Not checked.** A same-chain-id fork opens a transport connection |
 | Consensus | Validator set and app hash | The fork cannot inject a block or move the real chain |
 | `hashgramctl join-mainnet` | Pinned genesis hash | Refuses the fork genesis |
-| Phase 2 P2P handshake | All five identity parts | Not built yet |
+| Hashgram P2P handshake | All five identity parts, genesis hash included | A same-chain-id fork is refused, banned and verifies nobody (`phase2.sh`) |
 
-The second row is a real gap, not a defence, and it is why the pinned hash in
-`/etc/hashgram/network.json` and the `genesis_hash` field in the future P2P
-handshake exist rather than being duplicated effort.
+The second row is a real gap on the consensus transport, not a defence, and
+it is why the pinned hash in `/etc/hashgram/network.json` and the
+`genesis_hash` field in the Hashgram handshake exist rather than being
+duplicated effort. Everything a client touches goes through the Hashgram
+handshake; only validator-to-validator traffic goes through CometBFT's.
 
 The test's own output states this. Verified results from a run:
 

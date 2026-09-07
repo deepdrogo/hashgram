@@ -32,6 +32,8 @@ flowchart TD
     D --> E["Part E: Publish genesis and,<br/>separately, its hash"]
     E --> F["Part F: Operators join"]
     F --> G["Part G: Start and verify"]
+    G --> H["Part H: First governance<br/>register the storage assigner"]
+    H --> I["Part I: Network services<br/>hashgram-node roles, indexer"]
 ```
 
 Estimated time: Part A takes an hour done carefully. Parts B through D take a
@@ -496,6 +498,126 @@ pinned genesis hash in `join-mainnet`.
 
 ---
 
+## Part H — The first governance proposal
+
+**Where:** any host with a funded key. Voting takes 7 days on Mainnet.
+
+Genesis deliberately registers **no storage assigner** and **no welcome
+attestor**, so nothing in the useful-service or welcome programmes can pay
+anyone until governance says so. Storage rewards need one assigner; without
+it every store node earns exactly zero for the bytes it holds
+(`docs/SERVICE_REWARDS.md`).
+
+### H.1 Decide who assigns
+
+The assigner is a provider operator address — the key
+`hashgramctl configure-role store` creates on a store node. On a launch where
+you run the first store node, that is your own node's operator address:
+
+```bash
+hashgramctl rewards          # prints the operator address on a configured node
+```
+
+### H.2 Write the proposal
+
+```bash
+hashgramctl propose add-assigner hash1<operator> --out proposal-add-assigner.json
+```
+
+This reads the live `x/serviceproof` parameters and adds one address. Do not
+write the file by hand: `MsgUpdateParams` replaces the whole parameter set,
+and a hand-written file that names only `assigners` silently zeroes every
+other parameter.
+
+### H.3 Submit and vote
+
+The deposit is 10,000 HASH, returned when the proposal passes. The Founder's
+20,000,000 unlocked HASH can fund it, but the key that submits must be a hot
+key on a connected machine — **never the Founder cold key.** Send the deposit
+plus fees from the cold wallet to a hot key first.
+
+```bash
+hashgramd tx gov submit-proposal proposal-add-assigner.json \
+  --from <hot-key> --chain-id hashgram-1 --gas auto --gas-adjustment 1.4 --fees 5000uhash
+hashgramd query gov proposals --output json          # note the id
+hashgramd tx gov vote <id> yes --from <validator-operator-key> --chain-id hashgram-1 --fees 5000uhash
+```
+
+Voting power is stake: each validator votes with its own operator key. Quorum
+is 40% of bonded stake and the period is 7 days.
+
+### H.4 Confirm
+
+```bash
+hashgramd query gov proposal <id> --output json | grep status      # PROPOSAL_STATUS_PASSED
+hashgramd query serviceproof params --output json | grep -A2 assigners
+```
+
+Tested on a devnet with a 2-minute voting period: the proposal passed, the
+assigner set gained the address, and every other parameter kept its value.
+
+### Part H checklist
+
+- [ ] Assigner address is a store node's operator key, not the Founder key
+- [ ] Proposal file written by `hashgramctl propose`, not by hand
+- [ ] Submitted from a hot key funded from the cold wallet
+- [ ] Every validator voted
+- [ ] `assigners` on chain lists the address; other parameters unchanged
+
+The welcome programme stays paused until a welcome attestation service
+exists and its key is registered the same way (`x/welcome` `MsgUpdateParams`
+with an `attestors` entry). Creating a key earns nothing until then; say so
+in the launch announcement.
+
+---
+
+## Part I — Network services
+
+**Where:** every host that serves users. The chain alone is a ledger; the
+messaging, social, media and call services are `hashgram-node`, installed
+by `bootstrap-ubuntu.sh` and configured by role.
+
+```bash
+hashgramctl configure-role relay,store,media,bootstrap    # one node that does everything
+hashgramctl restart
+hashgramctl status              # P2P section: peers, roles, storage, rewards
+hashgramctl health              # hashgramd, hashgram-node, coturn, indexer, safety
+```
+
+`configure-role` writes `/etc/hashgram/node.toml`, creates the operator key
+and prints the address to fund with the provider bond (1,000 HASH) plus fee
+change. The node registers itself as a provider on first start with a
+funded key and answers storage challenges from then on.
+
+For a second machine that should run the indexer and safety engine:
+
+```bash
+hashgramctl configure-role indexer,safety
+hashgramctl restart
+curl -s 127.0.0.1:1318/v1/status
+```
+
+`docs/NODE_ROLES.md` covers which roles to keep apart; the one rule to
+remember is that the validator's host runs nothing else.
+
+Publish your node's bootstrap multiaddr with the genesis hash so clients can
+configure it:
+
+```bash
+hashgramctl status              # "Peer id" and "External addrs" under the P2P section
+# the bootstrap multiaddr is <external-addr>/p2p/<peer-id>, for example
+#   /ip4/203.0.113.10/udp/26670/quic-v1/p2p/12D3KooW...
+```
+
+### Part I checklist
+
+- [ ] At least one node with `relay,store,bootstrap` reachable on 26670/udp and tcp
+- [ ] Operator key funded; `hashgramctl rewards` shows the provider registered
+- [ ] Bootstrap multiaddr and genesis hash published together with the genesis file
+- [ ] `hashgram-client` on a laptop can `configure`, `identity create`, and `message send` to itself
+
+---
+
 ## Final checklist
 
 Everything in one place. All of it before announcing the network.
@@ -531,6 +653,11 @@ Everything in one place. All of it before announcing the network.
 - [ ] Founder share 100 bps, transfers untaxed
 - [ ] No mint module
 - [ ] Dashboards and alerts working
+
+**After launch**
+- [ ] Storage assigner registered through governance (Part H)
+- [ ] At least one `hashgram-node` serving relay, store and bootstrap (Part I)
+- [ ] Bootstrap multiaddr published next to the genesis hash
 
 **Recovery**
 - [ ] Consensus and node keys backed up separately from `hashgramctl backup`

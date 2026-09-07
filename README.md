@@ -3,10 +3,12 @@
 A decentralised network with a fixed supply, a finite reward reserve and no
 central point of control.
 
-This repository holds Hashgram Core: the blockchain, the operator tooling and
-the genesis machinery. **Phase 1 is complete and runs.** The peer-to-peer
-messaging, social and storage layers are Phase 2 and are not built yet; see
-[Status](#status) for exactly what exists.
+This repository holds Hashgram Core: the blockchain, the peer-to-peer node,
+the client SDK, the indexer, the safety engine, the operator tooling and the
+genesis machinery. **Phases 1 and 2 are complete and run**: chain, E2EE
+messaging, social events, media storage, useful-service rewards, calls
+infrastructure. Mainnet is not launched; the native client applications are
+specified, not built. See [Status](#status) for exactly what exists.
 
 ## What is different about it
 
@@ -67,8 +69,12 @@ a disbursement record.
 | CI: tests, staticcheck, gosec, gitleaks, govulncheck | Green. |
 | Reproducible release build | Verified byte-identical. |
 | Mainnet | **Not launched.** Requires a Founder address generated off this server. |
-| P2P messaging, social, storage, calls (Rust) | **Not built.** Phase 2. |
-| Windows, iOS, Android apps | Not built. Specifications only. |
+| `hashgram-node` (Rust): libp2p swarm with the genesis-checking handshake, mailboxes, blobs, social log, safety table, rewards agent | Runs. 63 network-level acceptance checks pass (`scripts/testnet/phase2.sh`). |
+| `hashgram-sdk` + `hashgram-client` (Rust): vault, wallet, identity, MLS messaging, social, media, calls | Runs against a live devnet: identities registered, E2EE messages delivered, reels published, private media round-tripped. |
+| `hashgram-indexer`, `hashgram-safety` (Go) | Run. Feeds served from PostgreSQL; a scam post blocked end to end. |
+| Fuzzing, `cargo audit`, hardened systemd units, installer for the node stack | Complete. |
+| Windows, iOS, Android apps | Not built. Specifications and the SDK exist. |
+| Token bridge | Not built; interfaces sketched only. |
 
 ## The chain
 
@@ -173,6 +179,13 @@ the document says so rather than describing it in the present tense.
 
 **Building a client**
 - [CLIENT_CONNECTIVITY_SPEC.md](docs/CLIENT_CONNECTIVITY_SPEC.md) — every interface a client may rely on, and what does not exist
+- [PROTOCOL.md](docs/PROTOCOL.md) — the off-chain wire protocol: identity, canonical signing, handshake, RPC, gossip, discovery
+- [MESSAGING.md](docs/MESSAGING.md) — MLS groups over store-and-forward mailboxes
+- [SOCIAL_PROTOCOL.md](docs/SOCIAL_PROTOCOL.md) — the twelve signed event families and their acceptance rules
+- [STORAGE.md](docs/STORAGE.md) — content addressing, private encryption, replication and repair
+- [CALLS.md](docs/CALLS.md) — TURN credentials, SFU, E2EE signalling
+- [MODERATION.md](docs/MODERATION.md) — the Safety Engine and signed attestations over public content only
+- [SERVICE_REWARDS.md](docs/SERVICE_REWARDS.md) — how evidence is produced off chain and settled on chain
 - [PROMPT_WINDOWS_DESKTOP.md](docs/PROMPT_WINDOWS_DESKTOP.md) — a Windows build specification
 - [PROMPT_IOS_APP.md](docs/PROMPT_IOS_APP.md) — what differs on iOS
 - [PROMPT_ANDROID_APP.md](docs/PROMPT_ANDROID_APP.md) — what differs on Android

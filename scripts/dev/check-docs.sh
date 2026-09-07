@@ -349,6 +349,7 @@ def matches_a_real_endpoint(path):
 negated = set()
 for line in prompts.splitlines():
     if re.search(r"does not exist|is unbuilt|not built|no messaging", line, re.I):
+        # A path a prompt tells the reader NOT to use is not an invented endpoint.
         negated.update(re.findall(r"(/hashgram/[a-z0-9/_{}.-]+)", line))
 
 referenced = set(re.findall(r"(/hashgram/[a-z0-9/_{}.-]+)", prompts))
@@ -425,14 +426,57 @@ fi
 
 # ---------------------------------------------------------------------------
 
+head1 "NODE API AND CLIENT COMMANDS EXIST"
+
+# Every /v1/... path the docs mention must be a route in the node's API.
+python3 - docs/*.md README.md node/hashgram-node/src/api.rs <<'PY'
+import re, sys
+docs = [open(p).read() for p in sys.argv[1:-1]]
+api = open(sys.argv[-1]).read()
+routes = set(re.findall(r'\.route\("(/v1/[^"]+)"', api))
+def matches(path):
+    for r in routes:
+        rx = "^" + re.sub(r"\{[^}]+\}", "[^/]+", re.escape(r).replace(r"\{", "{").replace(r"\}", "}")) + "$"
+        if re.match(rx, path):
+            return True
+    return False
+problems = 0
+for text in docs:
+    for m in re.finditer(r'127\.0\.0\.1:26672(/v1/[a-zA-Z0-9_/{}<>.-]+)', text):
+        path = re.sub(r'<[^>]+>', 'x', m.group(1)).rstrip('.')
+        if not matches(path):
+            print(f'  [FAIL] documented node API path {m.group(1)} is not a route in api.rs')
+            problems += 1
+print(f'  [ ok ] documented node API paths exist' if not problems else '')
+sys.exit(1 if problems else 0)
+PY
+[ $? -eq 0 ] || FAILURES=$((FAILURES+1))
+
+if [ -x node/target/release/hashgram-client ] || [ -x node/target/debug/hashgram-client ]; then
+  CLIENT="$( [ -x node/target/release/hashgram-client ] && echo node/target/release/hashgram-client || echo node/target/debug/hashgram-client )"
+  "$CLIENT" --help 2>&1 | sed -n '/Commands:/,/Options:/p' | grep -E '^  [a-z]' | awk '{print $1}' | sort -u > /tmp/docs-client-real.txt
+  grep -ohE '`hashgram-client [a-z][a-z-]*' docs/*.md README.md 2>/dev/null | awk '{print $2}' | sort -u > /tmp/docs-client-used.txt
+  MISSING="$(comm -23 /tmp/docs-client-used.txt /tmp/docs-client-real.txt)"
+  if [ -z "$MISSING" ]; then
+    ok "all documented hashgram-client commands exist"
+  else
+    bad "documented hashgram-client commands that do not exist:"
+    printf '        %s\n' $MISSING
+  fi
+else
+  warn "hashgram-client not built; run make rust-release to check client command names"
+fi
+
+# ---------------------------------------------------------------------------
+
 head1 "UNBUILT WORK IS MARKED AS SUCH"
 
-# Phase 2 does not exist. Documentation that describes it in the present tense
-# is documentation that lies, and this is the check that keeps the distinction
-# honest as Phase 2 lands.
-for doc in docs/ARCHITECTURE.md docs/NODE_ROLES.md README.md; do
-  if grep -qiE 'phase 2|not built|not implemented|not launched' "$doc"; then
-    ok "$(basename "$doc") marks unbuilt work"
+# Documentation that describes unfinished work in the present tense is
+# documentation that lies. Each of these documents must say what is not
+# built or what its limitations are.
+for doc in docs/ARCHITECTURE.md docs/NODE_ROLES.md README.md docs/FINAL_REPORT.md; do
+  if grep -qiE 'not built|not implemented|not launched|limitation|not yet' "$doc"; then
+    ok "$(basename "$doc") marks unbuilt work or limitations"
   else
     bad "$(basename "$doc") does not distinguish built from unbuilt work"
   fi

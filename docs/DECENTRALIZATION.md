@@ -23,7 +23,7 @@ no code path that reaches them.
 | Tax a transfer | The fee router operates on the fee collector and its own pool; it has no access to a transfer's principal |
 | Change the network's identity after genesis | `x/network` writes it once and refuses thereafter |
 | Recover a user's account administratively | No component holds a user's private key |
-| Read a private message from a server | Messages are end-to-end encrypted (Phase 2 design; not built) |
+| Read a private message from a server | Messages are end-to-end encrypted with MLS; store nodes hold ciphertext and the acceptance test greps their databases for plaintext |
 
 Changing anything on this list requires a new binary that the validator set
 consciously adopts. That is a real bar, and it is deliberately the only bar
@@ -98,16 +98,27 @@ consensus bugs, and Hashgram does not have one.
 
 ### The safety engine has an operator
 
-The Phase 2 safety engine scans public content only and never private
+The safety engine scans public content only and never private
 messages. But somebody configures it, and that somebody decides what it
 flags. Its attestations are signed and published on chain so the decisions are
 auditable, which is a meaningful constraint and is not the same as nobody
 deciding.
 
+### Storage assigners are a named set
+
+Storage rewards flow only for bytes recorded on chain by a registered
+assigner (`x/serviceproof` `assigners`). At genesis that set is whoever the
+Founder names — on a one-node launch, the Founder's own node operator — and
+adding independent assigners is a governance action. Until several
+operators are assigners, one party decides which stored bytes earn. What
+that party cannot do: pay for bytes that are not there (challenges require
+the bytes), take more than 5% of an epoch (the provider cap), or read any
+content. See `docs/SERVICE_REWARDS.md`.
+
 ### Bootstrap peers ship with the binary
 
 New nodes need somewhere to start. The bundled bootstrap list is chosen by
-whoever builds the release. Phase 2 adds DHT and peer-exchange discovery, but
+whoever builds the release. The node adds a persistent peerstore, DHT and peer-exchange discovery, and signed bootstrap records, but
 the first connection has to come from somewhere, and that somewhere is a
 decision made at build time.
 

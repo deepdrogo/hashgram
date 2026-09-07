@@ -19,22 +19,37 @@ against an imaginary endpoint compiles, ships, and fails in the user's hands.
 
 A blockchain with a fixed 1,000,000,000 HASH supply, a finite reward reserve,
 an on-chain identity registry storing public keys only, a username registry
-with confusable-character defence, and a useful-service reward system.
+with confusable-character defence, and a useful-service reward system — plus
+the off-chain network that carries everything else: MLS end-to-end encrypted
+messaging through store-and-forward mailboxes, signed public social events
+(posts, comments, reactions, reposts, follows, channels, reels, stories),
+content-addressed media storage, TURN credentials and MLS-carried call
+signalling. The network side is exposed through the Rust `hashgram-sdk`
+(`sdk/rust/hashgram-sdk`); `hashgram-client` is the reference command line
+built on it.
 
-### What Hashgram is not yet
+### Build in two stages
 
-**There is no messaging, no social feed, no media, and no calls.** The
-peer-to-peer layer that would carry them is Phase 2 and is unbuilt: no
-end-to-end encryption, no envelope store, no blob storage, no call
-signalling.
+**Stage 1 — wallet, identity, node console.** Everything in sections 2 to 4
+talks to the chain over REST/RPC and is fully specified here. Do this first
+and ship it.
 
-So **do not build a messenger.** Build a wallet, an identity manager and a
-node console. Those have real APIs behind them. When Phase 2 lands, this
-document will be extended with the interfaces that actually exist then.
+**Stage 2 — messenger, feed, media, calls.** Bind `hashgram-sdk` through a
+C ABI (`cbindgen`) or UniFFI and drive it from the app; do not
+reimplement MLS, the handshake or the blob protocol in C#. The SDK owns the
+encrypted vault, the libp2p link, mailbox polling, social publication and
+media upload/download. Read `docs/CLIENT_CONNECTIVITY_SPEC.md` §10,
+`docs/MESSAGING.md`, `docs/SOCIAL_PROTOCOL.md`, `docs/STORAGE.md` and
+`docs/CALLS.md`, and copy `node/hashgram-client/src/main.rs` command by
+command: every screen in stage 2 corresponds to an SDK call that program
+already makes. What the SDK does **not** provide: a WebRTC media stack
+(bring `webrtc-rs`/`libwebrtc`; the SDK gives you TURN credentials and the
+signalling channel), push notifications (poll or stay connected), and
+end-to-end encryption of SFU group calls.
 
-If a specification tells you to build a chat screen against
-`/hashgram/messaging/v1/send`, that endpoint does not exist and the
-specification is wrong.
+If a specification tells you to build a chat screen against an HTTP endpoint
+such as `/hashgram/messaging/v1/send`, that endpoint does not exist and the
+specification is wrong: messaging is peer-to-peer over the SDK, never REST.
 
 ### The one rule that must not be broken
 
@@ -470,22 +485,30 @@ Non-negotiable.
 
 ---
 
-## 7. Deliberately out of scope
+## 7. Stage 2 — the network features
 
-Because the APIs do not exist. Adding them means inventing an interface, and
-the client will then have to be rewritten when the real one lands.
+Only after stage 1 ships. Each item maps to SDK calls that `hashgram-client`
+already exercises; the command is named so you can read its implementation.
 
-- Messaging of any kind
-- Social feed, posts, reels, stories, channels
-- Media upload, storage or playback
-- Voice and video calls
-- Contact discovery beyond username lookup
-- Group management
+| Screen | SDK | Reference command |
+| --- | --- | --- |
+| Device list, add/remove device | `identity` + `x/identity` txs | `identity add-device`, `identity remove-device` |
+| Publish key packages (required before anyone can message you) | `messaging::publish_key_packages` | `identity publish-keys` |
+| Chats: direct and group, offline delivery | `messaging::send`, `receive`, `group create/add` | `message send`, `message receive`, `group create` |
+| Feed, profile, follow, post, comment, react, repost | `social::*` | `post`, `comment`, `react`, `follow`, `profile set` |
+| Reels and stories (video upload + event) | `blob::upload` then `social::publish_reel` | `reel publish`, `story publish` |
+| Channels | `social::channel_*` | `channel create`, `channel post` |
+| Media viewer, private attachments | `blob::download`, `blob::verify` | `blob download`, `blob verify` |
+| Calls: discover a call node, get TURN creds, signal | `calls::discover`, `turn_credentials`, `signal` | `call discover`, `call turn-creds` |
 
-When Phase 2 is built, this document gains a section describing the real
-interfaces. Until then, a Hashgram desktop client is a wallet, an identity
-manager and a node console — and those three, done well, are worth more than
-four more done against imagined APIs.
+Rules that stage 2 must keep: the vault passphrase never leaves the process;
+plaintext messages are never written to disk outside the encrypted vault;
+the app verifies every social event's signature itself and treats indexer
+feeds as a cache; a peer whose handshake fails the genesis hash check is not
+retried silently but surfaced to the user as "wrong network".
+
+Still out of scope: a token bridge, an in-app exchange, and anything that
+needs a server Hashgram does not run.
 
 ---
 
@@ -509,7 +532,10 @@ four more done against imagined APIs.
 - [ ] A devnet build is unmistakable at a glance
 - [ ] The installer is Authenticode signed
 - [ ] A test asserts that no log line contains the test mnemonic
-- [ ] No messaging, social or media screens
+- [ ] Stage 1 contains no messaging, social or media screens; stage 2 adds
+      them only through `hashgram-sdk`, never against invented REST paths
+- [ ] Stage 2: a test asserts no plaintext message appears in any file the
+      app writes outside the vault
 
 ---
 
@@ -522,7 +548,10 @@ four more done against imagined APIs.
 | Address prefix, coin type, denominations | `app/params/params.go` |
 | Network identity and signing domains | `app/params/network.go` |
 | Canonical signing preimages | `app/canonical/encode.go` |
-| A working client to copy behaviour from | `cmd/hashgram-test-client/` |
+| A working chain client to copy behaviour from | `cmd/hashgram-test-client/` |
+| The SDK to bind for stage 2 | `sdk/rust/hashgram-sdk/` |
+| A working network client to copy behaviour from | `node/hashgram-client/` |
+| Wire protocol definitions | the `p2p/v1` directory under `proto/hashgram`, and `docs/PROTOCOL.md` |
 | Cross-language signing vectors | `node/testdata/signing-vectors.json` |
 
 `cmd/hashgram-test-client` is the most useful of these. It is a real client

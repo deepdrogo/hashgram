@@ -13,29 +13,33 @@ procedures, and an honest accounting of the remainder.
 
 ### Binaries
 
-| Binary | Purpose | Size |
+| Binary | Language | Purpose |
 | --- | --- | --- |
-| `hashgramd` | The node: Cosmos SDK v0.53.8 on CometBFT v0.38.26 | 116 MB |
-| `hashgramctl` | Operator CLI: 23 subcommands | 112 MB |
-| `hashgram-test-client` | Developer client, exercises the protocol from outside a node | 34 MB |
-| `hashgram-keygen` | Offline key generation. No networking, no disk writes. | 34 MB |
+| `hashgramd` | Go | The chain: Cosmos SDK v0.53.8 on CometBFT v0.38.26 |
+| `hashgramctl` | Go | Operator CLI: init, genesis, join, roles, status, storage, rewards, health, backup, preflight |
+| `hashgram-keygen` | Go | Offline key generation. No networking, no disk writes. |
+| `hashgram-test-client` | Go | Developer client for the chain: wallet, staking, Founder verification, signing domains |
+| `hashgram-indexer` | Go | PostgreSQL projection of chain and public social data; read API on `127.0.0.1:1318` |
+| `hashgram-safety` | Go | Content review pipeline that signs `ContentAttestation`s |
+| `hashgram-node` | Rust | The P2P node: swarm, mailboxes, social events, blob storage, rewards agent, local API |
+| `hashgram-client` | Rust | Developer client for the network: identity, messaging, groups, social, reels, blobs, calls |
 
-Static, CGO-free, reproducible. Built with `-trimpath -buildvcs=false` and no
-build-date or commit stamp, because either would make the output
-unreproducible and an operator who cannot reproduce a checksum cannot verify a
-download.
+The Go binaries are static, CGO-free and reproducible, built with `-trimpath
+-buildvcs=false` and no build-date or commit stamp. The Rust binaries are
+built with a pinned toolchain and `Cargo.lock`; `scripts/dev/release.sh`
+records both sets in `SHA256SUMS`.
 
 ### Code
 
 | | |
 | --- | --- |
-| Authored Go | 33,486 lines, 160 files |
-| Go tests | 7,914 lines, 343 test functions |
-| Rust | 3 crates, 72 tests |
-| Generated protobuf | 60,273 lines |
-| Proto definitions | 3,232 lines, 33 files |
-| Shell (install, testnet, CI) | 3,757 lines, 10 files |
-| Documentation | 16 documents |
+| Authored Go | 37,723 lines, 179 files |
+| Go tests | 8,214 lines, 351 test and fuzz functions |
+| Rust | 21,766 lines, 67 files, 9 crates + 8 fuzz targets |
+| Generated protobuf (Go) | 67,107 lines |
+| Proto definitions | 5,001 lines, 50 files |
+| Shell (install, testnet, CI) | 5,055 lines, 13 files |
+| Documentation | 24 documents |
 
 ### The chain
 
@@ -55,18 +59,26 @@ Eight custom modules on the standard Cosmos SDK set.
 `x/mint` and `x/circuit` are **absent**, not configured. That is what makes
 "no inflation" and "no kill switch" structural rather than a setting.
 
-### The Rust layer
+### The network
 
-Phase 2 foundation, tested and CI-wired:
+The off-chain layer, in Rust, in the `node/` workspace:
 
-- `hashgram-net`: network identity, signing domains, canonical preimages
-  **byte-identical to Go**, verified against 90 generated vectors
-- `hashgram-net::Handshake`: verifies all five identity parts, closing the gap
-  CometBFT leaves open
-- `hashgram-p2p`: peer scoring with proportional decay, per-subnet connection
-  limits, config validation
+| Crate | What it does |
+| --- | --- |
+| `hashgram-net` | Network identity, signing domains, canonical preimages **byte-identical to Go**, verified against generated vectors; the five-part handshake |
+| `hashgram-proto` | `prost` types for `proto/hashgram/p2p/v1` and `chat/v1` |
+| `hashgram-p2p` | libp2p swarm: QUIC and TCP, Kademlia, Gossipsub, identify, AutoNAT, circuit relay, DCUtR; Hashgram handshake on every connection; peer scoring, per-peer rate limits, persistent peerstore |
+| `hashgram-identity` | Encrypted vault (Argon2id + XChaCha20-Poly1305), device keys, device certificates matching `x/identity` |
+| `hashgram-mls` | OpenMLS 0.7 wrapper: key packages, groups, Welcome, application messages, state snapshots |
+| `hashgram-chain` | `cosmrs` client: queries, signing, broadcast of Hashgram transactions |
+| `hashgram-node` | The daemon: mailbox store, social event log, blob store with replication and repair, safety enforcement, rewards agent, TURN credential issuance, local JSON API, Prometheus metrics |
+| `hashgram-sdk` (`sdk/rust`) | Client facade: link, identity, messaging, social, blob, calls, receipts |
+| `hashgram-client` | Reference client on the SDK |
 
-The libp2p swarm itself and everything riding on it is not built. See §9.
+And in Go, `indexer/` and `safety/` with their `cmd/` entry points. The
+wire protocol is `docs/PROTOCOL.md`; the subsystems each have their own
+document (`MESSAGING`, `SOCIAL_PROTOCOL`, `STORAGE`, `CALLS`, `MODERATION`,
+`SERVICE_REWARDS`).
 
 ---
 
@@ -226,8 +238,11 @@ on this server gets, what they do not, and what to do.
   generate one, so this is structural rather than a claim.
 - **Any user's private key.** `x/identity` stores public keys only. There is
   no key escrow.
-- **Any message plaintext.** Nothing is logged, and Phase 2's messaging is
-  end-to-end encrypted by design.
+- **Any message plaintext.** Messages are MLS-encrypted on the sender's
+  device; a store node holds ciphertext, and the acceptance test greps every
+  store node's database for the test message and finds nothing.
+- **Any private media.** Private blobs are encrypted before upload; the
+  node stores ciphertext and never receives the key.
 - **The ability to forge blocks the rest of the network accepts.** A stolen
   consensus key can double-sign, which gets you slashed; it cannot make other
   validators accept invalid blocks.
@@ -377,17 +392,19 @@ Runs as `hashgram-chain` in `/var/lib/hashgram/chain` at mode 0750. Do **not**
 add other roles: a validator that misses precommits because a neighbour
 process is busy gets jailed for something that is not a Hashgram problem.
 
-### One machine, storage and relay (Phase 2)
+### One machine, storage and relay
 
 ```bash
-hashgramctl configure-role relay,store,media
+hashgramctl configure-role relay,store,media   # creates the operator key, prints the address to fund
 hashgramctl restart
-hashgramctl storage           # assignments, challenges, disk
-hashgramctl rewards           # credit and earnings
+hashgramctl storage           # assignments, challenges, disk, blob health
+hashgramctl rewards           # credit, receipts, payouts from the node and the chain
 ```
 
 Runs as `hashgram-node` in `/var/lib/hashgram/node`. Combines naturally:
-bandwidth and disk on one box.
+bandwidth and disk on one box. The operator key is a hot key that pays
+fees for registration, challenge answers and receipt submission; the reward
+address it names can be a cold wallet.
 
 ### Three machines, separated by risk
 
@@ -425,8 +442,9 @@ Machine 3   indexer, safety
 | indexer | none; PostgreSQL is localhost only |
 | safety | none inbound |
 
-**Never opened:** 26657, 1317, 9090, 26660, 5432, and the monitoring ports.
-`mainnet-preflight` fails if the admin RPC is publicly reachable.
+**Never opened:** 26657, 1317, 1318, 9091, 26660, 26671, 26672, 5432, and
+the monitoring ports. `mainnet-preflight` fails if the admin RPC or the
+node's local API is publicly reachable.
 
 ---
 
@@ -436,16 +454,92 @@ Full verbatim output in [PHASE1_REPORT.md](PHASE1_REPORT.md). Summary:
 
 | Suite | Result |
 | --- | --- |
-| `go test -race ./...` | 16 packages, all passing, 343 test functions |
-| `cargo test --all` | 72 tests passing |
-| `scripts/testnet/devnet.sh` | 22 acceptance checks against a live chain, all passing |
+| `go test -race ./...` | All packages passing, 351 test and fuzz functions |
+| `cargo test --workspace` + SDK | 188 tests passing |
+| `scripts/testnet/devnet.sh` | 32 acceptance checks against a live chain, all passing |
 | `scripts/testnet/four-validator.sh` | Consensus, resilience and fork isolation, all passing |
+| `scripts/testnet/phase2.sh` | 58 network acceptance checks, all passing (verbatim below) |
 | `gofmt`, `go vet`, `staticcheck` | Clean |
-| `gosec` | Clean, 140 files, 25,706 lines |
-| `gitleaks` | No secrets |
-| `govulncheck` | Zero unreviewed vulnerabilities in the shipped binary |
+| `gosec` | Clean |
+| `gitleaks` | No secrets, in the repository and in a node's data directory |
+| `govulncheck` | Zero unreviewed vulnerabilities in the shipped binaries |
 | `cargo clippy` | Clean with the workspace deny list |
+| `cargo audit` | Clean; four advisories ignored with written justification in `node/.cargo/audit.toml` |
+| Fuzzing | 8 `cargo-fuzz` targets (nightly, `make fuzz`) plus stable decoder smoke tests in every `cargo test`; 3 Go native fuzzers run in CI for a short budget |
 | `scripts/dev/release.sh --verify` | Byte-identical across builds |
+
+### The network acceptance run
+
+Four validators, three P2P nodes (A: relay+store+bootstrap, B: store+media,
+C: relay+store), one indexer, one safety engine, two clients, all on this
+host. Output of `scripts/testnet/phase2.sh`, colour codes removed:
+
+```text
+[ ok ] four validators running
+[ ok ] genesis hash 18fe15f0859b85936f39856c8dcf4604840ac9adcdd0ad88980d41343934da6c
+[ ok ] node0 verified 2 peer(s)
+[ ok ] node1 verified 2 peer(s)
+[ ok ] node2 verified 2 peer(s)
+[ ok ] node A refused the fork at the handshake: genesis hash mismatch
+[ ok ] fork peer is banned on node A
+[ ok ] the fork verified nobody
+[ ok ] alice identity registered
+[ ok ] bob identity registered
+[ ok ] alice has 1 device(s) on chain
+[ ok ] 3 providers registered
+[ ok ] alice key packages published
+[ ok ] bob key packages published
+[ ok ] alice sent
+[ ok ] bob decrypted alice's message
+[ ok ] alice decrypted bob's reply
+[ ok ] one direct conversation reused for both directions
+[ ok ] no plaintext in any store node's mailbox database
+[ ok ] group created
+[ ok ] bob decrypted the group message
+[ ok ] profile published
+[ ok ] post published
+[ ok ] bob follows alice
+[ ok ] reel published, video e4fdbd4d...
+[ ok ] node0 holds 3 of alice's events
+[ ok ] node1 holds 3 of alice's events
+[ ok ] node2 holds 3 of alice's events
+[ ok ] reel video is HEALTHY (3 known replicas)
+[ ok ] private blob uploaded 55e36e0e...
+[ ok ] bob downloaded and decrypted the private blob byte-for-byte
+[ ok ] stored blob is ciphertext
+[ ok ] safety attestor 65fc7354...
+[ ok ] indexer serves alice's post
+[ ok ] indexer serves the reel
+[ ok ] bob's following feed shows alice
+[ ok ] indexer lists 3 providers from chain
+[ ok ] safety engine blocked the scam post
+[ ok ] node B no longer serves the blocked post
+[ ok ] indexer hides the blocked post
+[ ok ] node A recorded 2 storage assignment(s) on chain
+[ ok ] chain issued 2 storage challenge(s) to node A
+[ ok ] node A answered a challenge with a Merkle proof
+[ ok ] chain records challenges_passed=1 for node A
+[ ok ] client-signed receipts produced 880588 units of relay/retrieval credit across the providers
+[warn] node A not yet paid (settlement pays at epoch close; storage needs a full epoch held)
+[ ok ] alice sent with B down
+[ ok ] bob received with B down
+[ ok ] private blob still downloadable with B down
+[ ok ] chain advanced from 131 to 134 with the genesis validator and node A gone
+[ ok ] bob sent through node C only
+[ ok ] alice received through node C only
+[ ok ] no validator key, client vault or mnemonic material in any P2P node directory
+[ ok ] gitleaks finds nothing in node C's data directory
+```
+
+The one warning is expected: storage credit is paid at epoch close for
+bytes held a full epoch, and the test does not wait an epoch. The
+`challenges_passed=1` line and the receipt credit show the inputs to that
+payment are recorded.
+
+The "genesis validator and node A gone" check is the genesis-VPS
+destruction scenario: the first validator and the bootstrap node are
+killed together, the chain keeps producing blocks on the remaining three,
+and the two clients keep messaging through node C alone.
 
 ### The finding worth knowing
 
@@ -461,9 +555,11 @@ set stayed at exactly four — but the socket opens.
 
 Three layers turn a fork away today: the CometBFT handshake for a different
 chain id, consensus for a same-chain-id fork, and `hashgramctl join-mainnet`
-for an operator handed the wrong file. The Rust `hashgram-net::Handshake`
-closes the transport-layer gap by verifying all five identity parts, and is
-tested.
+for an operator handed the wrong file. On the Hashgram P2P layer the gap
+does not exist: the Rust handshake runs before any application protocol,
+verifies all five identity parts including the genesis hash, and the
+acceptance run shows a same-chain-id fork refused, banned, and left with
+no verified peers.
 
 ---
 
@@ -508,46 +604,35 @@ working one.
 
 ## 9. What is not done
 
-The specification was 116 sections. Phase 1 is complete. Phase 2 is a
-foundation plus a large remainder.
+The specification was 116 sections. Phases 1 and 2 are built and tested.
 
 ### Built and tested
 
 - The entire chain: eight modules, genesis tooling, operator CLI
-- Monitoring: 22 custom metrics, three dashboards, 24 alert rules
-- CI: tests, four static analysers, a secret scanner, a vulnerability scanner
-- Reproducible release build
-- 16 documents, verified against the code by a CI check
-- Rust: network identity with Go parity, the five-part handshake, peer
-  scoring, connection limits
+- The P2P node: swarm, handshake, discovery, mailboxes, social events, blob
+  storage with replication and repair, rewards agent, TURN credentials
+- The Rust SDK and reference client; the Go indexer and safety engine
+- Monitoring: custom metrics, dashboards, alert rules, for chain and node
+- CI: tests, static analysers, secret scanner, vulnerability scanners for
+  Go and Rust, fuzz smoke runs
+- Reproducible release build of all eight binaries
+- 24 documents, verified against the code by a CI check
+- A 58-check network acceptance suite including fork rejection, failover
+  and genesis-host destruction
 
 ### Not built
 
 | | |
 | --- | --- |
-| libp2p swarm | Transport, Gossipsub, Kademlia, identify, autonat, relay |
-| Bootstrap discovery | DHT, peer exchange, signed records |
-| OpenMLS messaging | End-to-end encryption, groups, multi-device |
-| Envelope store | Store-and-forward for offline recipients |
-| Social events | Signed posts, follows, reactions, channels, reels |
-| Blob storage | Content addressing, chunking, replication, repair |
-| PostgreSQL indexer | And every query it would serve |
-| Safety engine | Content attestations |
-| Calls | Node announcements, TURN reconfiguration, SFU |
-| Client SDKs | Rust, TypeScript, Swift, Kotlin, C# |
-| Fuzz targets | P2P parsing, social events, blob manifests |
-| Applications | Windows, iOS, Android. Specifications only. |
+| Applications | Windows, iOS, Android. Specifications only (`docs/PROMPT_*.md`); they bind `hashgram-sdk`. |
+| SDK bindings | Only Rust. UniFFI/C-ABI bindings for Swift, Kotlin and C# are the apps' first task. |
+| WebRTC media in the SDK | The SDK issues TURN credentials and carries signalling; a media stack is the application's. |
+| SFU end-to-end encryption | LiveKit group calls are encrypted to the SFU, not through it. 1:1 calls are peer-to-peer. |
+| Call receipts | Defined on chain and in the protocol; the reference client does not yet produce them. |
+| Push notifications | None. Clients poll mailboxes or stay connected. |
+| Safety OCR and frame extraction | Hook points exist; only the hash, text and HTTP-model stages are implemented. |
+| Multi-assigner storage | Storage assignments come from the assigner set named at genesis; adding assigners is a governance action. |
 | Mainnet | Requires a Founder address generated off this server. |
-
-This was a deliberate choice, not an oversight. The plan for this work stated
-that every phase would actually be built, run and tested before moving on,
-rather than leaving empty placeholders. A messaging layer stubbed out to tick
-a box would be worse than an absent one: it would look like a foundation to
-build on, and it would have to be thrown away.
-
-The signing domains for social events, content attestations and node
-announcements **are** defined and have test vectors, so a client or a future
-node can implement the signing side ahead of the transport.
 
 ### Known limitations
 
@@ -571,9 +656,21 @@ on-chain visibility makes abuse detectable after the fact.
 challenge proves a provider can produce a chunk, not that it stores it
 independently rather than fetching it on demand.
 
-**No formal verification and no independent audit.** 343 Go tests and 72 Rust
-tests are good and are not proofs. One implementation, no second to disagree
-with it.
+**Store-and-forward metadata is visible to store nodes.** Content is
+ciphertext, but a store node knows which mailbox received an envelope of
+what size, when. `docs/MESSAGING.md` states exactly what a store learns.
+
+**The acceptance run is one host.** Three P2P nodes and four validators on
+one machine test protocol behaviour, failover logic and fork rejection. They
+do not test NAT traversal across real networks, geographic latency or
+independent operators. AutoNAT, relay and DCUtR are wired and unit-tested;
+their behaviour across real NATs has not been observed.
+
+**No formal verification and no independent audit.** 351 Go and
+188 Rust tests, eight fuzz targets and a live acceptance suite
+are good and are not proofs. One implementation, no second to disagree
+with it. OpenMLS and libp2p carry their own audits; the code that joins
+them does not.
 
 ---
 
@@ -587,7 +684,8 @@ In order of how much each would change the picture:
 3. **A second implementation of the protocol**, so a consensus bug in one is
    caught by the other rather than becoming network-wide.
 4. **Cross-machine reproducibility** confirmed by a second builder.
-5. **The Phase 2 P2P layer**, built with the same standard as Phase 1.
+5. **Native applications**, so the network has users who are not running
+   a command line.
 
 The first three cannot be produced by writing more code, which is the honest
 reason to list them first.
@@ -605,15 +703,22 @@ reason to list them first.
 | Know what an attacker can do | [THREAT_MODEL.md](THREAT_MODEL.md) |
 | Know where control actually sits | [DECENTRALIZATION.md](DECENTRALIZATION.md) |
 | Build a client | [CLIENT_CONNECTIVITY_SPEC.md](CLIENT_CONNECTIVITY_SPEC.md), [PROMPT_WINDOWS_DESKTOP.md](PROMPT_WINDOWS_DESKTOP.md) |
-| See the actual test output | [PHASE1_REPORT.md](PHASE1_REPORT.md) |
+| Understand the wire protocol | [PROTOCOL.md](PROTOCOL.md), then [MESSAGING.md](MESSAGING.md), [SOCIAL_PROTOCOL.md](SOCIAL_PROTOCOL.md), [STORAGE.md](STORAGE.md), [CALLS.md](CALLS.md) |
+| Earn from a node | [SERVICE_REWARDS.md](SERVICE_REWARDS.md) |
+| Run or audit moderation | [MODERATION.md](MODERATION.md) |
+| See the actual test output | [PHASE1_REPORT.md](PHASE1_REPORT.md), §7 above |
 | Recover from something | [DISASTER_RECOVERY.md](DISASTER_RECOVERY.md) |
 
-The single most useful command:
+The two most useful commands:
 
 ```bash
 scripts/testnet/devnet.sh
+scripts/testnet/phase2.sh
 ```
 
-It builds a genesis with the real tooling, starts a real chain, and asserts
-the economic claims against it rather than against a mock. If you only run one
-thing, run that.
+The first builds a genesis with the real tooling, starts a real chain, and
+asserts the economic claims against it rather than against a mock. The
+second starts the whole network on one machine and asserts that messages
+decrypt only for their recipients, media replicates, forks are refused,
+and the network survives losing the host it started on. If you only run one
+thing, run the first; if you run two, run both.

@@ -146,8 +146,10 @@ interchangeable:
    `hashgramctl join-mainnet` requires `--genesis-hash` and refuses any
    genesis that does not match.
 
-The Phase 2 P2P handshake will verify all five identity parts, closing the
-transport-layer gap.
+The Hashgram P2P handshake verifies all five identity parts before any
+application protocol is offered, so the gap does not exist on the layer
+clients use; `scripts/testnet/phase2.sh` shows a same-chain-id fork refused
+and banned.
 
 ### Signature confusion across purposes or networks
 
@@ -214,10 +216,13 @@ Even with content encrypted, a relay sees who connected to it, when, and how
 much data moved. That is traffic analysis material, and Hashgram does not
 currently defend against it.
 
-Phase 2's store-and-forward envelope design reduces the direct-connection
-signal, but a global passive adversary observing many relays could still infer
-communication patterns. Mixnet-grade protection is not in scope for Phase 2
-and should not be assumed.
+The store-and-forward envelope design reduces the direct-connection signal:
+a store node sees a sender's device deliver to a mailbox and a recipient's
+device fetch from it, not a direct connection between the two. A global
+passive adversary observing many stores could still infer communication
+patterns from timing and sizes. `docs/MESSAGING.md` lists exactly what a
+store learns. Mixnet-grade protection is not in scope and should not be
+assumed.
 
 ### Compel a hosting provider
 
@@ -298,11 +303,29 @@ Documented in section 1 and worth repeating here, because it is a real gap
 rather than a defence: a same-chain-id fork reaches the transport layer.
 Consensus and operator tooling turn it away, but the P2P layer today does not.
 
-### Phase 2 is unbuilt, so its threats are unaddressed
+### The network layer has had no external review
 
-Everything in the messaging, social, storage and call layers — including the
-end-to-end encryption itself — does not exist yet. Any statement about the
-security of Hashgram messaging is a statement about a design, not about code.
+Messaging, social, storage and calls exist and are tested, including a live
+check that no store node holds plaintext. The MLS and libp2p libraries carry
+their own audits; the code that joins them — envelope handling, mailbox
+authentication, blob encryption, the rewards agent — has one implementation
+and no independent review. Statements about its security are statements
+about tested code, not audited code.
+
+### Store nodes see who talks to whom, roughly
+
+A mailbox is addressed by recipient. A store node therefore knows that a
+device it authenticated fetched from mailbox X and that some device
+delivered to X at a given time and size. It does not learn the sender's
+identity (delivery is unauthenticated by design) or any content.
+
+### A safety operator can suppress public content
+
+A signed `ContentAttestation` with verdict `BLOCK` causes compliant nodes
+to stop serving a public CID or event and indexers to hide it. Attestations
+are public and signed, so suppression is visible and attributable, and a
+client is free to ignore attestors it does not trust. Private content is
+never seen by the safety engine and cannot be attested.
 
 ## 4. Assumptions
 
