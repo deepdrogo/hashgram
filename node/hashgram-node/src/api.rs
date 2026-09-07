@@ -49,6 +49,7 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .route("/v1/status", get(status))
         .route("/v1/peers", get(peers))
         .route("/v1/announcements", get(announcements))
+        .route("/v1/rewards", get(rewards))
         .route("/v1/social/events", get(social_since).post(social_publish))
         .route("/v1/social/events/{id}", get(social_get))
         .route("/v1/social/author/{author}", get(social_author))
@@ -203,6 +204,17 @@ async fn status(State(s): S) -> impl IntoResponse {
         uptime_secs: sh.started.elapsed().as_secs(),
         version: env!("CARGO_PKG_VERSION"),
     })
+}
+
+async fn rewards(
+    State(s): S,
+) -> Result<Json<crate::rewards::RewardsView>, (StatusCode, Json<ApiError>)> {
+    let agent = s
+        .shared
+        .rewards
+        .as_ref()
+        .ok_or_else(|| unsupported("provider (no operator key configured)"))?;
+    Ok(Json(agent.view().await))
 }
 
 async fn peers(State(s): S) -> impl IntoResponse {

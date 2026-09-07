@@ -38,6 +38,8 @@ pub struct Shared {
     pub started: std::time::Instant,
     /// Optional services, present according to role.
     pub services: Services,
+    /// Useful-service agent, when an operator key is configured.
+    pub rewards: Option<Arc<crate::rewards::RewardsAgent>>,
 }
 
 /// Role-gated services.
@@ -121,8 +123,13 @@ pub async fn run(shared: Arc<Shared>, mut events: mpsc::Receiver<Event>) {
                 let verdict = handle_gossip(&shared, &topic, source, &data).await;
                 shared.handle.report_gossip(id, source, verdict).await;
             }
-            Event::PeerVerified { peer, roles } => {
-                debug!(%peer, ?roles, "verified");
+            Event::PeerVerified {
+                peer,
+                roles,
+                operator,
+            } => {
+                debug!(%peer, ?roles, operator, "verified");
+                shared.announces.note_operator(peer, &operator);
                 if let Some(blob) = &shared.services.blob {
                     blob.on_peer_verified(peer, &roles);
                 }
@@ -172,14 +179,12 @@ async fn publish_self(shared: &Arc<Shared>) {
         })
         .collect();
 
-    let call = shared.services.blob.as_ref().map(|_| ()).is_some(); // placeholder no-op to keep call info optional
-    let _ = call;
     let (turn, sfu) = crate::calls::announce_info(&shared.config);
 
     let me = SelfAnnounce {
         roles: shared.config.roles.clone(),
         addrs,
-        operator_address: shared.config.reward_address.clone(),
+        operator_address: shared.config.operator_address.clone(),
         declared_storage_bytes: shared.config.storage_quota_bytes,
         turn,
         sfu,
@@ -257,6 +262,24 @@ async fn handle_request(shared: &Arc<Shared>, peer: PeerId, request: pb::Request
                 )),
             },
         },
+
+        B::ReceiptDeliver(d) => {
+            let Some(agent) = &shared.rewards else {
+                return err("unsupported", "this node is not a registered provider");
+            };
+            let Some(r) = d.receipt else {
+                return err("invalid", "no receipt");
+            };
+            let (accepted, reason) = match agent.accept_receipt(peer, &r).await {
+                Ok(()) => (true, String::new()),
+                Err(why) => (false, why),
+            };
+            pb::Response {
+                body: Some(pb::response::Body::ReceiptDeliver(
+                    pb::ReceiptDeliverResult { accepted, reason },
+                )),
+            }
+        }
     }
 }
 

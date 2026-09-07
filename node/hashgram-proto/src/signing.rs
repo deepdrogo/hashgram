@@ -301,6 +301,60 @@ pub fn verify_blob_upload(
 }
 
 // ---------------------------------------------------------------------------
+// Service receipts
+// ---------------------------------------------------------------------------
+
+/// Canonical bytes of a service receipt, mirroring Go's
+/// `CanonicalReceiptBytes` field for field.
+pub fn receipt_payload(r: &pb::ServiceReceipt) -> Result<Vec<u8>, CanonicalError> {
+    CanonicalBuf::new(128)
+        .string("provider", &r.provider)
+        .enum_value(r.role)
+        .bytes("client_pubkey", &r.client_pubkey)
+        .enum_value(r.client_key_type)
+        .u64(r.epoch)
+        .u64(r.nonce)
+        .u64(r.units)
+        .height(r.expiry_height)
+        .finish()
+}
+
+/// Key type value for ed25519 in `hashgram.serviceproof.v1.KeyType`.
+pub const KEY_TYPE_ED25519: i32 = 2;
+/// `SERVICE_ROLE_RELAY`.
+pub const ROLE_RELAY: i32 = 2;
+/// `SERVICE_ROLE_CALL`.
+pub const ROLE_CALL: i32 = 3;
+/// `SERVICE_ROLE_MEDIA`.
+pub const ROLE_MEDIA: i32 = 4;
+
+/// Signs a receipt with the client's ed25519 device key.
+pub fn sign_receipt(
+    id: &NetworkIdentity,
+    signer: &Ed25519Signer,
+    r: &mut pb::ServiceReceipt,
+) -> Result<(), SignError> {
+    r.client_pubkey = signer.public_key().to_vec();
+    r.client_key_type = KEY_TYPE_ED25519;
+    let digest = id.signing_digest(SigningPurpose::ServiceReceipt, &receipt_payload(r)?);
+    r.client_signature = signer.sign_digest(&digest).to_vec();
+    Ok(())
+}
+
+/// Verifies a receipt's client signature (ed25519 clients only; the chain
+/// also accepts secp256k1 and is the final judge).
+pub fn verify_receipt(id: &NetworkIdentity, r: &pb::ServiceReceipt) -> Result<(), VerifyError> {
+    if r.client_key_type != KEY_TYPE_ED25519 {
+        return Err(VerifyError::Key(KeyError::UnsupportedLibp2pKeyType(
+            r.client_key_type,
+        )));
+    }
+    let digest = id.signing_digest(SigningPurpose::ServiceReceipt, &receipt_payload(r)?);
+    verify_ed25519(&r.client_pubkey, &digest, &r.client_signature)?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // Node announcements and bootstrap records
 // ---------------------------------------------------------------------------
 
@@ -624,6 +678,39 @@ mod tests {
         verify_attestation(&net(), &a).unwrap();
         a.verdict = pb::Verdict::ContentAllow as i32;
         assert!(verify_attestation(&net(), &a).is_err());
+    }
+
+    #[test]
+    fn receipt_payload_matches_the_go_layout_and_signs() {
+        // Go: String(provider) Enum(role) Bytes(client_pubkey) Enum(kt)
+        //     Uint64(epoch) Uint64(nonce) Uint64(units) Height(expiry)
+        let s = Ed25519Signer::generate().unwrap();
+        let mut r = pb::ServiceReceipt {
+            provider: "hash1prov".into(),
+            role: ROLE_MEDIA,
+            epoch: 7,
+            nonce: 9,
+            units: 1000,
+            expiry_height: 500,
+            ..Default::default()
+        };
+        sign_receipt(&net(), &s, &mut r).unwrap();
+        verify_receipt(&net(), &r).unwrap();
+        let p = receipt_payload(&r).unwrap();
+        let mut expected = Vec::new();
+        expected.extend_from_slice(&9u32.to_be_bytes());
+        expected.extend_from_slice(b"hash1prov");
+        expected.extend_from_slice(&4u32.to_be_bytes());
+        expected.extend_from_slice(&32u32.to_be_bytes());
+        expected.extend_from_slice(&s.public_key());
+        expected.extend_from_slice(&2u32.to_be_bytes());
+        expected.extend_from_slice(&7u64.to_be_bytes());
+        expected.extend_from_slice(&9u64.to_be_bytes());
+        expected.extend_from_slice(&1000u64.to_be_bytes());
+        expected.extend_from_slice(&500u64.to_be_bytes());
+        assert_eq!(p, expected);
+        r.units = 1001;
+        assert!(verify_receipt(&net(), &r).is_err());
     }
 
     #[test]

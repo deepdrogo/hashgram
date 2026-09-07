@@ -50,6 +50,7 @@ pub enum RequestKind {
     Announce,
     PeerExchange,
     Attestation,
+    Receipt,
     Unknown,
 }
 
@@ -252,6 +253,7 @@ pub fn request_kind(req: &hashgram_proto::pb::Request) -> RequestKind {
         Some(B::AnnounceQuery(_)) => RequestKind::Announce,
         Some(B::PeerExchange(_)) => RequestKind::PeerExchange,
         Some(B::AttestationQuery(_)) => RequestKind::Attestation,
+        Some(B::ReceiptDeliver(_)) => RequestKind::Receipt,
         None => RequestKind::Unknown,
     }
 }

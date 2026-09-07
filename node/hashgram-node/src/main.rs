@@ -31,6 +31,7 @@ mod calls;
 mod chain;
 mod keys;
 mod mailbox;
+mod rewards;
 mod safety;
 mod settings;
 mod social;
@@ -97,6 +98,20 @@ enum Cmd {
             default_value = "/var/lib/hashgram/node"
         )]
         home: PathBuf,
+    },
+    /// Generate the provider operator key (hex secp256k1 secret, 0600) and
+    /// print its address. Never prints the secret.
+    OperatorKey {
+        /// Data directory.
+        #[arg(
+            long,
+            env = "HASHGRAM_NODE_HOME",
+            default_value = "/var/lib/hashgram/node"
+        )]
+        home: PathBuf,
+        /// Only print the address of an existing key.
+        #[arg(long)]
+        show: bool,
     },
     /// Sign a bootstrap record file from a list of multiaddrs. The signing
     /// key is read from a file (32-byte hex seed) and never printed.
@@ -173,6 +188,7 @@ fn main() {
             days,
             out,
         } => sign_bootstrap(&key_file, &config, addrs, days, &out),
+        Cmd::OperatorKey { home, show } => operator_key(&home, show),
     };
     if let Err(e) = result {
         error!("{e:#}");
@@ -216,10 +232,56 @@ fn sign_bootstrap(
     Ok(())
 }
 
+fn operator_key_path(home: &std::path::Path, cfg: &hashgram_p2p::NodeConfig) -> PathBuf {
+    if cfg.operator_key_file.is_empty() {
+        home.join("operator.key")
+    } else {
+        PathBuf::from(&cfg.operator_key_file)
+    }
+}
+
+fn load_operator_secret(path: &std::path::Path) -> anyhow::Result<Option<Vec<u8>>> {
+    match std::fs::read_to_string(path) {
+        Ok(raw) => Ok(Some(
+            hex::decode(raw.trim()).context("operator key is not hex")?,
+        )),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+fn operator_key(home: &std::path::Path, show: bool) -> anyhow::Result<()> {
+    let path = home.join("operator.key");
+    let secret = match load_operator_secret(&path)? {
+        Some(s) => s,
+        None if show => anyhow::bail!("no operator key at {}", path.display()),
+        None => {
+            let (_, w) = hashgram_chain::Wallet::generate()?;
+            let secret = w.secret_bytes().to_vec();
+            std::fs::create_dir_all(home)?;
+            keys::write_secret(&path, hex::encode(&secret).as_bytes())?;
+            eprintln!("operator key written to {} (0600)", path.display());
+            secret
+        }
+    };
+    let w = hashgram_chain::Wallet::from_secret(&secret)?;
+    println!("{}", w.address());
+    Ok(())
+}
+
 async fn run(home: PathBuf, config: PathBuf, insecure_no_chain: bool) -> anyhow::Result<()> {
     let s = settings::load(&config, Some(&home))?;
-    let cfg = s.config;
+    let mut cfg = s.config;
     let identity = s.identity;
+
+    // The provider operator key, if present. Its address goes into the
+    // handshake so clients know whom to sign receipts for.
+    let operator_secret = load_operator_secret(&operator_key_path(&home, &cfg))?;
+    if let Some(sec) = &operator_secret {
+        cfg.operator_address = hashgram_chain::Wallet::from_secret(sec)?
+            .address()
+            .to_string();
+    }
 
     if insecure_no_chain && identity.is_mainnet() {
         anyhow::bail!("--insecure-no-chain is DEVNET ONLY and is refused on mainnet");
@@ -317,6 +379,29 @@ async fn run(home: PathBuf, config: PathBuf, insecure_no_chain: bool) -> anyhow:
         None
     };
 
+    let rewards = match (&operator_secret, chain.is_some()) {
+        (Some(sec), true) => {
+            let db = store::open(&home, "rewards")?;
+            let agent = rewards::RewardsAgent::open(
+                db,
+                cfg.clone(),
+                identity.clone(),
+                sec,
+                announce_signer.clone(),
+            )?;
+            info!(operator = %agent.operator(), reward = %cfg.reward_address, "useful-service agent enabled");
+            Some(agent)
+        }
+        (Some(_), false) => {
+            warn!("operator key present but chain lookups are disabled; useful-service agent off");
+            None
+        }
+        (None, _) => {
+            info!("no operator key; this node will not earn useful-service rewards (run `hashgram-node operator-key`)");
+            None
+        }
+    };
+
     let shared = Arc::new(app::Shared {
         handle: handle.clone(),
         config: cfg.clone(),
@@ -325,6 +410,7 @@ async fn run(home: PathBuf, config: PathBuf, insecure_no_chain: bool) -> anyhow:
         announce_signer,
         started: std::time::Instant::now(),
         services,
+        rewards,
     });
 
     // Maintenance: sweeps and replication.
@@ -347,9 +433,23 @@ async fn run(home: PathBuf, config: PathBuf, insecure_no_chain: bool) -> anyhow:
                 if let Some(b) = &shared.services.blob {
                     b.repair_pass(&shared, 8).await;
                 }
+                if let Some(agent) = &shared.rewards {
+                    if let Some(b) = &shared.services.blob {
+                        agent.answer_challenges(b).await;
+                        agent.assignment_pass(&shared, b, 8).await;
+                    }
+                    agent.submit_receipts().await;
+                }
             }
         })
     };
+    if let Some(agent) = &shared.rewards {
+        let agent = agent.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            agent.ensure_registered().await;
+        });
+    }
 
     let api_state = Arc::new(api::ApiState {
         shared: shared.clone(),

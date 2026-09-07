@@ -25,6 +25,7 @@ var (
 	flagDataDir   string
 	flagNodeHome  string
 	flagRPC       string
+	flagNodeAPI   string
 	flagJSON      bool
 	flagYes       bool
 )
@@ -100,6 +101,8 @@ Joining an existing network from a second server:
 		hgconfig.DefaultDataDir, "node data directory")
 	root.PersistentFlags().StringVar(&flagNodeHome, "home", "",
 		"hashgramd node home (defaults to $HASHGRAM_HOME or $HOME/.hashgram)")
+	root.PersistentFlags().StringVar(&flagNodeAPI, "node-api", hgrpc.NodeAPIAddr,
+		"local API of hashgram-node (loopback)")
 	root.PersistentFlags().StringVar(&flagRPC, "rpc",
 		hgrpc.DefaultEndpoint, "local CometBFT RPC endpoint")
 	root.PersistentFlags().BoolVar(&flagJSON, "json", false, "emit machine-readable JSON")

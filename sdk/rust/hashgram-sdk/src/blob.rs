@@ -194,12 +194,28 @@ pub async fn providers(link: &Link, c: &[u8]) -> Vec<PeerId> {
 pub async fn download(
     link: &Link,
     c: &[u8],
+    receipt: Option<(&hashgram_chain::Client, &NetworkIdentity, &Ed25519Signer)>,
 ) -> Result<(Vec<u8>, pb::BlobManifest, PeerId), SdkError> {
     let peers = providers(link, c).await;
     let mut last = SdkError::NotFound(hex::encode(c));
     for p in peers {
         match download_from(link, p, c).await {
-            Ok((bytes, m)) => return Ok((bytes, m, p)),
+            Ok((bytes, m)) => {
+                // A signed retrieval receipt for the bytes served is how a
+                // media node earns; the client is never blocked by it.
+                if let Some((chain, network, device)) = receipt {
+                    link.deliver_receipt(
+                        chain,
+                        network,
+                        device,
+                        p,
+                        signing::ROLE_MEDIA,
+                        bytes.len() as u64,
+                    )
+                    .await;
+                }
+                return Ok((bytes, m, p));
+            }
             Err(e) => last = e,
         }
     }

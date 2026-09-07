@@ -246,20 +246,27 @@ func (k Keeper) applyReceipt(
 
 // creditForReceipt converts receipt units into credit units.
 //
-// Relay and retrieval are per GiB moved; calls are per hour of session. The
-// conversion truncates, so a receipt below one unit of the relevant
-// denominator is worth nothing. That is intentional: it makes spamming tiny
-// receipts pointless while costing an honest node nothing, because a real
-// relay batches.
+// Relay and retrieval are priced per GiB moved and calls per hour of
+// session, but credit is proportional: units * rate / denominator with exact
+// integer arithmetic, truncating only the final result. An earlier version
+// truncated units to whole GiB first, so a receipt below a gibibyte was worth
+// nothing. That looked like spam resistance and was actually a way for relay
+// rewards to be unreachable: a client signs a receipt for what it consumed,
+// and a messaging client consumes kilobytes, not gibibytes, and cannot
+// "batch" across other clients' signatures. Spam of tiny receipts is bounded
+// elsewhere: each needs a distinct real client key, each costs the provider
+// gas to submit, and the per-client concentration cap discounts credit that
+// comes from one counterparty.
 func creditForReceipt(r types.ServiceReceipt, p types.Params) math.Int {
+	units := math.NewIntFromUint64(r.Units)
 	switch r.Role {
 	case types.SERVICE_ROLE_RELAY:
-		return math.NewIntFromUint64(r.Units / gibibyte * p.RelayCreditPerGib)
+		return units.Mul(math.NewIntFromUint64(p.RelayCreditPerGib)).Quo(math.NewIntFromUint64(gibibyte))
 	case types.SERVICE_ROLE_MEDIA:
-		return math.NewIntFromUint64(r.Units / gibibyte * p.RetrievalCreditPerGib)
+		return units.Mul(math.NewIntFromUint64(p.RetrievalCreditPerGib)).Quo(math.NewIntFromUint64(gibibyte))
 	case types.SERVICE_ROLE_CALL:
 		// Units are session seconds.
-		return math.NewIntFromUint64(r.Units / 3600 * p.CallCreditPerHour)
+		return units.Mul(math.NewIntFromUint64(p.CallCreditPerHour)).Quo(math.NewInt(3600))
 	default:
 		return math.ZeroInt()
 	}

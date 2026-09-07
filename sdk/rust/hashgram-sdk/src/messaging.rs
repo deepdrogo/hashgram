@@ -559,6 +559,7 @@ impl Messaging {
         &mut self,
         link: &Link,
         network: &NetworkIdentity,
+        chain: Option<&hashgram_chain::Client>,
     ) -> Result<Vec<Received>, SdkError> {
         let mut peers: Vec<PeerId> = link
             .providers(dht::mailbox_for_device(&self.device.public_key()))
@@ -570,6 +571,7 @@ impl Messaging {
         }
         let mut out = Vec::new();
         for p in peers {
+            let mut bytes_served: u64 = 0;
             let mut cursor = self
                 .cursors
                 .get(&p.to_string())
@@ -594,6 +596,11 @@ impl Messaging {
                 if page.envelopes.is_empty() {
                     break;
                 }
+                bytes_served += page
+                    .envelopes
+                    .iter()
+                    .map(|e| e.ciphertext.len() as u64)
+                    .sum::<u64>();
                 let mut acked = Vec::new();
                 for env in &page.envelopes {
                     let id_hex = hex::encode(&env.id);
@@ -635,6 +642,19 @@ impl Messaging {
                 cursor = page.cursor;
             }
             self.cursors.insert(p.to_string(), cursor);
+            if let Some(chain) = chain {
+                if bytes_served > 0 {
+                    link.deliver_receipt(
+                        chain,
+                        network,
+                        &self.device,
+                        p,
+                        signing::ROLE_RELAY,
+                        bytes_served,
+                    )
+                    .await;
+                }
+            }
         }
         // Replenish one-time key packages consumed by Welcomes since the
         // last sync. Failure here is not a sync failure.

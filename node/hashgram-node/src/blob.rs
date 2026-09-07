@@ -58,6 +58,8 @@ const META: TableDefinition<&[u8], (&[u8], u64, u64)> = TableDefinition::new("bl
 const UPLOADER_USAGE: TableDefinition<&[u8], u64> = TableDefinition::new("uploader_usage");
 // chunk hash -> reference count
 const CHUNK_REFS: TableDefinition<&[u8], u64> = TableDefinition::new("chunk_refs");
+// cid -> SHA-256 Merkle root over chunk contents, computed once complete
+const ROOTS: TableDefinition<&[u8], &[u8]> = TableDefinition::new("merkle_roots");
 
 /// Statistics for the operator API.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -128,6 +130,7 @@ impl BlobService {
             txn.open_table(META)?;
             txn.open_table(UPLOADER_USAGE)?;
             txn.open_table(CHUNK_REFS)?;
+            txn.open_table(ROOTS)?;
         }
         txn.commit().context("blob: init")?;
         Ok(Arc::new(Self {
@@ -433,6 +436,70 @@ impl BlobService {
         Ok(complete)
     }
 
+    /// The manifest of a blob, if held.
+    #[must_use]
+    pub fn manifest(&self, cid_bytes: &[u8]) -> Option<pb::BlobManifest> {
+        self.get_manifest(cid_bytes).ok().flatten()
+    }
+
+    /// Peers known to hold a blob besides this node.
+    #[must_use]
+    pub fn known_holders(&self, cid_bytes: &[u8]) -> Vec<PeerId> {
+        self.replicas
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(cid_bytes)
+            .map(|(s, _)| s.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    /// Leaf hashes of every chunk (SHA-256 with the storage-challenge
+    /// prefix) and the bytes of chunk `index`, if the blob is complete.
+    #[must_use]
+    pub fn chunk_leaves_and_chunk(
+        &self,
+        cid_bytes: &[u8],
+        index: u32,
+    ) -> Option<(Vec<[u8; 32]>, Vec<u8>)> {
+        let m = self.get_manifest(cid_bytes).ok().flatten()?;
+        let txn = self.db.begin_read().ok()?;
+        let chunks = txn.open_table(CHUNKS).ok()?;
+        let mut leaves = Vec::with_capacity(m.chunks.len());
+        let mut wanted = None;
+        for (i, h) in m.chunks.iter().enumerate() {
+            let data = chunks.get(h.as_slice()).ok().flatten()?.value().to_vec();
+            leaves.push(hashgram_proto::merkle::leaf_hash(&data));
+            if i as u32 == index {
+                wanted = Some(data);
+            }
+        }
+        Some((leaves, wanted?))
+    }
+
+    /// The Merkle root the chain expects in a storage assignment, computed
+    /// once and cached. `None` unless the blob is complete.
+    #[must_use]
+    pub fn merkle_root(&self, cid_bytes: &[u8]) -> Option<[u8; 32]> {
+        if let Ok(txn) = self.db.begin_read() {
+            if let Ok(t) = txn.open_table(ROOTS) {
+                if let Ok(Some(v)) = t.get(cid_bytes) {
+                    if let Ok(r) = <[u8; 32]>::try_from(v.value()) {
+                        return Some(r);
+                    }
+                }
+            }
+        }
+        let (leaves, _) = self.chunk_leaves_and_chunk(cid_bytes, 0)?;
+        let root = hashgram_proto::merkle::root_from_leaves(&leaves);
+        if let Ok(txn) = self.db.begin_write() {
+            if let Ok(mut t) = txn.open_table(ROOTS) {
+                let _ = t.insert(cid_bytes, root.as_slice());
+            }
+            let _ = txn.commit();
+        }
+        Some(root)
+    }
+
     /// Stores a whole blob held in memory (used by repair and by the local
     /// API for same-host uploads). Returns the CID.
     pub fn put_local(
@@ -456,6 +523,8 @@ impl BlobService {
         };
         let txn = self.db.begin_write()?;
         {
+            let mut roots = txn.open_table(ROOTS)?;
+            roots.remove(cid_bytes)?;
             let mut manifests = txn.open_table(MANIFESTS)?;
             manifests.remove(cid_bytes)?;
             let mut meta = txn.open_table(META)?;
@@ -658,6 +727,11 @@ impl BlobService {
                         info!(cid = hex::encode(&c), peer = %target, "replicated blob");
                         self.note_replica(&c, *target);
                         pushes += 1;
+                        if let (Some(agent), Some(op)) =
+                            (&shared.rewards, shared.announces.operator_of(target))
+                        {
+                            agent.assign(self, &c, &op, known).await;
+                        }
                     }
                     Err(e) => {
                         debug!(cid = hex::encode(&c), peer = %target, error = e, "replication push failed")

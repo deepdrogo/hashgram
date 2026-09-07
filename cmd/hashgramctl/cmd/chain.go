@@ -8,6 +8,7 @@ import (
 
 	hgparams "github.com/hashgram/hashgram/app/params"
 	"github.com/hashgram/hashgram/cmd/hashgramctl/internal/hgconfig"
+	"github.com/hashgram/hashgram/cmd/hashgramctl/internal/hgrpc"
 	"github.com/hashgram/hashgram/cmd/hashgramctl/internal/hgsys"
 )
 
@@ -298,10 +299,25 @@ docs/SERVICE_REWARDS.md.`,
 			if len(args) == 1 {
 				operator = args[0]
 			}
+
+			// Without an operator argument, ask the running P2P node: it
+			// knows its own operator key and its pending evidence.
+			var nodeView map[string]any
+			if node := hgrpc.NewNodeAPI(flagNodeAPI); node.Reachable(ctx) {
+				if v, err := node.Rewards(ctx); err == nil {
+					nodeView = v
+					if operator == "" {
+						if op, ok := v["operator"].(string); ok {
+							operator = op
+						}
+					}
+				}
+			}
 			if operator == "" {
 				return fmt.Errorf(
 					"an operator address is required: hashgramctl rewards hash1...\n\n" +
-						"This is the address that registered the provider, not the reward address")
+						"This is the address that registered the provider, not the reward address.\n" +
+						"When hashgram-node runs with an operator key it is found automatically.")
 			}
 
 			o := newOut()
@@ -314,10 +330,30 @@ docs/SERVICE_REWARDS.md.`,
 
 			if flagJSON {
 				o.set("rewards", rewards)
+				if nodeView != nil {
+					o.set("node", nodeView)
+				}
 				return o.flush()
 			}
 
 			o.row("Operator", operator)
+			if nodeView != nil {
+				o.section("This node's agent")
+				if v, ok := nodeView["reward_address"]; ok && v != "" {
+					o.row("  reward address", v)
+				}
+				o.row("  epoch", nodeView["epoch"])
+				o.row("  pending receipts", nodeView["pending_receipts"])
+				o.row("  assigner", nodeView["is_assigner"])
+				if st, ok := nodeView["stats"].(map[string]any); ok {
+					for _, k := range []string{
+						"receipts_accepted", "receipts_refused", "receipts_settled", "receipts_rejected",
+						"challenges_answered", "challenges_failed", "assignments_made",
+					} {
+						o.row("  "+k, st[k])
+					}
+				}
+			}
 			if current, ok := rewards["current"].(map[string]any); ok {
 				o.section("Open epoch")
 				for _, k := range []string{
@@ -393,6 +429,33 @@ counts as a failure, not as a non-event.`,
 			}
 			if used, err := hgsys.DirSize(paths.NodeHome); err == nil {
 				o.row("Node home size", hgsys.HumanBytes(used))
+			}
+
+			if node := hgrpc.NewNodeAPI(flagNodeAPI); node.Reachable(ctx) {
+				if st, err := node.Status(ctx); err == nil {
+					if st.Blobs != nil {
+						o.section("Blob store (hashgram-node)")
+						for _, k := range []string{"blobs_complete", "blobs_partial", "bytes_used", "quota_bytes", "degraded", "store_peers"} {
+							o.row("  "+k, st.Blobs[k])
+						}
+						if d, ok := st.Blobs["degraded"].(float64); ok && d > 0 {
+							o.raw("  DEGRADED: some blobs have fewer than 3 known replicas. One copy is one copy.")
+						}
+					}
+					if st.Mailbox != nil {
+						o.section("Mailbox store (hashgram-node)")
+						for _, k := range []string{"envelopes", "mailboxes", "key_packages", "bytes"} {
+							o.row("  "+k, st.Mailbox[k])
+						}
+					}
+					if provider == "" {
+						if rv, err := node.Rewards(ctx); err == nil {
+							if op, ok := rv["operator"].(string); ok {
+								provider = op
+							}
+						}
+					}
+				}
 			}
 
 			if provider == "" {

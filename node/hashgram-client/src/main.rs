@@ -1054,7 +1054,7 @@ async fn message(ctx: &Ctx, cmd: MessageCmd) -> anyhow::Result<()> {
                 Ok(())
             }
             MessageCmd::Receive { watch } => loop {
-                let got = messaging.sync(&link, &ctx.network).await?;
+                let got = messaging.sync(&link, &ctx.network, Some(&chain)).await?;
                 for r in &got {
                     if ctx.json {
                         println!("{}", serde_json::to_string(r).unwrap_or_default());
@@ -1292,7 +1292,11 @@ async fn blob_cmd(ctx: &Ctx, cmd: BlobCmd) -> anyhow::Result<()> {
         } => {
             let link = ctx.link().await?;
             let c = hex::decode(&cid)?;
-            let (bytes, m, from) = blob::download(&link, &c).await?;
+            let acct = ctx.account()?;
+            let device = acct.device()?;
+            let chain = ctx.chain()?;
+            let (bytes, m, from) =
+                blob::download(&link, &c, Some((&chain, &ctx.network, &device))).await?;
             let bytes = match (key, nonce) {
                 (Some(k), Some(n)) => {
                     let fk = blob::FileKey {

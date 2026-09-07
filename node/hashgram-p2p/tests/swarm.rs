@@ -92,7 +92,7 @@ async fn three_nodes_verify_each_other_and_exchange_requests() {
             seen += 1;
         }
     }
-    if let Event::PeerVerified { peer, roles } =
+    if let Event::PeerVerified { peer, roles, .. } =
         wait_for(&mut b.events, |e| matches!(e, Event::PeerVerified { .. })).await
     {
         assert_eq!(peer, a.handle.peer_id());

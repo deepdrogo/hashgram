@@ -138,3 +138,40 @@ message KeyPackageFetchResult {
   bool found = 1;
   KeyPackagePublish key_package = 2;
 }
+
+// A client-signed service receipt, the evidence behind relay, media and
+// call rewards. Mirrors `hashgram.serviceproof.v1.ServiceReceipt` field for
+// field so a node can forward it to the chain unchanged; it lives here so
+// clients need only the P2P definitions.
+message ServiceReceipt {
+  // The provider's operator address.
+  string provider = 1;
+  // hashgram.serviceproof.v1.ServiceRole: 2 relay, 3 call, 4 media.
+  int32 role = 2;
+  // Raw ed25519 device public key of the client.
+  bytes client_pubkey = 3;
+  // hashgram.serviceproof.v1.KeyType: 2 for ed25519.
+  int32 client_key_type = 4;
+  // The open epoch on chain when the receipt was signed.
+  uint64 epoch = 5;
+  // Unique per (provider, client).
+  uint64 nonce = 6;
+  // Bytes relayed or retrieved, or call seconds.
+  uint64 units = 7;
+  // Block height after which the chain refuses it.
+  int64 expiry_height = 8;
+  // Signature over the domain-separated digest of the canonical encoding
+  // under the "service-receipt" purpose.
+  bytes client_signature = 9;
+}
+
+// A client hands a receipt to the provider it was served by. The provider
+// batches receipts and submits them on chain.
+message ReceiptDeliver {
+  ServiceReceipt receipt = 1;
+}
+
+message ReceiptDeliverResult {
+  bool accepted = 1;
+  string reason = 2;
+}

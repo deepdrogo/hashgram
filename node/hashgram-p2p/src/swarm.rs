@@ -87,6 +87,8 @@ pub struct PeerSummary {
     pub verified: bool,
     /// Roles the peer claimed.
     pub roles: Vec<String>,
+    /// Provider operator address the peer claimed.
+    pub operator: String,
     /// `inbound` or `outbound`.
     pub direction: &'static str,
     /// Local score.
@@ -179,6 +181,9 @@ pub enum Event {
         peer: PeerId,
         /// Roles it claimed.
         roles: Vec<String>,
+        /// Provider operator address it claimed (empty if none). Receipts
+        /// signed for it are only worth anything if the chain agrees.
+        operator: String,
     },
     /// A peer was refused at the handshake.
     PeerRejected {
@@ -391,6 +396,7 @@ pub enum StartError {
 
 struct Verified {
     roles: Vec<String>,
+    operator: String,
 }
 
 struct Connected {
@@ -672,7 +678,7 @@ fn reason_code(err: &HandshakeError) -> ReasonCode {
     }
 }
 
-fn to_wire(hs: &Handshake, roles: &[String]) -> pb::Handshake {
+fn to_wire(hs: &Handshake, roles: &[String], operator: &str) -> pb::Handshake {
     pb::Handshake {
         network_magic: hs.network_magic.to_vec(),
         network_id: hs.network_id.clone(),
@@ -680,6 +686,7 @@ fn to_wire(hs: &Handshake, roles: &[String]) -> pb::Handshake {
         genesis_hash: hs.genesis_hash.clone(),
         protocol_major_version: hs.protocol_major_version,
         roles: roles.to_vec(),
+        operator_address: operator.to_owned(),
     }
 }
 
@@ -996,7 +1003,11 @@ impl Runner {
         if !inbound {
             let hs = Handshake::for_identity(&self.identity);
             let req = pb::Request {
-                body: Some(pb::request::Body::Handshake(to_wire(&hs, &self.cfg.roles))),
+                body: Some(pb::request::Body::Handshake(to_wire(
+                    &hs,
+                    &self.cfg.roles,
+                    &self.cfg.operator_address,
+                ))),
             };
             let id = self.swarm.behaviour_mut().rpc.send_request(&peer, req);
             self.pending_handshakes.insert(id, peer);
@@ -1219,7 +1230,11 @@ impl Runner {
         hs: &pb::Handshake,
         channel: ResponseChannel<pb::Response>,
     ) {
-        let ours = to_wire(&Handshake::for_identity(&self.identity), &self.cfg.roles);
+        let ours = to_wire(
+            &Handshake::for_identity(&self.identity),
+            &self.cfg.roles,
+            &self.cfg.operator_address,
+        );
         match self.identity.verify_handshake(&from_wire(hs)) {
             Ok(()) => {
                 let ack = pb::Response {
@@ -1230,7 +1245,7 @@ impl Runner {
                     })),
                 };
                 let _ = self.swarm.behaviour_mut().rpc.send_response(channel, ack);
-                self.verify(peer, hs.roles.clone());
+                self.verify(peer, hs.roles.clone(), hs.operator_address.clone());
             }
             Err(e) => {
                 let ack = pb::Response {
@@ -1268,7 +1283,7 @@ impl Runner {
             return;
         };
         match self.identity.verify_handshake(&from_wire(&remote)) {
-            Ok(()) if ack.accepted => self.verify(peer, remote.roles),
+            Ok(()) if ack.accepted => self.verify(peer, remote.roles, remote.operator_address),
             Ok(()) => self.reject(
                 peer,
                 ReasonCode::Genesis,
@@ -1278,7 +1293,7 @@ impl Runner {
         }
     }
 
-    fn verify(&mut self, peer: PeerId, roles: Vec<String>) {
+    fn verify(&mut self, peer: PeerId, roles: Vec<String>, operator: String) {
         self.unverified_since.remove(&peer);
         let fresh = self
             .verified
@@ -1286,6 +1301,7 @@ impl Runner {
                 peer,
                 Verified {
                     roles: roles.clone(),
+                    operator: operator.clone(),
                 },
             )
             .is_none();
@@ -1317,7 +1333,11 @@ impl Runner {
             self.swarm.behaviour_mut().kad.add_address(&peer, a);
         }
         info!(%peer, roles = ?roles, "peer verified");
-        let _ = self.events.try_send(Event::PeerVerified { peer, roles });
+        let _ = self.events.try_send(Event::PeerVerified {
+            peer,
+            roles,
+            operator,
+        });
         self.flush_queued(peer);
     }
 
@@ -1626,6 +1646,11 @@ impl Runner {
                     .verified
                     .get(peer)
                     .map(|v| v.roles.clone())
+                    .unwrap_or_default(),
+                operator: self
+                    .verified
+                    .get(peer)
+                    .map(|v| v.operator.clone())
                     .unwrap_or_default(),
                 direction: if c.endpoint.is_listener() {
                     "inbound"

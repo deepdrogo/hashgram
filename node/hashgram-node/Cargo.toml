@@ -11,6 +11,7 @@ repository.workspace = true
 hashgram-net = { path = "../hashgram-net" }
 hashgram-proto = { path = "../hashgram-proto" }
 hashgram-p2p = { path = "../hashgram-p2p" }
+hashgram-chain = { path = "../hashgram-chain" }
 tokio.workspace = true
 futures.workspace = true
 anyhow.workspace = true

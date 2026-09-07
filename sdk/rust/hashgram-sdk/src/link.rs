@@ -53,12 +53,20 @@ pub struct KnownPeer {
     pub peer: PeerId,
     /// Roles it claimed at the handshake.
     pub roles: Vec<String>,
+    /// Provider operator address it claimed; receipts are signed for it.
+    pub operator: String,
+}
+
+#[derive(Debug, Clone)]
+struct PeerInfo {
+    roles: Vec<String>,
+    operator: String,
 }
 
 /// The link.
 pub struct Link {
     handle: NodeHandle,
-    peers: Arc<RwLock<HashMap<PeerId, Vec<String>>>>,
+    peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>>,
     peerstore_path: Option<std::path::PathBuf>,
     _task: tokio::task::JoinHandle<()>,
     _events: tokio::task::JoinHandle<()>,
@@ -103,16 +111,23 @@ impl Link {
             hashgram_p2p::start(cfg, identity.clone(), key, peerstore, &mut registry)
                 .map_err(|e| LinkError::Start(e.to_string()))?;
 
-        let peers: Arc<RwLock<HashMap<PeerId, Vec<String>>>> = Arc::default();
+        let peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>> = Arc::default();
         let (first_tx, mut first_rx) = mpsc::channel::<()>(64);
         let peers_for_task = peers.clone();
         let inner = handle.clone();
         let events_task = tokio::spawn(async move {
             while let Some(ev) = events.recv().await {
                 match ev {
-                    Event::PeerVerified { peer, roles } => {
-                        debug!(%peer, ?roles, "verified");
-                        peers_for_task.write().await.insert(peer, roles);
+                    Event::PeerVerified {
+                        peer,
+                        roles,
+                        operator,
+                    } => {
+                        debug!(%peer, ?roles, operator, "verified");
+                        peers_for_task
+                            .write()
+                            .await
+                            .insert(peer, PeerInfo { roles, operator });
                         let _ = first_tx.try_send(());
                     }
                     Event::PeerDisconnected(peer) => {
@@ -188,11 +203,86 @@ impl Link {
             .read()
             .await
             .iter()
-            .map(|(p, r)| KnownPeer {
+            .map(|(p, i)| KnownPeer {
                 peer: *p,
-                roles: r.clone(),
+                roles: i.roles.clone(),
+                operator: i.operator.clone(),
             })
             .collect()
+    }
+
+    /// The operator address a peer claimed, if any.
+    pub async fn operator_of(&self, peer: PeerId) -> Option<String> {
+        self.peers
+            .read()
+            .await
+            .get(&peer)
+            .map(|i| i.operator.clone())
+            .filter(|o| !o.is_empty())
+    }
+
+    /// Signs and delivers a service receipt to the peer that served us.
+    /// Silent on failure: a receipt is the provider's reward, not the
+    /// client's problem, and a client must never be blocked by it.
+    pub async fn deliver_receipt(
+        &self,
+        chain: &hashgram_chain::Client,
+        network: &NetworkIdentity,
+        device: &hashgram_proto::Ed25519Signer,
+        peer: PeerId,
+        role: i32,
+        units: u64,
+    ) {
+        let Some(operator) = self.operator_of(peer).await else {
+            return;
+        };
+        if units == 0 {
+            return;
+        }
+        let (epoch, height) = match (
+            chain.query("hashgram/serviceproof/v1/epoch/current").await,
+            chain.height().await,
+        ) {
+            (Ok(v), Ok(h)) => (
+                v.get("epoch")
+                    .and_then(|e| e.get("number"))
+                    .and_then(|n| n.as_str())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(0),
+                h,
+            ),
+            _ => return,
+        };
+        let mut nonce = [0u8; 8];
+        let _ = getrandom::fill(&mut nonce);
+        let mut r = pb::ServiceReceipt {
+            provider: operator,
+            role,
+            epoch,
+            nonce: u64::from_le_bytes(nonce),
+            units,
+            expiry_height: (height + 600) as i64,
+            ..Default::default()
+        };
+        if hashgram_proto::signing::sign_receipt(network, device, &mut r).is_err() {
+            return;
+        }
+        match self
+            .request(
+                peer,
+                pb::request::Body::ReceiptDeliver(pb::ReceiptDeliver { receipt: Some(r) }),
+            )
+            .await
+        {
+            Ok(pb::response::Body::ReceiptDeliver(res)) if res.accepted => {
+                debug!(%peer, units, role, "receipt delivered")
+            }
+            Ok(pb::response::Body::ReceiptDeliver(res)) => {
+                debug!(%peer, reason = res.reason, "receipt refused")
+            }
+            Ok(_) => {}
+            Err(e) => debug!(%peer, error = %e, "receipt delivery failed"),
+        }
     }
 
     /// Verified peers claiming a role.
@@ -201,7 +291,7 @@ impl Link {
             .read()
             .await
             .iter()
-            .filter(|(_, r)| r.iter().any(|x| x == role))
+            .filter(|(_, i)| i.roles.iter().any(|x| x == role))
             .map(|(p, _)| *p)
             .collect()
     }

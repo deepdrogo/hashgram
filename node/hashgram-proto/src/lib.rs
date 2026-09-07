@@ -54,6 +54,7 @@ pub mod dht;
 pub mod frame;
 pub mod keys;
 pub mod limits;
+pub mod merkle;
 pub mod signing;
 pub mod validate;
 

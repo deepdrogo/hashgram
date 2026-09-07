@@ -9,6 +9,7 @@ import (
 
 	hgparams "github.com/hashgram/hashgram/app/params"
 	"github.com/hashgram/hashgram/cmd/hashgramctl/internal/hgconfig"
+	"github.com/hashgram/hashgram/cmd/hashgramctl/internal/hgrpc"
 	"github.com/hashgram/hashgram/cmd/hashgramctl/internal/hgsys"
 )
 
@@ -73,6 +74,44 @@ func cmdStatus() *cobra.Command {
 
 			if net, err := rpc.NetInfo(ctx); err == nil {
 				o.row("  Peers", net.PeerCount())
+			}
+
+			// The P2P node, when this machine runs one. Its absence is not
+			// an error for a validator-only host.
+			if node := hgrpc.NewNodeAPI(flagNodeAPI); node.Reachable(ctx) {
+				o.section("P2P node (hashgram-node)")
+				if st, err := node.Status(ctx); err == nil {
+					if st.Swarm != nil {
+						o.row("  Peer id", st.Swarm.PeerID)
+						o.row("  Peers", fmt.Sprintf("%d connected, %d verified, %d known",
+							st.Swarm.Connected, st.Swarm.Verified, st.Swarm.Known))
+						o.row("  Reachability", st.Swarm.Reachability)
+						if len(st.Swarm.ExternalAddrs) > 0 {
+							o.row("  External addrs", strings.Join(st.Swarm.ExternalAddrs, ", "))
+						}
+					}
+					o.row("  Announcements", st.AnnouncementsKnown)
+					if st.Blobs != nil {
+						o.row("  Blobs", fmt.Sprintf("%v complete, %v degraded", st.Blobs["blobs_complete"], st.Blobs["degraded"]))
+					}
+					if st.Mailbox != nil {
+						o.row("  Mailbox", fmt.Sprintf("%v envelopes, %v key packages", st.Mailbox["envelopes"], st.Mailbox["key_packages"]))
+					}
+					if st.Social != nil {
+						o.row("  Social events", st.Social["events"])
+					}
+					if netErr == nil && st.GenesisHash != network.GenesisHash {
+						o.row("  WARNING", "hashgram-node is pinned to a different genesis hash than this machine")
+					}
+				}
+				if rv, err := node.Rewards(ctx); err == nil {
+					o.row("  Operator", rv["operator"])
+					if rv["provider"] == nil {
+						o.row("  Provider", "not registered on chain")
+					} else {
+						o.row("  Provider", "registered")
+					}
+				}
 			}
 
 			o.section("Host")
@@ -196,20 +235,36 @@ func cmdPeers() *cobra.Command {
 			w := cmd.OutOrStdout()
 			fmt.Fprintf(w, "listening: %v\npeers: %d\n\n", net.Listening, net.PeerCount())
 			if len(net.Peers) == 0 {
-				fmt.Fprintf(w, "No peers. On a single-node bootstrap network this is expected;\n")
+				fmt.Fprintf(w, "Consensus (CometBFT): no peers. On a single-node bootstrap network this is expected;\n")
 				fmt.Fprintf(w, "on a joined network, check persistent_peers in %s\n",
 					paths.CometConfigFile())
-				return nil
+			} else {
+				fmt.Fprintf(w, "Consensus (CometBFT)\n")
+				fmt.Fprintf(w, "%-42s %-16s %-9s %s\n", "NODE ID", "REMOTE IP", "DIRECTION", "MONIKER")
+				for _, p := range net.Peers {
+					direction := "inbound"
+					if p.IsOutbound {
+						direction = "outbound"
+					}
+					fmt.Fprintf(w, "%-42s %-16s %-9s %s\n",
+						p.NodeInfo.ID, p.RemoteIP, direction, p.NodeInfo.Moniker)
+				}
 			}
 
-			fmt.Fprintf(w, "%-42s %-16s %-9s %s\n", "NODE ID", "REMOTE IP", "DIRECTION", "MONIKER")
-			for _, p := range net.Peers {
-				direction := "inbound"
-				if p.IsOutbound {
-					direction = "outbound"
+			// The P2P node's peers, which passed the Hashgram handshake
+			// (genesis hash included), when the node runs here.
+			if node := hgrpc.NewNodeAPI(flagNodeAPI); node.Reachable(ctx) {
+				peers, err := node.Peers(ctx)
+				if err == nil {
+					fmt.Fprintf(w, "\nP2P (hashgram-node): %d peers\n", len(peers))
+					if len(peers) > 0 {
+						fmt.Fprintf(w, "%-54s %-9s %-8s %-6s %s\n", "PEER ID", "DIRECTION", "VERIFIED", "SCORE", "ROLES")
+						for _, p := range peers {
+							fmt.Fprintf(w, "%-54s %-9s %-8v %-6d %s\n",
+								p.PeerID, p.Direction, p.Verified, p.Score, strings.Join(p.Roles, ","))
+						}
+					}
 				}
-				fmt.Fprintf(w, "%-42s %-16s %-9s %s\n",
-					p.NodeInfo.ID, p.RemoteIP, direction, p.NodeInfo.Moniker)
 			}
 			return nil
 		},

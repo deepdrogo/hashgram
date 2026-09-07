@@ -259,6 +259,30 @@ pub struct NodeConfig {
     #[serde(default)]
     pub sfu_url: String,
 
+    /// Path to the provider operator key: a hex secp256k1 secret, 0600,
+    /// owned by the node's service account. Hot because it signs challenge
+    /// answers and receipt submissions unattended. It is not the reward
+    /// address and must never be a validator or Founder key.
+    #[serde(default)]
+    pub operator_key_file: String,
+
+    /// The operator address derived from that key, filled at startup.
+    #[serde(default)]
+    pub operator_address: String,
+
+    /// Register as a provider automatically when not registered.
+    #[serde(default)]
+    pub auto_register_provider: bool,
+
+    /// Bond to post at registration, in uhash. The chain's minimum is
+    /// 1,000 HASH.
+    #[serde(default = "default_bond")]
+    pub provider_bond_uhash: u64,
+
+    /// Human-readable provider label.
+    #[serde(default)]
+    pub moniker: String,
+
     /// How long to keep social events, in days. Events are also bounded by
     /// `max_events`, whichever is reached first.
     #[serde(default = "default_event_retention_days")]
@@ -269,6 +293,9 @@ pub struct NodeConfig {
     pub max_events: u64,
 }
 
+fn default_bond() -> u64 {
+    1_000_000_000
+}
 fn default_event_retention_days() -> u32 {
     90
 }

@@ -39,6 +39,8 @@ message Request {
     PeerExchange peer_exchange = 41;
 
     AttestationQuery attestation_query = 50;
+
+    ReceiptDeliver receipt_deliver = 60;
   }
 }
 
@@ -76,6 +78,8 @@ message Response {
     PeerExchangeResult peer_exchange = 41;
 
     AttestationQueryResult attestation_query = 50;
+
+    ReceiptDeliverResult receipt_deliver = 60;
   }
 }
 

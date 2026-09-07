@@ -28,6 +28,10 @@ message Handshake {
   // Roles this node serves, informational. Verified separately through a
   // signed NodeAnnounce; a peer claiming "store" here is not yet believed.
   repeated string roles = 6;
+  // The node's provider operator address on chain, if it is a registered
+  // useful-service provider. A client that was served signs receipts for
+  // this address; the chain, not the client, checks the provider is real.
+  string operator_address = 7;
 }
 
 // The answer to a Handshake.

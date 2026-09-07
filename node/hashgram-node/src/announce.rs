@@ -37,6 +37,9 @@ fn now() -> u64 {
 #[derive(Default)]
 pub struct AnnounceTable {
     entries: RwLock<HashMap<PeerId, pb::NodeAnnounce>>,
+    /// Operator addresses learned at the handshake, for peers that have not
+    /// announced yet.
+    operators: RwLock<HashMap<PeerId, String>>,
 }
 
 /// Why an announcement was not accepted.
@@ -85,6 +88,36 @@ impl AnnounceTable {
         }
         entries.insert(peer, a);
         Ok(peer)
+    }
+
+    /// Records the operator address a peer claimed at the handshake.
+    pub fn note_operator(&self, peer: PeerId, operator: &str) {
+        let mut ops = self.operators.write().unwrap_or_else(|e| e.into_inner());
+        if operator.is_empty() {
+            ops.remove(&peer);
+        } else if ops.len() < MAX_ENTRIES {
+            ops.insert(peer, operator.to_owned());
+        }
+    }
+
+    /// The operator address of a peer, from its announcement or handshake.
+    #[must_use]
+    pub fn operator_of(&self, peer: &PeerId) -> Option<String> {
+        if let Some(a) = self
+            .entries
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(peer)
+        {
+            if !a.operator_address.is_empty() {
+                return Some(a.operator_address.clone());
+            }
+        }
+        self.operators
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(peer)
+            .cloned()
     }
 
     /// Drops expired entries.
