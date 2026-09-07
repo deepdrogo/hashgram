@@ -1,0 +1,74 @@
+[package]
+name = "hashgram-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+hashgram-proto = { path = "../hashgram-proto" }
+hashgram-net = { path = "../hashgram-net" }
+hashgram-mls = { path = "../hashgram-mls" }
+prost = "0.14"
+
+# Not a workspace member: cargo-fuzz wants its own profile and nightly.
+[workspace]
+
+[[bin]]
+name = "rpc_frame"
+path = "fuzz_targets/rpc_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "gossip"
+path = "fuzz_targets/gossip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "social_event"
+path = "fuzz_targets/social_event.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "blob_manifest"
+path = "fuzz_targets/blob_manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "envelope"
+path = "fuzz_targets/envelope.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "handshake"
+path = "fuzz_targets/handshake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mls_message"
+path = "fuzz_targets/mls_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "chat_message"
+path = "fuzz_targets/chat_message.rs"
+test = false
+doc = false
+bench = false

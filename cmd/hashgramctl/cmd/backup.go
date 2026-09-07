@@ -27,6 +27,14 @@ var excludedFromBackup = []string{
 	"keyring-file",
 	"keyring-test",
 	"keyring-os",
+	// The P2P node's hot keys. The operator key can unbond the provider
+	// bond and the node key is the node's peer identity; both are
+	// regenerated on a rebuilt host rather than restored from an archive.
+	"node/operator.key",
+	"node/node_key",
+	// Blob chunks are replicated on the network and repaired from other
+	// providers; the archive keeps the manifests and every other store.
+	"node/blobs.redb",
 }
 
 func cmdBackup() *cobra.Command {
@@ -94,10 +102,19 @@ live database produces a corrupt copy.`,
 			}
 
 			// Absolute paths are stored relative to / so the archive is
-			// inspectable and restorable without surprises.
+			// inspectable and restorable without surprises. The P2P node's
+			// state (peerstore, mailbox, social, safety, rewards) rides
+			// along when present; the indexer's PostgreSQL is not here
+			// because it is rebuilt with `hashgramctl indexer rebuild`.
 			args = append(args, "-C", "/",
 				strings.TrimPrefix(paths.NodeHome, "/"),
 				strings.TrimPrefix(paths.ConfigDir, "/"))
+			if nodeDir := filepath.Join(paths.DataDir, "node"); fileExists(nodeDir) {
+				args = append(args, strings.TrimPrefix(nodeDir, "/"))
+			}
+			if safetyDir := filepath.Join(paths.DataDir, "safety"); fileExists(safetyDir) {
+				args = append(args, "--exclude=safety/attestor.key", strings.TrimPrefix(safetyDir, "/"))
+			}
 
 			c := exec.CommandContext(ctx, "tar", args...)
 			c.Stderr = cmd.ErrOrStderr()

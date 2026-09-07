@@ -52,7 +52,7 @@ want() {
 
 if want fmt fast; then
   stage "gofmt"
-  UNFORMATTED="$(gofmt -l app cmd x genesis tools 2>/dev/null | grep -vE "$GENERATED_RE" || true)"
+  UNFORMATTED="$(gofmt -l app cmd x genesis tools indexer safety 2>/dev/null | grep -vE "$GENERATED_RE" || true)"
   if [ -z "$UNFORMATTED" ]; then
     ok "all files formatted"
   else
@@ -439,13 +439,42 @@ if want rust fast; then
     if (cd node && cargo test --all) >/tmp/ci-rusttest.log 2>&1; then
       COUNT="$(grep -ohE '[0-9]+ passed' /tmp/ci-rusttest.log \
         | awk '{s+=$1} END {print s+0}')"
-      ok "all Rust tests pass (${COUNT} tests)"
+      ok "all Rust tests pass (${COUNT} tests, including the decoder fuzz smoke)"
     else
       fail_stage rust "Rust tests failed:"
       grep -E '^(test .* FAILED|panicked|assertion)' /tmp/ci-rusttest.log \
         | sed 's/^/        /' | head -25
     fi
+
+    # Known-vulnerability scan of Cargo.lock. Tolerated advisories are listed
+    # with reasons in node/.cargo/audit.toml; anything else fails.
+    if command -v cargo-audit >/dev/null 2>&1; then
+      if (cd node && cargo audit) >/tmp/ci-cargo-audit.log 2>&1; then
+        ok "cargo audit: no unlisted advisories"
+      else
+        fail_stage rust "cargo audit findings:"
+        grep -E '^(Crate|ID|Title):' /tmp/ci-cargo-audit.log | sed 's/^/        /' | head -20
+      fi
+    else
+      warn "cargo-audit not installed (cargo install cargo-audit); skipping the Rust advisory scan"
+    fi
   fi
+fi
+
+# ---------------------------------------------------------------------------
+
+if want fuzz; then
+  stage "fuzz: Go native fuzzers (short)"
+  for pkg in ./indexer ./safety ./x/serviceproof/types; do
+    for fn in $(grep -ho 'func Fuzz[A-Za-z0-9_]*' "$pkg"/*_test.go 2>/dev/null | awk '{print $2}'); do
+      if go test "$pkg" -run='^$' -fuzz="^${fn}\$" -fuzztime="${FUZZ_SECONDS:-10}s" >/tmp/ci-fuzz.log 2>&1; then
+        ok "$pkg $fn"
+      else
+        fail_stage fuzz "$pkg $fn:"
+        tail -20 /tmp/ci-fuzz.log | sed 's/^/        /'
+      fi
+    done
+  done
 fi
 
 if want test; then

@@ -22,6 +22,7 @@ func cmdJoinMainnet() *cobra.Command {
 		genesisFile string
 		genesisHash string
 		peers       string
+		p2pPeers    []string
 		devnet      bool
 		force       bool
 	)
@@ -156,6 +157,11 @@ docs/OPERATIONS.md.`,
 					return err
 				}
 			}
+			if len(p2pPeers) > 0 {
+				if err := writeNodeTomlList("bootstrap_peers", p2pPeers); err != nil {
+					return err
+				}
+			}
 
 			o := newOut()
 			o.raw("")
@@ -168,6 +174,9 @@ docs/OPERATIONS.md.`,
 			o.row("Pinned in", paths.NetworkFile())
 			if peers != "" {
 				o.row("Persistent peers", peers)
+			}
+			if len(p2pPeers) > 0 {
+				o.row("P2P bootstrap peers", strings.Join(p2pPeers, ", "))
 			}
 			o.blank()
 			o.raw("Next: configure this machine's roles, then start it.")
@@ -188,6 +197,8 @@ docs/OPERATIONS.md.`,
 		"expected lowercase hex sha256 of the genesis file; required")
 	cmd.Flags().StringVar(&peers, "peers", "",
 		"comma-separated persistent peers as nodeid@host:port")
+	cmd.Flags().StringArrayVar(&p2pPeers, "p2p-peers", nil,
+		"hashgram-node bootstrap multiaddrs with /p2p/<peer-id> (repeatable); written to node.toml")
 	cmd.Flags().BoolVar(&devnet, "devnet", false, "join a DEVNET rather than Mainnet")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing genesis and network pin")
 
@@ -221,4 +232,34 @@ func writePersistentPeers(peers string) error {
 	}
 
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// writeNodeTomlList sets a string-array key in /etc/hashgram/node.toml,
+// replacing an existing line or appending. The node validates the values at
+// startup; this only edits text.
+func writeNodeTomlList(key string, values []string) error {
+	path := filepath.Join(paths.ConfigDir, "node.toml")
+	raw, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	quoted := make([]string, 0, len(values))
+	for _, v := range values {
+		quoted = append(quoted, fmt.Sprintf("%q", v))
+	}
+	line := fmt.Sprintf("%s = [%s]", key, strings.Join(quoted, ", "))
+	lines := strings.Split(string(raw), "\n")
+	replaced := false
+	for i, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, key+" ") || strings.HasPrefix(t, key+"=") {
+			lines[i] = line
+			replaced = true
+		}
+	}
+	if !replaced {
+		lines = append(lines, line)
+	}
+	out := strings.TrimRight(strings.Join(lines, "\n"), "\n") + "\n"
+	return os.WriteFile(path, []byte(out), 0o644)
 }

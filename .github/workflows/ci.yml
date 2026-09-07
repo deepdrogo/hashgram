@@ -188,6 +188,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup component add rustfmt clippy
+          cargo install cargo-audit --locked
 
       - uses: actions/cache@v4
         with:
@@ -218,8 +219,26 @@ jobs:
           fi
           echo "signing vectors are current"
 
-      - name: fmt, clippy and test
+      - name: fmt, clippy, test, audit
         run: scripts/dev/ci.sh rust
+
+      - name: Go native fuzzers (short)
+        run: FUZZ_SECONDS=15 scripts/dev/ci.sh fuzz
+
+      - name: Release build of the node binaries
+        run: |
+          cd node && cargo build --release --locked -p hashgram-node -p hashgram-client
+          ./target/release/hashgram-node --help >/dev/null
+          ./target/release/hashgram-client --help >/dev/null
+
+      - name: Upload node binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-binaries
+          path: |
+            node/target/release/hashgram-node
+            node/target/release/hashgram-client
+          retention-days: 7
 
   # ---------------------------------------------------------------------
   reproducible-release:
@@ -236,6 +255,16 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+
+      - name: Install the Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-release-${{ hashFiles('node/Cargo.lock') }}
 
       - name: Determine the version
         id: version
@@ -275,6 +304,10 @@ jobs:
             dist/hashgramctl
             dist/hashgram-test-client
             dist/hashgram-keygen
+            dist/hashgram-indexer
+            dist/hashgram-safety
+            dist/hashgram-node
+            dist/hashgram-client
             dist/SHA256SUMS
             dist/BUILD_INFO
           retention-days: 90

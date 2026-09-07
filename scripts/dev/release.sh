@@ -39,7 +39,11 @@ cd "$REPO_ROOT"
 export PATH="$PATH:/usr/local/go/bin"
 
 DIST="${DIST:-$REPO_ROOT/dist}"
-BINARIES="hashgramd hashgramctl hashgram-test-client hashgram-keygen"
+BINARIES="hashgramd hashgramctl hashgram-test-client hashgram-keygen hashgram-indexer hashgram-safety"
+# Rust binaries from the node workspace. Built with --locked and with source
+# and registry paths remapped, so a second builder with the same toolchain
+# produces the same bytes. Skipped (with a warning) when cargo is absent.
+RUST_BINARIES="hashgram-node hashgram-client"
 
 # The version is an explicit input so that two people building the same
 # release get the same bytes. Defaults to the git tag when there is one.
@@ -83,11 +87,33 @@ build_into() {
       -o "$out/$b" \
       "./cmd/$b" || return 1
   done
+
+  if command -v cargo >/dev/null 2>&1; then
+    local cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+    ( cd node && \
+      RUSTFLAGS="--remap-path-prefix=$REPO_ROOT=/hashgram --remap-path-prefix=$cargo_home=/cargo" \
+      SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}" \
+      cargo build --release --locked -p hashgram-node -p hashgram-client ) || return 1
+    for b in $RUST_BINARIES; do
+      cp "node/target/release/$b" "$out/$b" || return 1
+    done
+  else
+    warn "cargo not installed; the Rust binaries ($RUST_BINARIES) are not in this release"
+  fi
+}
+
+release_binaries() {
+  local dir="$1"
+  local list="$BINARIES"
+  for b in $RUST_BINARIES; do
+    [ -f "$dir/$b" ] && list="$list $b"
+  done
+  echo "$list"
 }
 
 checksums_for() {
   local dir="$1"
-  ( cd "$dir" && sha256sum $BINARIES | sort -k2 )
+  ( cd "$dir" && sha256sum $(release_binaries "$dir") | sort -k2 )
 }
 
 case "${1:-build}" in
@@ -141,7 +167,7 @@ case "${1:-build}" in
   fi
 
   say ""
-  for b in $BINARIES; do
+  for b in $(release_binaries "$A"); do
     if cmp -s "$A/$b" "$B/$b"; then
       ok "$b is byte-identical across builds ($(stat -c%s "$A/$b") bytes)"
     else
@@ -196,7 +222,7 @@ build|"")
     exit 1
   fi
 
-  for b in $BINARIES; do
+  for b in $(release_binaries "$DIST"); do
     ok "$b  $(stat -c%s "$DIST/$b") bytes"
   done
 
@@ -214,6 +240,9 @@ build|"")
     echo "go directive: $(awk '/^go /{print $2; exit}' go.mod)"
     echo "flags:        CGO_ENABLED=0 -trimpath -buildvcs=false -mod=readonly"
     echo "ldflags:      $LDFLAGS_RELEASE"
+    if command -v cargo >/dev/null 2>&1; then
+      echo "rust:         $(rustc --version | awk '{print $2}')  (cargo build --release --locked, paths remapped)"
+    fi
     echo
     echo "Reproduce with:"
     echo "  git checkout $VERSION"
@@ -228,7 +257,7 @@ build|"")
 
   # A release binary that cannot run is worse than no release.
   head1 "SMOKE TEST"
-  for b in $BINARIES; do
+  for b in $(release_binaries "$DIST"); do
     if "$DIST/$b" version >/dev/null 2>&1 || "$DIST/$b" --help >/dev/null 2>&1; then
       ok "$b runs"
     else

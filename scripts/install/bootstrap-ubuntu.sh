@@ -150,7 +150,7 @@ if [ "$BINARIES_ONLY" -eq 0 ]; then
 
   step "Creating directories"
 
-  install -d -m 0755 -o root -o root "$CONFIG_DIR"
+  install -d -m 0755 -o root -g root "$CONFIG_DIR"
   install -d -m 0750 -o "$CHAIN_USER"  -g "$CHAIN_USER"  "$DATA_DIR/chain"
   install -d -m 0750 -o "$NODE_USER"   -g "$NODE_USER"   "$DATA_DIR/node"
   install -d -m 0750 -o "$INDEX_USER"  -g "$INDEX_USER"  "$DATA_DIR/index"
@@ -166,7 +166,7 @@ if [ "$BINARIES_ONLY" -eq 0 ]; then
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
-    ca-certificates curl jq tar gzip \
+    ca-certificates curl jq tar gzip python3 \
     ufw \
     systemd-timesyncd \
     >/dev/null
@@ -200,12 +200,42 @@ else
   exit 1
 fi
 
-for bin in hashgramd hashgramctl hashgram-test-client hashgram-keygen; do
+for bin in hashgramd hashgramctl hashgram-test-client hashgram-keygen hashgram-indexer hashgram-safety; do
   if [ -x "$SOURCE_DIR/$bin" ]; then
     install -m 0755 -o root -g root "$SOURCE_DIR/$bin" "/usr/local/bin/$bin"
     ok "/usr/local/bin/$bin"
   else
     warn "$bin not found in $SOURCE_DIR; skipped"
+  fi
+done
+
+# The Rust node stack: hashgram-node (P2P) and hashgram-client (developer
+# client). Prebuilt release binaries are used when present; otherwise the
+# workspace is built with a pinned toolchain installed through rustup for
+# root only, so the build does not depend on whatever cargo a user has.
+RUST_SOURCE=""
+if [ -x "$REPO_ROOT/node/target/release/hashgram-node" ]; then
+  RUST_SOURCE="$REPO_ROOT/node/target/release"
+elif [ -x "$REPO_ROOT/build/hashgram-node" ]; then
+  RUST_SOURCE="$REPO_ROOT/build"
+else
+  note "no prebuilt hashgram-node; building the Rust workspace (this takes a while on a small VPS)"
+  export RUSTUP_HOME="${RUSTUP_HOME:-/root/.rustup}" CARGO_HOME="${CARGO_HOME:-/root/.cargo}"
+  if ! command -v cargo >/dev/null 2>&1 && [ ! -x "$CARGO_HOME/bin/cargo" ]; then
+    apt-get install -y -qq --no-install-recommends build-essential pkg-config >/dev/null
+    RUST_PIN="$(sed -n 's/^rust-version = "\(.*\)"/\1/p' "$REPO_ROOT/node/Cargo.toml")"
+    curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain "${RUST_PIN:-stable}" >/dev/null
+  fi
+  export PATH="$CARGO_HOME/bin:$PATH"
+  ( cd "$REPO_ROOT/node" && cargo build --release --locked -p hashgram-node -p hashgram-client )
+  RUST_SOURCE="$REPO_ROOT/node/target/release"
+fi
+for bin in hashgram-node hashgram-client; do
+  if [ -x "$RUST_SOURCE/$bin" ]; then
+    install -m 0755 -o root -g root "$RUST_SOURCE/$bin" "/usr/local/bin/$bin"
+    ok "/usr/local/bin/$bin"
+  else
+    warn "$bin not found in $RUST_SOURCE; the P2P roles will not start"
   fi
 done
 
@@ -292,7 +322,9 @@ if [ "$SKIP_FIREWALL" -eq 0 ]; then
   note ""
   note "Deliberately NOT opened:"
   note "  26657  CometBFT RPC        administrative; loopback only"
-  note "  9090   application gRPC     loopback only"
+  note "  9091   application gRPC     loopback only"
+  note "  26672  hashgram-node API    loopback only"
+  note "  1318   indexer read API     loopback only"
   note "  1317   application REST     loopback only"
   note "  26660  Prometheus metrics   loopback only"
   note "  5432   PostgreSQL           loopback only"
@@ -329,6 +361,110 @@ if [ "$SKIP_POSTGRES" -eq 0 ] && command -v psql >/dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# Configuration templates for the node stack
+# ---------------------------------------------------------------------------
+
+step "Writing configuration templates"
+
+if [ ! -f "$CONFIG_DIR/node.toml" ]; then
+  cat > "$CONFIG_DIR/node.toml" <<'NODETOML'
+# hashgram-node configuration. The network pin comes from network.json and
+# the roles from roles.json in this directory; both are written by
+# hashgramctl. Everything here is tuning. See docs/NODE_ROLES.md.
+
+listen_addr = "0.0.0.0"
+listen_port = 26670
+api_addr = "127.0.0.1:26672"
+metrics_addr = "127.0.0.1:26671"
+chain_rpc = "http://127.0.0.1:26657"
+chain_api = "http://127.0.0.1:1317"
+peerstore_path = "/var/lib/hashgram/node/peerstore.json"
+
+# Bootstrap peers with /p2p/<peer-id>. hashgramctl join-mainnet fills this
+# from the peers you give it; add independent operators' nodes here too.
+bootstrap_peers = []
+
+# Useful-service rewards. The operator key lives in
+# /var/lib/hashgram/node/operator.key (hashgram-node operator-key); the
+# reward address should be a key that is NOT on this machine.
+auto_register_provider = false
+provider_bond_uhash = 1000000000
+reward_address = ""
+
+# Safety attestors whose verdicts this node enforces (hex ed25519 keys).
+trusted_attestors = []
+NODETOML
+  chmod 0644 "$CONFIG_DIR/node.toml"
+  ok "$CONFIG_DIR/node.toml"
+else
+  note "$CONFIG_DIR/node.toml exists; left untouched"
+fi
+
+if [ ! -f "$CONFIG_DIR/safety.toml" ]; then
+  cat > "$CONFIG_DIR/safety.toml" <<'SAFETYTOML'
+# Hashgram Safety Engine. Reviews PUBLIC content only. See docs/MODERATION.md.
+node_api = "http://127.0.0.1:26672"
+home = "/var/lib/hashgram/safety"
+policy = "hashgram-public-v1"
+poll_interval = "5s"
+# One BLAKE3 hex per line, optional reason code.
+hash_list_file = "/etc/hashgram/safety-hashes.txt"
+# JSON array of {"pattern": "...", "verdict": "BLOCK|RESTRICT|QUARANTINE", "reason": "..."}.
+text_rules_file = "/etc/hashgram/safety-rules.json"
+# Optional external classifier; see safety/pipeline.go for the interface.
+model_url = ""
+model_send_media = false
+model_min_confidence = 0.8
+max_media_bytes = 67108864
+publish_allow = false
+SAFETYTOML
+  chmod 0644 "$CONFIG_DIR/safety.toml"
+  [ -f "$CONFIG_DIR/safety-rules.json" ] || echo '[]' > "$CONFIG_DIR/safety-rules.json"
+  [ -f "$CONFIG_DIR/safety-hashes.txt" ] || printf '# BLAKE3 hex of plaintext media to block, one per line, optional reason code\n' > "$CONFIG_DIR/safety-hashes.txt"
+  ok "$CONFIG_DIR/safety.toml (empty rule set; add rules before enabling the safety role)"
+else
+  note "$CONFIG_DIR/safety.toml exists; left untouched"
+fi
+
+# ---------------------------------------------------------------------------
+# Indexer database
+# ---------------------------------------------------------------------------
+
+if [ "$SKIP_POSTGRES" -eq 0 ] && command -v psql >/dev/null 2>&1; then
+  step "Preparing the indexer database"
+  if [ ! -f "$CONFIG_DIR/indexer.toml" ]; then
+    # A random password, generated here and stored only in indexer.toml,
+    # which only root and the indexer's account can read. Not a default.
+    INDEX_PW="$(head -c 24 /dev/urandom | base64 | tr -d '/+=\n' | head -c 32)"
+    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='$INDEX_USER'" | grep -q 1; then
+      sudo -u postgres psql -qc "CREATE ROLE \"$INDEX_USER\" LOGIN PASSWORD '$INDEX_PW';"
+    else
+      sudo -u postgres psql -qc "ALTER ROLE \"$INDEX_USER\" PASSWORD '$INDEX_PW';"
+    fi
+    if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname='hashgram_index'" | grep -q 1; then
+      sudo -u postgres psql -qc "CREATE DATABASE hashgram_index OWNER \"$INDEX_USER\";"
+    fi
+    umask 027
+    cat > "$CONFIG_DIR/indexer.toml" <<INDEXTOML
+# Hashgram indexer. The database is a rebuildable cache; see docs/OPERATIONS.md.
+database_url = "postgres://${INDEX_USER}:${INDEX_PW}@127.0.0.1:5432/hashgram_index"
+chain_rpc = "http://127.0.0.1:26657"
+chain_api = "http://127.0.0.1:1317"
+node_api = "http://127.0.0.1:26672"
+listen = "127.0.0.1:1318"
+poll_interval = "3s"
+trusted_attestors = []
+INDEXTOML
+    umask 022
+    chown root:"$INDEX_USER" "$CONFIG_DIR/indexer.toml"
+    chmod 0640 "$CONFIG_DIR/indexer.toml"
+    ok "database hashgram_index and role $INDEX_USER; credentials in $CONFIG_DIR/indexer.toml (root:$INDEX_USER 0640)"
+  else
+    note "$CONFIG_DIR/indexer.toml exists; left untouched"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 
@@ -352,9 +488,17 @@ cat <<'NEXT'
 
       hashgramctl init
       hashgramctl join-mainnet \
-        --genesis-url <url> --genesis-hash <sha256> --peers <id@host:26656>
-      hashgramctl configure-role relay,store
+        --genesis-url <url> --genesis-hash <sha256> --peers <id@host:26656> \
+        --p2p-peers /ip4/<host>/udp/26670/quic-v1/p2p/<peer-id>
+      hashgramctl configure-role relay,store --declared-storage 500000000000 --reward-address hash1...
       hashgramctl start
+
+    Useful-service rewards need a funded operator account (1,000 HASH bond):
+    configure-role prints the operator address to fund, then set
+    auto_register_provider = true in /etc/hashgram/node.toml.
+
+    Calls (optional):  sudo scripts/install/coturn.sh --realm <name>
+    Group calls SFU:   sudo scripts/install/livekit.sh --domain <name>
 
     Then:
 

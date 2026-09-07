@@ -1,0 +1,23 @@
+# cargo-audit policy for the node workspace.
+#
+# Every entry here is a known advisory that is deliberately tolerated, with
+# the reason. `make rust-audit` fails on anything not listed, so a new
+# advisory is a build failure until somebody reads it and either upgrades or
+# adds a justified entry. Review these at every release.
+
+[advisories]
+ignore = [
+  # hickory-proto 0.25 (via libp2p-dns): O(n^2) name compression when
+  # ENCODING messages with many names (RUSTSEC-2026-0119) and an unbounded
+  # loop in NSEC3 closest-encloser VALIDATION (RUSTSEC-2026-0118). The node
+  # uses DNS only to resolve operator-configured /dns*/ bootstrap multiaddrs:
+  # it encodes one-name queries and does not enable DNSSEC validation, so
+  # neither code path is reachable with attacker-controlled input. Remove
+  # when libp2p-dns moves to hickory 0.26.
+  "RUSTSEC-2026-0119",
+  "RUSTSEC-2026-0118",
+  # Unmaintained proc-macro helpers pulled transitively (paste,
+  # proc-macro-error2). Compile-time only; no runtime exposure.
+  "RUSTSEC-2024-0436",
+  "RUSTSEC-2026-0173",
+]

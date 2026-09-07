@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	hgparams "github.com/hashgram/hashgram/app/params"
 	"github.com/hashgram/hashgram/cmd/hashgramctl/internal/hgconfig"
+	"github.com/hashgram/hashgram/cmd/hashgramctl/internal/hgrpc"
 	"github.com/hashgram/hashgram/cmd/hashgramctl/internal/hgsys"
 )
 
@@ -112,6 +115,10 @@ The checks that matter most, and why:
 
 			add(checkFounderBeneficiary())
 			add(checkValidatorGentx())
+
+			// --- P2P node stack -------------------------------------------
+
+			results = append(results, checkNodeStack(ctx, network, netErr == nil)...)
 
 			// --- report ---------------------------------------------------
 
@@ -262,6 +269,9 @@ var adminPorts = map[string]string{
 	"1317":  "application REST API",
 	"26660": "Prometheus metrics",
 	"5432":  "PostgreSQL",
+	"26671": "hashgram-node metrics",
+	"26672": "hashgram-node local API",
+	"1318":  "indexer read API",
 }
 
 func checkAdminExposure(ctx context.Context) []checkResult {
@@ -492,4 +502,76 @@ func isLoopback(host string) bool {
 		return true
 	}
 	return strings.HasPrefix(host, "127.")
+}
+
+// checkNodeStack covers hashgram-node when this machine has a P2P role: the
+// configuration parses, the pinned genesis agrees with network.json, the
+// operator key and TURN secret have tight permissions, and the running node
+// (if any) reports the same pin.
+func checkNodeStack(ctx context.Context, n hgconfig.Network, pinned bool) []checkResult {
+	roles, err := hgconfig.LoadRoles(paths)
+	if err != nil {
+		return nil
+	}
+	p2p := false
+	for _, r := range []hgconfig.Role{hgconfig.RoleRelay, hgconfig.RoleStore, hgconfig.RoleMedia, hgconfig.RoleBootstrap, hgconfig.RoleCall} {
+		if roles.Has(r) {
+			p2p = true
+		}
+	}
+	if !p2p {
+		return nil
+	}
+	var out []checkResult
+
+	nodeToml := filepath.Join(paths.ConfigDir, "node.toml")
+	if _, err := os.Stat(nodeToml); err != nil {
+		out = append(out, checkResult{"node.toml", statusFail, nodeToml + " is missing; run scripts/install/bootstrap-ubuntu.sh", true})
+	} else if bin, err := exec.LookPath("hashgram-node"); err != nil {
+		out = append(out, checkResult{"hashgram-node binary", statusFail, "not installed", true})
+	} else {
+		c := exec.CommandContext(ctx, bin, "check-config", "--config", nodeToml, "--home", filepath.Join(paths.DataDir, "node"))
+		if raw, err := c.CombinedOutput(); err != nil {
+			out = append(out, checkResult{"node.toml", statusFail, strings.TrimSpace(string(raw)), true})
+		} else {
+			out = append(out, checkResult{"node.toml", statusPass, "parses and pins a genesis", true})
+		}
+	}
+
+	for _, f := range []struct {
+		path, name string
+		maxMode    os.FileMode
+		critical   bool
+	}{
+		{filepath.Join(paths.DataDir, "node", "operator.key"), "operator key permissions", 0o600, true},
+		{filepath.Join(paths.DataDir, "node", "node_key"), "P2P node key permissions", 0o600, true},
+		{filepath.Join(paths.ConfigDir, "turn.secret"), "TURN secret permissions", 0o640, false},
+	} {
+		st, err := os.Stat(f.path)
+		if err != nil {
+			continue
+		}
+		if st.Mode().Perm()&^f.maxMode != 0 {
+			out = append(out, checkResult{f.name, statusFail,
+				fmt.Sprintf("%s is mode %04o; must be %04o or tighter", f.path, st.Mode().Perm(), f.maxMode), f.critical})
+		} else {
+			out = append(out, checkResult{f.name, statusPass, fmt.Sprintf("mode %04o", st.Mode().Perm()), f.critical})
+		}
+	}
+
+	node := hgrpc.NewNodeAPI(flagNodeAPI)
+	if st, err := node.Status(ctx); err == nil {
+		if pinned && st.GenesisHash != n.GenesisHash {
+			out = append(out, checkResult{"hashgram-node pin", statusFail,
+				"the running node is pinned to a different genesis hash than network.json", true})
+		} else {
+			out = append(out, checkResult{"hashgram-node pin", statusPass, "running node agrees with network.json", true})
+		}
+		if len(roles.Roles) > 0 && st.Swarm != nil && len(st.Swarm.ListenAddrs) == 0 {
+			out = append(out, checkResult{"hashgram-node listening", statusFail, "no listen addresses", true})
+		}
+	} else {
+		out = append(out, checkResult{"hashgram-node", statusWarn, "not running; start it before relying on P2P roles", false})
+	}
+	return out
 }

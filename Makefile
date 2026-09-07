@@ -65,12 +65,14 @@ $(addprefix build-tool-,$(TOOLS)): build-tool-%:
 	@$(GO) build $(BUILD_FLAGS) -o $(GOBIN)/$* ./tools/$*
 
 .PHONY: install
-install:
+install: rust-release
 	@echo ">>> installing $(BINARIES) into /usr/local/bin"
 	@for b in $(BINARIES); do \
 		$(GO) build $(BUILD_FLAGS) -o /usr/local/bin/$$b ./cmd/$$b || exit 1; \
 		echo "    /usr/local/bin/$$b"; \
 	done
+	@install -m 0755 $(GOBIN)/hashgram-node $(GOBIN)/hashgram-client /usr/local/bin/
+	@echo "    /usr/local/bin/hashgram-node /usr/local/bin/hashgram-client"
 
 .PHONY: clean
 clean:
@@ -113,6 +115,28 @@ check-policy-live:
 .PHONY: rust
 rust:
 	@cd node && cargo build --all
+
+# Release builds of the node binaries into build/, next to the Go ones, so
+# the installer and release script find everything in one place.
+.PHONY: rust-release
+rust-release:
+	@cd node && cargo build --release --locked -p hashgram-node -p hashgram-client
+	@mkdir -p $(GOBIN)
+	@cp node/target/release/hashgram-node node/target/release/hashgram-client $(GOBIN)/
+	@echo ">>> $(GOBIN)/hashgram-node $(GOBIN)/hashgram-client"
+
+.PHONY: rust-audit
+rust-audit:
+	@cd node && cargo audit
+
+# Fuzzing. cargo-fuzz needs a nightly toolchain, so it is not part of `make
+# test`; the stable smoke tests in hashgram-proto feed random and mutated
+# inputs to every decoder and run everywhere.
+.PHONY: fuzz
+fuzz:
+	@cd node/fuzz && cargo +nightly fuzz list | while read -r t; do \
+		echo ">>> fuzz $$t"; cargo +nightly fuzz run $$t -- -max_total_time=$${FUZZ_SECONDS:-30} || exit 1; done
+	@$(GO) test ./indexer/ ./safety/ ./x/serviceproof/types/ -run=^$$ -fuzz=Fuzz -fuzztime=$${FUZZ_SECONDS:-30}s
 
 .PHONY: rust-test
 rust-test:
