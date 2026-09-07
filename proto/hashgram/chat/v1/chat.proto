@@ -1,0 +1,99 @@
+syntax = "proto3";
+package hashgram.chat.v1;
+
+// What travels inside an MLS application message.
+//
+// Everything in this file is plaintext only to group members. No node ever
+// decodes it, and no field here is visible on the wire. It is nevertheless
+// versioned and bounded like a wire format, because a malicious member can
+// send anything, and a client must not crash on it.
+
+enum ChatKind {
+  CHAT_KIND_UNSPECIFIED = 0;
+  // A text message, possibly with attachments.
+  CHAT_KIND_TEXT = 1;
+  // Edit of an earlier message by its author.
+  CHAT_KIND_EDIT = 2;
+  // Deletion of an earlier message by its author; clients show a tombstone.
+  CHAT_KIND_DELETE = 3;
+  // Reaction to a message. Empty reaction string removes.
+  CHAT_KIND_REACTION = 4;
+  // Read receipt up to and including a message id.
+  CHAT_KIND_READ = 5;
+  // Delivery receipt for a message id.
+  CHAT_KIND_DELIVERED = 6;
+  // Typing indicator; clients treat as ephemeral.
+  CHAT_KIND_TYPING = 7;
+  // Group metadata: name, description, avatar. Sent by whoever changes it.
+  CHAT_KIND_GROUP_INFO = 8;
+  // Call signalling (offer, answer, ICE candidate, hangup).
+  CHAT_KIND_CALL = 9;
+  // Voice message: an attachment that clients render as audio.
+  CHAT_KIND_VOICE = 10;
+}
+
+// A reference to an encrypted blob plus the key to open it. The blob is
+// stored on media nodes as ciphertext; only group members hold this key.
+message Attachment {
+  bytes cid = 1;
+  // XChaCha20-Poly1305 key, 32 bytes.
+  bytes key = 2;
+  // 24-byte nonce.
+  bytes nonce = 3;
+  string mime = 4;
+  // Plaintext size.
+  uint64 size = 5;
+  string name = 6;
+  // "image", "video", "audio", "file".
+  string kind = 7;
+  uint32 width = 8;
+  uint32 height = 9;
+  uint32 duration_ms = 10;
+  // BLAKE3 of the plaintext, so a recipient can verify after decrypting.
+  bytes plaintext_hash = 11;
+}
+
+message CallSignal {
+  // "offer", "answer", "ice", "hangup", "busy", "ring".
+  string kind = 1;
+  // Call id, random 16 bytes, so signals of concurrent calls do not mix.
+  bytes call_id = 2;
+  // SDP for offer/answer.
+  string sdp = 3;
+  // ICE candidate for "ice".
+  string candidate = 4;
+  string sdp_mid = 5;
+  uint32 sdp_mline_index = 6;
+  // Whether video is requested.
+  bool video = 7;
+}
+
+message GroupInfo {
+  string name = 1;
+  string description = 2;
+  Attachment avatar = 3;
+}
+
+message ChatMessage {
+  // Format version. 1.
+  uint32 version = 1;
+  ChatKind kind = 2;
+  // Random 16 bytes chosen by the sender; the identity of this message
+  // for edits, deletes, reactions and receipts.
+  bytes id = 3;
+  // Unix milliseconds on the sender's clock.
+  uint64 timestamp_ms = 4;
+  string text = 5;
+  // For REPLY-style text: the message being replied to.
+  bytes reply_to = 6;
+  // For EDIT, DELETE, REACTION, READ, DELIVERED: the message referred to.
+  bytes target = 7;
+  string reaction = 8;
+  repeated Attachment attachments = 9;
+  // If non-zero, clients delete the message this many seconds after
+  // reading it (disappearing messages). Enforced by clients; a node never
+  // sees it.
+  uint32 disappear_after_secs = 10;
+  GroupInfo group_info = 11;
+  CallSignal call = 12;
+}

@@ -3,8 +3,13 @@ resolver = "2"
 members = [
     "hashgram-net",
     "hashgram-proto",
+    "hashgram-chain",
+    "hashgram-identity",
+    "hashgram-mls",
     "hashgram-p2p",
     "hashgram-node",
+    "hashgram-client",
+    "../sdk/rust/hashgram-sdk",
 ]
 
 [workspace.package]

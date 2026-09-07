@@ -37,6 +37,18 @@ pub mod pb {
     include!(concat!(env!("OUT_DIR"), "/hashgram.p2p.v1.rs"));
 }
 
+/// The chat message format carried inside MLS application data.
+#[allow(
+    missing_docs,
+    unreachable_pub,
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery
+)]
+pub mod chat {
+    include!(concat!(env!("OUT_DIR"), "/hashgram.chat.v1.rs"));
+}
+
 pub mod blob;
 pub mod dht;
 pub mod frame;

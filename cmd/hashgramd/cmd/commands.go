@@ -97,13 +97,18 @@ func initAppConfig() (string, interface{}) {
 	// griefing vector.
 	srvCfg.MinGasPrices = "0.0025" + hgparams.BaseCoinDenom
 
-	// Public read APIs are opt-in and, when enabled, still bind loopback so
-	// that exposure is an explicit reverse-proxy decision.
-	srvCfg.API.Enable = false
+	// The REST gateway is on by default but bound to loopback: the P2P node,
+	// the indexer, the safety engine and same-host clients read the chain
+	// through it. Exposing it publicly remains an explicit reverse-proxy
+	// decision, and mainnet-preflight fails if 1317 answers from outside.
+	srvCfg.API.Enable = true
 	srvCfg.API.Address = "tcp://127.0.0.1:1317"
 	srvCfg.API.Swagger = false
+	// gRPC on 9091 rather than the Cosmos default 9090, because Prometheus
+	// listens on 9090 on every monitored host and a port clash here made the
+	// REST gateway (which proxies to gRPC) silently stop on startup.
 	srvCfg.GRPC.Enable = true
-	srvCfg.GRPC.Address = "127.0.0.1:9090"
+	srvCfg.GRPC.Address = "127.0.0.1:9091"
 	srvCfg.GRPCWeb.Enable = false
 
 	srvCfg.Telemetry.Enabled = true

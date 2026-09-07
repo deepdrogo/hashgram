@@ -16,7 +16,7 @@ extracted from `proto/hashgram/*/v1/query.proto`, transaction types from
 | --- | --- | --- | --- |
 | CometBFT RPC | 26657 | localhost | SSH tunnel, or a public endpoint an operator chose to expose |
 | Cosmos REST | 1317 | localhost | as above |
-| Cosmos gRPC | 9090 | localhost | as above |
+| Cosmos gRPC | 9091 | localhost | as above |
 | Prometheus metrics | 26660 | localhost | SSH tunnel only |
 | Consensus P2P | 26656 | all interfaces | node to node, not for clients |
 | Hashgram P2P | 26670 | all interfaces | Phase 2, not built |
@@ -211,7 +211,7 @@ current reserve, using the same function the state machine settles with.
 
 ## 5. gRPC
 
-The same services over gRPC on 9090. Generate a client from
+The same services over gRPC on 9091 (not 9090, which Prometheus uses). Generate a client from
 `proto/hashgram/*/v1/*.proto`.
 
 Prefer gRPC for anything polled: it is a persistent connection and typed at

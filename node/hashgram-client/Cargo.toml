@@ -1,0 +1,25 @@
+[package]
+name = "hashgram-client"
+description = "Hashgram developer client: identity, wallet, messaging, social and media from the command line"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hashgram-sdk = { path = "../../sdk/rust/hashgram-sdk" }
+tokio.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+toml.workspace = true
+prost.workspace = true
+blake3.workspace = true
+
+[lints]
+workspace = true

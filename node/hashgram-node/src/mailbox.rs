@@ -49,8 +49,15 @@ const BY_ID: TableDefinition<&[u8], (&[u8], u64)> = TableDefinition::new("envelo
 const EXPIRY: TableDefinition<(u64, &[u8]), ()> = TableDefinition::new("envelope_expiry");
 // mailbox -> (count, bytes)
 const USAGE: TableDefinition<&[u8], (u64, u64)> = TableDefinition::new("mailbox_usage");
-// device_pubkey -> encoded KeyPackagePublish
-const KEY_PACKAGES: TableDefinition<&[u8], &[u8]> = TableDefinition::new("key_packages");
+// One-time key packages: (device_pubkey, seq) -> encoded KeyPackagePublish.
+// Handed out lowest seq first and deleted on the way out.
+const KEY_PACKAGES: TableDefinition<(&[u8], u64), &[u8]> =
+    TableDefinition::new("key_packages_once");
+// Last-resort key package: device_pubkey -> encoded KeyPackagePublish.
+const LAST_RESORT: TableDefinition<&[u8], &[u8]> = TableDefinition::new("key_packages_last_resort");
+
+/// Most one-time key packages held per device.
+pub const MAX_KEY_PACKAGES_PER_DEVICE: u64 = 64;
 
 /// Store statistics for the operator API.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -97,6 +104,7 @@ impl MailboxService {
             txn.open_table(EXPIRY)?;
             txn.open_table(USAGE)?;
             txn.open_table(KEY_PACKAGES)?;
+            txn.open_table(LAST_RESORT)?;
         }
         txn.commit().context("mailbox: init")?;
         Ok(Arc::new(Self {
@@ -247,7 +255,7 @@ impl MailboxService {
                     return err("invalid", e.to_string());
                 }
                 match self.put_key_package(&k) {
-                    Ok(()) => {
+                    Ok(remaining) => {
                         // Advertise that this node holds the device's mailbox
                         // and key package, so senders can find us.
                         let _ = shared
@@ -260,6 +268,7 @@ impl MailboxService {
                             pb::KeyPackagePublishResult {
                                 stored: true,
                                 reason: String::new(),
+                                remaining,
                             },
                         ))
                     }
@@ -269,7 +278,7 @@ impl MailboxService {
                     }
                 }
             }
-            B::KeyPackageFetch(f) => match self.get_key_package(&f.device_pubkey) {
+            B::KeyPackageFetch(f) => match self.take_key_package(&f.device_pubkey) {
                 Ok(Some(k)) => ok(pb::response::Body::KeyPackageFetch(
                     pb::KeyPackageFetchResult {
                         found: true,
@@ -488,32 +497,79 @@ impl MailboxService {
         Ok(removed)
     }
 
-    fn put_key_package(&self, k: &pb::KeyPackagePublish) -> anyhow::Result<()> {
+    /// Stores a key package. Returns how many one-time packages the device
+    /// now has here.
+    fn put_key_package(&self, k: &pb::KeyPackagePublish) -> anyhow::Result<u32> {
         let txn = self.db.begin_write()?;
+        let remaining;
         {
-            let mut t = txn.open_table(KEY_PACKAGES)?;
-            if let Some(existing) = t.get(k.device_pubkey.as_slice())? {
-                if let Ok(old) = pb::KeyPackagePublish::decode(existing.value()) {
-                    if old.created_at > k.created_at {
-                        return Ok(()); // keep the newer one
-                    }
+            if k.last_resort {
+                let mut t = txn.open_table(LAST_RESORT)?;
+                let keep_old = t
+                    .get(k.device_pubkey.as_slice())?
+                    .and_then(|g| pb::KeyPackagePublish::decode(g.value()).ok())
+                    .is_some_and(|old| old.created_at > k.created_at);
+                if !keep_old {
+                    t.insert(k.device_pubkey.as_slice(), k.encode_to_vec().as_slice())?;
                 }
             }
-            t.insert(k.device_pubkey.as_slice(), k.encode_to_vec().as_slice())?;
+            let mut once = txn.open_table(KEY_PACKAGES)?;
+            let existing: Vec<u64> = once
+                .range((k.device_pubkey.as_slice(), 0u64)..=(k.device_pubkey.as_slice(), u64::MAX))?
+                .filter_map(|r| r.ok())
+                .map(|(key, _)| key.value().1)
+                .collect();
+            if !k.last_resort {
+                if existing.len() as u64 >= MAX_KEY_PACKAGES_PER_DEVICE {
+                    remaining = existing.len() as u32;
+                } else {
+                    let next = existing.last().map(|s| s + 1).unwrap_or(0);
+                    once.insert(
+                        (k.device_pubkey.as_slice(), next),
+                        k.encode_to_vec().as_slice(),
+                    )?;
+                    remaining = existing.len() as u32 + 1;
+                }
+            } else {
+                remaining = existing.len() as u32;
+            }
         }
         txn.commit()?;
-        Ok(())
+        Ok(remaining)
     }
 
-    fn get_key_package(
+    /// Hands out a key package: the oldest one-time package (deleting it),
+    /// or the last-resort one.
+    fn take_key_package(
         &self,
         device_pubkey: &[u8],
     ) -> anyhow::Result<Option<pb::KeyPackagePublish>> {
-        let txn = self.db.begin_read()?;
-        let t = txn.open_table(KEY_PACKAGES)?;
-        Ok(t.get(device_pubkey)?
-            .and_then(|g| pb::KeyPackagePublish::decode(g.value()).ok())
-            .filter(|k| k.expires_at > now()))
+        let t = now();
+        let txn = self.db.begin_write()?;
+        let mut out = None;
+        {
+            let mut once = txn.open_table(KEY_PACKAGES)?;
+            let first: Option<(u64, Vec<u8>)> = once
+                .range((device_pubkey, 0u64)..=(device_pubkey, u64::MAX))?
+                .filter_map(|r| r.ok())
+                .map(|(k, v)| (k.value().1, v.value().to_vec()))
+                .find(|(_, v)| {
+                    pb::KeyPackagePublish::decode(v.as_slice()).is_ok_and(|kp| kp.expires_at > t)
+                });
+            if let Some((seq, raw)) = first {
+                once.remove((device_pubkey, seq))?;
+                out = pb::KeyPackagePublish::decode(raw.as_slice()).ok();
+            }
+            if out.is_none() {
+                let lr = txn.open_table(LAST_RESORT)?;
+                out = lr
+                    .get(device_pubkey)?
+                    .and_then(|g| pb::KeyPackagePublish::decode(g.value()).ok())
+                    .filter(|k| k.expires_at > t);
+            }
+        }
+        txn.commit()?;
+        Ok(out)
     }
 
     /// Statistics.
@@ -530,7 +586,8 @@ impl MailboxService {
             bytes += b;
             mailboxes += 1;
         }
-        let key_packages = txn.open_table(KEY_PACKAGES)?.len()?;
+        let key_packages =
+            txn.open_table(KEY_PACKAGES)?.len()? + txn.open_table(LAST_RESORT)?.len()?;
         Ok(MailboxStats {
             envelopes,
             mailboxes,
@@ -714,28 +771,58 @@ mod tests {
     }
 
     #[test]
-    fn key_packages_store_and_prefer_newer() {
+    fn one_time_key_packages_are_consumed_then_last_resort_serves() {
         let s = service();
         let dev = Ed25519Signer::generate().unwrap();
         let t = now();
-        let mut newer = pb::KeyPackagePublish {
-            network_id: "hashgram-devnet".into(),
-            key_package: vec![1; 100],
-            created_at: t,
-            expires_at: t + 3600,
-            ..Default::default()
-        };
         let id = hashgram_net::NetworkIdentity::devnet(
             "9348af00681eecefb8d6329d5ba101c13bc3c8943f2c610295026f6503654287",
         );
-        signing::sign_key_package(&id, &dev, &mut newer).unwrap();
-        let mut older = newer.clone();
-        older.created_at -= 10;
-        older.key_package = vec![2; 100];
-        signing::sign_key_package(&id, &dev, &mut older).unwrap();
-        s.put_key_package(&newer).unwrap();
-        s.put_key_package(&older).unwrap();
-        let got = s.get_key_package(&dev.public_key()).unwrap().unwrap();
-        assert_eq!(got.key_package, vec![1; 100]);
+        let mk = |n: u8, last_resort: bool| {
+            let mut k = pb::KeyPackagePublish {
+                network_id: "hashgram-devnet".into(),
+                key_package: vec![n; 100],
+                created_at: t,
+                expires_at: t + 3600,
+                last_resort,
+                ..Default::default()
+            };
+            signing::sign_key_package(&id, &dev, &mut k).unwrap();
+            k
+        };
+        assert_eq!(s.put_key_package(&mk(1, false)).unwrap(), 1);
+        assert_eq!(s.put_key_package(&mk(2, false)).unwrap(), 2);
+        assert_eq!(s.put_key_package(&mk(9, true)).unwrap(), 2);
+        assert_eq!(
+            s.take_key_package(&dev.public_key())
+                .unwrap()
+                .unwrap()
+                .key_package,
+            vec![1; 100]
+        );
+        assert_eq!(
+            s.take_key_package(&dev.public_key())
+                .unwrap()
+                .unwrap()
+                .key_package,
+            vec![2; 100]
+        );
+        // One-time supply exhausted: the last-resort package serves, repeatedly.
+        assert_eq!(
+            s.take_key_package(&dev.public_key())
+                .unwrap()
+                .unwrap()
+                .key_package,
+            vec![9; 100]
+        );
+        assert_eq!(
+            s.take_key_package(&dev.public_key())
+                .unwrap()
+                .unwrap()
+                .key_package,
+            vec![9; 100]
+        );
+        // A device with nothing published gets nothing.
+        assert!(s.take_key_package(&[0u8; 32]).unwrap().is_none());
     }
 }

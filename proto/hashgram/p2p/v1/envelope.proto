@@ -115,11 +115,18 @@ message KeyPackagePublish {
   uint64 created_at = 4;
   uint64 expires_at = 5;
   bytes signature = 6;
+  // A last-resort key package may be handed out repeatedly (MLS marks it
+  // so and the device keeps its private key). Ordinary ones are handed out
+  // once and deleted, like one-time prekeys; devices publish a batch and
+  // replenish when the store reports the queue is low.
+  bool last_resort = 7;
 }
 
 message KeyPackagePublishResult {
   bool stored = 1;
   string reason = 2;
+  // One-time key packages the node now holds for this device.
+  uint32 remaining = 3;
 }
 
 // Fetch a key package for a device.

@@ -1,0 +1,34 @@
+[package]
+name = "hashgram-chain"
+description = "Hashgram chain client: wallets, transactions and queries over the REST gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hashgram-net = { path = "../hashgram-net" }
+hashgram-proto = { path = "../hashgram-proto" }
+cosmrs = { version = "0.22", features = ["bip32"] }
+bip39 = { version = "2", features = ["rand"] }
+prost.workspace = true
+prost013 = { package = "prost", version = "0.13" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+getrandom.workspace = true
+tokio = { version = "1", features = ["time"] }
+
+[build-dependencies]
+prost-build.workspace = true
+protox.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+
+[lints]
+workspace = true

@@ -196,7 +196,7 @@ GET /hashgram/serviceproof/v1/fraud/{provider}
 GET /hashgram/serviceproof/v1/emission_schedule
 ```
 
-### 2.4 gRPC — port 9090
+### 2.4 gRPC — port 9091
 
 The same services, as gRPC. Generate a C# client from
 `proto/hashgram/*/v1/*.proto` with `Grpc.Tools`. Prefer gRPC over REST for
@@ -205,7 +205,7 @@ so a renamed field is a build error rather than a null at runtime.
 
 ### 2.5 Ports and exposure
 
-**26657, 1317 and 9090 are bound to localhost on a properly configured node,
+**26657, 1317 and 9091 are bound to localhost on a properly configured node,
 and `hashgramctl mainnet-preflight` fails the launch if the admin RPC is
 publicly reachable.**
 

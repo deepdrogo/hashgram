@@ -238,6 +238,7 @@ fn key_package_payload(k: &pb::KeyPackagePublish) -> Result<Vec<u8>, CanonicalEr
         .bytes("key_package", &k.key_package)
         .u64(k.created_at)
         .u64(k.expires_at)
+        .u32(u32::from(k.last_resort))
         .finish()
 }
 

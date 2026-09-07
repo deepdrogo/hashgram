@@ -1,0 +1,23 @@
+[package]
+name = "hashgram-identity"
+description = "Hashgram client identity: encrypted keystore, root and device keys"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hashgram-net = { path = "../hashgram-net" }
+hashgram-proto = { path = "../hashgram-proto" }
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+getrandom.workspace = true
+zeroize = "1"
+
+[lints]
+workspace = true

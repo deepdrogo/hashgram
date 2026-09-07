@@ -28,6 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "hashgram/p2p/v1/announce.proto",
         "hashgram/p2p/v1/attestation.proto",
         "hashgram/p2p/v1/rpc.proto",
+        "hashgram/chat/v1/chat.proto",
     ];
 
     for f in &files {

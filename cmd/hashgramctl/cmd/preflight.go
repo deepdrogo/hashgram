@@ -258,7 +258,7 @@ func checkNodeKey() checkResult {
 // adminPorts are the ports that must not be reachable from outside the host.
 var adminPorts = map[string]string{
 	"26657": "CometBFT RPC (includes administrative endpoints)",
-	"9090":  "application gRPC",
+	"9091":  "application gRPC",
 	"1317":  "application REST API",
 	"26660": "Prometheus metrics",
 	"5432":  "PostgreSQL",
