@@ -171,6 +171,9 @@ the document says so rather than describing it in the present tense.
 **Launch**
 - [FOUNDER_LAUNCH_RUNBOOK.md](docs/FOUNDER_LAUNCH_RUNBOOK.md) — the full launch sequence
 
+**Status**
+- [PHASE1_REPORT.md](docs/PHASE1_REPORT.md) — what was actually run and what it produced
+
 ## License
 
 Apache License 2.0. See [LICENSE](LICENSE).

@@ -43,6 +43,7 @@ docs/MAINNET.md
 docs/DISASTER_RECOVERY.md
 docs/FOUNDER_LAUNCH_RUNBOOK.md
 docs/LOGGING_POLICY.md
+docs/PHASE1_REPORT.md
 README.md
 "
 for f in $REQUIRED; do

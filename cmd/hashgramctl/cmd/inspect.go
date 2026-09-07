@@ -263,15 +263,33 @@ Verify the hash independently:
 				}
 			}
 
-			// And what the running node actually serves, which is what peers
-			// and clients see.
-			if served, err := rpc.GenesisChunked(ctx); err == nil {
-				actual := hgparams.ComputeGenesisHash(served)
-				o.row("Genesis served by RPC", shortHash(actual))
-				if actual != network.GenesisHash {
-					o.row("  note", "the running node is serving a different genesis than the pin; "+
-						"it was probably started before the pin changed and needs a restart")
+			// What the running node is actually on, checked by chain id rather
+			// than by hashing the genesis the RPC serves.
+			//
+			// Hashing the RPC response looks like the obvious check and is
+			// wrong: CometBFT parses the genesis file and re-serialises it,
+			// dropping the SDK's app_name and app_version fields, rendering
+			// initial_height as a string, and emitting compact rather than
+			// indented JSON. The two byte streams therefore never match, so
+			// the comparison reported a mismatch on every healthy node and
+			// blamed it on a stale restart. A diagnostic that always warns is
+			// a diagnostic operators learn to ignore.
+			//
+			// The chain id is the identity CometBFT itself enforces at the
+			// peer handshake, so comparing it answers the question that
+			// matters: is this node on the network we pinned.
+			if status, err := rpc.Status(ctx); err == nil {
+				served := status.NodeInfo.Network
+				if served == network.ChainID {
+					o.row("Running node", fmt.Sprintf("on chain id %s, matching the pin", served))
+				} else {
+					o.row("Running node", fmt.Sprintf(
+						"MISMATCH: serving chain id %s but this node is pinned to %s. "+
+							"It was probably started before the pin changed and needs a restart",
+						served, network.ChainID))
 				}
+				o.row("  genesis hash note", "CometBFT re-serialises the genesis, so the hash of "+
+					"the RPC response is not comparable to the file hash above")
 			}
 
 			o.section("Fork isolation")
