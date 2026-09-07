@@ -137,6 +137,7 @@ Joining an existing network from a second server:
 		// Configuration
 		cmdConfigureRole(),
 		cmdValidator(),
+		cmdPropose(),
 
 		// Data
 		cmdBackup(),
