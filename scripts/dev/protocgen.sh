@@ -60,3 +60,16 @@ go mod tidy >/dev/null 2>&1
 
 echo ">>> generated files"
 find x -name '*.pb.go' -o -name '*.pb.gw.go' | sort | sed 's/^/    /'
+
+# ---------------------------------------------------------------------------
+# Off-chain wire protocol (hashgram.p2p.v1, hashgram.chat.v1): plain Go
+# protobuf for the indexer and safety engine. The Rust side is generated at
+# build time by prost from the same files.
+# ---------------------------------------------------------------------------
+if command -v protoc-gen-go >/dev/null 2>&1; then
+  protoc -I proto --go_out=. --go_opt=module=github.com/hashgram/hashgram \
+    proto/hashgram/p2p/v1/*.proto proto/hashgram/chat/v1/chat.proto
+  echo "generated pkg/p2ppb and pkg/chatpb"
+else
+  echo "protoc-gen-go not installed; skipping pkg/p2ppb (go install google.golang.org/protobuf/cmd/protoc-gen-go@latest)"
+fi

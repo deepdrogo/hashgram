@@ -33,7 +33,7 @@ LDFLAGS = -X github.com/cosmos/cosmos-sdk/version.Name=hashgram \
 
 BUILD_FLAGS = -mod=readonly -ldflags '$(LDFLAGS)' -trimpath
 
-BINARIES = hashgramd hashgramctl hashgram-test-client hashgram-keygen
+BINARIES = hashgramd hashgramctl hashgram-test-client hashgram-keygen hashgram-indexer
 
 .PHONY: all
 all: lint test build

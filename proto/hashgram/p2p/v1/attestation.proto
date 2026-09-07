@@ -1,6 +1,8 @@
 syntax = "proto3";
 package hashgram.p2p.v1;
 
+option go_package = "github.com/hashgram/hashgram/pkg/p2ppb;p2ppb";
+
 // Content safety attestations.
 //
 // A safety provider states a verdict about PUBLIC content and signs it.

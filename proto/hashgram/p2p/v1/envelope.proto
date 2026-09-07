@@ -1,6 +1,8 @@
 syntax = "proto3";
 package hashgram.p2p.v1;
 
+option go_package = "github.com/hashgram/hashgram/pkg/p2ppb;p2ppb";
+
 // Private messaging envelopes and the mailbox protocol.
 //
 // An envelope is ciphertext with a delivery label. A store node holds

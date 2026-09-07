@@ -1,6 +1,8 @@
 syntax = "proto3";
 package hashgram.p2p.v1;
 
+option go_package = "github.com/hashgram/hashgram/pkg/p2ppb;p2ppb";
+
 import "hashgram/p2p/v1/announce.proto";
 import "hashgram/p2p/v1/attestation.proto";
 import "hashgram/p2p/v1/blob.proto";

@@ -234,6 +234,26 @@ impl SafetyService {
     /// supersedes a BLOCK by timestamp. Kept as a hook for the periodic task.
     pub fn prune(&self) {}
 
+    /// The most recent attestations, newest first, for the indexer.
+    pub fn recent(&self, limit: usize) -> Vec<(u8, pb::ContentAttestation)> {
+        let mut out = Vec::new();
+        if let Ok(txn) = self.db.begin_read() {
+            if let Ok(t) = txn.open_table(ATTESTATIONS) {
+                if let Ok(iter) = t.iter() {
+                    for r in iter.flatten() {
+                        let (k, v) = r;
+                        if let Ok(a) = pb::ContentAttestation::decode(v.value()) {
+                            out.push((k.value().0, a));
+                        }
+                    }
+                }
+            }
+        }
+        out.sort_by_key(|(_, a)| std::cmp::Reverse(a.timestamp));
+        out.truncate(limit.clamp(1, 10_000));
+        out
+    }
+
     /// Statistics.
     pub fn stats(&self) -> anyhow::Result<SafetyStats> {
         let txn = self.db.begin_read()?;

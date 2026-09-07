@@ -60,6 +60,7 @@ pub fn router(state: Arc<ApiState>) -> Router {
         .route("/v1/mailbox/{mailbox}/notified", get(mailbox_notified))
         .route("/v1/safety/attestations", post(safety_publish))
         .route("/v1/safety/attestations/{subject}", get(safety_get))
+        .route("/v1/safety/recent", get(safety_recent))
         .route("/v1/calls/turn-credentials", post(turn_credentials))
         .route("/v1/chain/{*path}", get(chain_passthrough))
         // Same-host uploads may be whole media files; the P2P path is
@@ -863,6 +864,53 @@ async fn safety_get(
                     hex::encode(&a.event_id)
                 } else {
                     hex::encode(&a.content_hash)
+                },
+                verdict: verdict_name(a.verdict),
+                policy: a.policy,
+                reason_code: a.reason_code,
+                timestamp: a.timestamp,
+                trusted: safety.is_trusted(&a.attestor_pubkey),
+                attestor_pubkey: hex::encode(&a.attestor_pubkey),
+            })
+            .collect(),
+    ))
+}
+
+#[derive(Deserialize)]
+struct RecentQuery {
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(Serialize)]
+struct AttestationRecent {
+    subject: String,
+    kind: &'static str,
+    verdict: String,
+    policy: String,
+    reason_code: String,
+    timestamp: u64,
+    attestor_pubkey: String,
+    trusted: bool,
+}
+
+async fn safety_recent(State(s): S, Query(q): Query<RecentQuery>) -> Result<Json<Vec<AttestationRecent>>, (StatusCode, Json<ApiError>)> {
+    let safety = s.shared.services.safety.as_ref().ok_or_else(|| unsupported("safety"))?;
+    let list = safety.recent(q.limit.unwrap_or(1000));
+    Ok(Json(
+        list.into_iter()
+            .map(|(kind, a)| AttestationRecent {
+                subject: if !a.cid.is_empty() {
+                    hex::encode(&a.cid)
+                } else if !a.event_id.is_empty() {
+                    hex::encode(&a.event_id)
+                } else {
+                    hex::encode(&a.content_hash)
+                },
+                kind: match kind {
+                    1 => "cid",
+                    2 => "event",
+                    _ => "content",
                 },
                 verdict: verdict_name(a.verdict),
                 policy: a.policy,

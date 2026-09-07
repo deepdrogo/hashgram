@@ -1,6 +1,8 @@
 syntax = "proto3";
 package hashgram.chat.v1;
 
+option go_package = "github.com/hashgram/hashgram/pkg/chatpb;chatpb";
+
 // What travels inside an MLS application message.
 //
 // Everything in this file is plaintext only to group members. No node ever
