@@ -44,6 +44,9 @@ docs/DISASTER_RECOVERY.md
 docs/FOUNDER_LAUNCH_RUNBOOK.md
 docs/LOGGING_POLICY.md
 docs/PHASE1_REPORT.md
+docs/PROMPT_WINDOWS_DESKTOP.md
+docs/PROMPT_IOS_APP.md
+docs/PROMPT_ANDROID_APP.md
 README.md
 "
 for f in $REQUIRED; do
@@ -295,6 +298,108 @@ PY
 if [ $? -ne 0 ]; then
   FAILURES=$((FAILURES + 1))
 fi
+
+# ---------------------------------------------------------------------------
+
+head1 "CLIENT PROMPTS REFERENCE REAL APIS"
+
+# The build prompts tell someone to write a client against these endpoints. An
+# invented one produces a client that compiles, ships, and fails in the user's
+# hands, so every path and message named in a prompt is checked against the
+# protobuf definitions.
+python3 - <<'PROMPTAPI'
+import glob, re, sys
+
+def read(pattern):
+    out = []
+    for path in glob.glob(pattern):
+        with open(path) as fh:
+            out.append(fh.read())
+    return "\n".join(out)
+
+queries = read("proto/hashgram/*/v1/query.proto")
+txs = read("proto/hashgram/*/v1/tx.proto")
+prompts = read("docs/PROMPT_*.md")
+
+if not prompts:
+    print("  [warn] no client prompts found")
+    sys.exit(0)
+
+# Endpoints, as templates: /hashgram/username/v1/lookup/{name}
+templates = set(re.findall(r'"(/hashgram/[a-z0-9/_{}.-]+)"', queries))
+
+# A prompt may substitute a concrete value for a {placeholder}, so each
+# referenced path is matched against the templates as patterns rather than
+# by equality.
+patterns = [
+    (tpl, re.compile("^" + re.sub(r"\{[a-z_]+\}", r"[^/]+", re.escape(tpl)
+        .replace(r"\{", "{").replace(r"\}", "}")) + "$"))
+    for tpl in templates
+]
+
+def matches_a_real_endpoint(path):
+    return any(rx.match(path) for _, rx in patterns)
+
+# A prompt may deliberately name a non-existent endpoint to say it does not
+# exist. Those lines are recognised rather than counted as errors, because
+# telling a reader what NOT to build is the most valuable part of a prompt for
+# an unfinished system.
+negated = set()
+for line in prompts.splitlines():
+    if re.search(r"does not exist|is unbuilt|not built|no messaging", line, re.I):
+        negated.update(re.findall(r"(/hashgram/[a-z0-9/_{}.-]+)", line))
+
+referenced = set(re.findall(r"(/hashgram/[a-z0-9/_{}.-]+)", prompts))
+invented = sorted(
+    p for p in referenced
+    if not matches_a_real_endpoint(p) and p not in negated
+)
+
+problems = 0
+if invented:
+    for path in invented:
+        print(f"  [FAIL] the prompts reference {path}, which no query.proto defines")
+        problems += 1
+else:
+    print(f"  [ ok ] all {len(referenced)} endpoint references resolve to real protos")
+    if negated:
+        print(f"  [ ok ] {len(negated)} endpoint(s) cited explicitly as not existing")
+
+# Transaction messages. Standard SDK messages are legitimately referenced and
+# are not defined in this repository's protos.
+sdk = {
+    "Send", "MultiSend", "Delegate", "Undelegate", "BeginRedelegate",
+    "WithdrawDelegatorReward", "WithdrawValidatorCommission",
+    "SetWithdrawAddress", "Vote", "Deposit", "SubmitProposal", "Grant",
+    "Revoke", "Exec", "GrantAllowance", "RevokeAllowance",
+}
+real_msgs = set(re.findall(r"rpc ([A-Za-z]+)\(", txs))
+used_msgs = {m[3:] for m in re.findall(r"`(Msg[A-Za-z]+)`", prompts)}
+bad = sorted(used_msgs - real_msgs - sdk)
+
+if bad:
+    for name in bad:
+        print(f"  [FAIL] the prompts reference Msg{name}, which no tx.proto defines")
+        problems += 1
+else:
+    print(f"  [ ok ] all {len(used_msgs)} transaction references exist")
+
+sys.exit(1 if problems else 0)
+PROMPTAPI
+if [ $? -ne 0 ]; then
+  FAILURES=$((FAILURES + 1))
+fi
+
+# A prompt for an unfinished system must say what not to build. Without this,
+# the most useful part of the document is the part most likely to be dropped
+# in an edit.
+for f in docs/PROMPT_*.md; do
+  if grep -qiE 'no messaging|not build a (messenger|chat)|out of scope' "$f"; then
+    ok "$(basename "$f") states what not to build"
+  else
+    bad "$(basename "$f") does not tell the reader which features to leave out"
+  fi
+done
 
 # ---------------------------------------------------------------------------
 
