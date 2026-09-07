@@ -172,12 +172,14 @@ the document says so rather than describing it in the present tense.
 - [FOUNDER_LAUNCH_RUNBOOK.md](docs/FOUNDER_LAUNCH_RUNBOOK.md) — the full launch sequence
 
 **Building a client**
-- [PROMPT_WINDOWS_DESKTOP.md](docs/PROMPT_WINDOWS_DESKTOP.md) — the complete API surface and a Windows build specification
+- [CLIENT_CONNECTIVITY_SPEC.md](docs/CLIENT_CONNECTIVITY_SPEC.md) — every interface a client may rely on, and what does not exist
+- [PROMPT_WINDOWS_DESKTOP.md](docs/PROMPT_WINDOWS_DESKTOP.md) — a Windows build specification
 - [PROMPT_IOS_APP.md](docs/PROMPT_IOS_APP.md) — what differs on iOS
 - [PROMPT_ANDROID_APP.md](docs/PROMPT_ANDROID_APP.md) — what differs on Android
 
 **Status**
-- [PHASE1_REPORT.md](docs/PHASE1_REPORT.md) — what was actually run and what it produced
+- [FINAL_REPORT.md](docs/FINAL_REPORT.md) — the build report, operator procedures, and what is not done
+- [PHASE1_REPORT.md](docs/PHASE1_REPORT.md) — verbatim output of every test run
 
 ## License
 
