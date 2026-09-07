@@ -180,6 +180,19 @@ func run(ctx context.Context, cfg indexer.Config, log *slog.Logger) error {
 			if err := chain.SyncRegistries(ctx); err != nil {
 				log.Warn("registry sync", "error", err)
 			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+	// Safety verdicts are enforcement, so they are pulled at the poll
+	// interval rather than with the slow registry sync.
+	go func() {
+		t := time.NewTicker(cfg.PollInterval)
+		defer t.Stop()
+		for {
 			if err := social.SyncAttestations(ctx); err != nil {
 				log.Debug("attestation sync", "error", err)
 			}
