@@ -477,10 +477,14 @@ cat <<'NEXT'
     Creating a new network (genesis operator only):
 
       hashgramctl init                 initialise the node home and keys
-      hashgramctl configure-role validator,bootstrap
-      hashgramctl init-mainnet-genesis --founder-address hash1...
-      hashgramd genesis gentx <key> <amount>uhash --chain-id hashgram-1
-      hashgramd genesis collect-gentxs
+      hashgramctl configure-role validator
+      hashgramd keys add operator --home /var/lib/hashgram/chain     # hot key; NOT the Founder key
+      hashgramctl init-mainnet-genesis --founder-address hash1... \
+        --genesis-account <operator-address>=1000000HASH           # from the Founder's unlocked 20M
+      hashgramd genesis gentx operator 900000000000uhash --chain-id hashgram-1 \
+        --home /var/lib/hashgram/chain --moniker <name> \
+        --commission-rate 0.10 --commission-max-rate 0.20 --commission-max-change-rate 0.01
+      hashgramctl finalize-genesis     # pins the FINAL genesis hash
       hashgramctl mainnet-preflight
       hashgramctl start
 
