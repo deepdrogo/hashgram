@@ -176,6 +176,7 @@ the document says so rather than describing it in the present tense.
 
 **Launch**
 - [FOUNDER_LAUNCH_RUNBOOK.md](docs/FOUNDER_LAUNCH_RUNBOOK.md) — the full launch sequence
+- [LAUNCH_HANDOVER_KA.md](docs/LAUNCH_HANDOVER_KA.md) — the same launch as exact commands for the Genesis VPS, in Georgian
 
 **Building a client**
 - [CLIENT_CONNECTIVITY_SPEC.md](docs/CLIENT_CONNECTIVITY_SPEC.md) — every interface a client may rely on, and what does not exist
