@@ -347,3 +347,57 @@ jobs:
             echo "===== $f ====="
             tail -100 "$f"
           done
+
+  # ---------------------------------------------------------------------
+  phase2:
+    name: Phase 2 network acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: [build, rust]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install the Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            node/target
+          key: cargo-${{ hashFiles('node/Cargo.lock', 'node/**/Cargo.toml') }}
+
+      - name: Start PostgreSQL for the indexer
+        run: |
+          sudo systemctl start postgresql
+          sudo -u postgres psql -c 'SELECT version();'
+
+      - name: Build everything
+        run: |
+          make build
+          make rust-release
+
+      - name: Four validators, three P2P nodes, indexer, safety engine, two devices
+        # Fork rejection at the Hashgram handshake, E2EE delivery through
+        # store nodes holding only ciphertext, social propagation, blob
+        # replication to three copies, on-chain storage assignment and a
+        # passed challenge, client-signed receipts credited, safety blocking,
+        # store-node failover, genesis-host destruction, disk-image scan.
+        run: scripts/testnet/phase2.sh
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          for f in phase2-data/node*/node.log phase2-data/safety/safety.log phase2-data/indexer/indexer.log phase2-data/four-validator.log; do
+            echo "=== $f ==="; tail -60 "$f" 2>/dev/null || true
+          done
+
+      - name: Tear down
+        if: always()
+        run: scripts/testnet/phase2.sh clean || true

@@ -1,82 +1,72 @@
+
+!**/testdata/**/*.pem
+!.env.example
+#
+# --- Build output ----------------------------------------------------------
+# --- Editors / OS ----------------------------------------------------------
+# --- Genesis working files (canonical genesis is published separately) -----
+# --- Logs ------------------------------------------------------------------
+# --- Runtime / node home ---------------------------------------------------
+# --- Rust ------------------------------------------------------------------
+# --- Secrets and keys: NEVER COMMIT ---------------------------------------
+# --- Tooling caches --------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Hashgram .gitignore
-#
+# Release artefacts. Reproducible from source with scripts/dev/release.sh, so
+# Rust build output. Reproducible from source.
 # SECURITY: this file is a defence-in-depth measure only. The authoritative
-# controls are the `gitleaks` secret scan in CI (.github/workflows/ci.yml) and
 # `hashgramctl mainnet-preflight`. Never rely on .gitignore alone to keep a
+# controls are the `gitleaks` secret scan in CI (.github/workflows/ci.yml) and
 # key out of history.
-# ---------------------------------------------------------------------------
-
-# --- Build output ----------------------------------------------------------
-/build/
-/dist/
-/bin/
-*.exe
-*.test
-*.out
-*.o
-*.a
-*.so
-
-# --- Rust ------------------------------------------------------------------
-target/
+# there is no reason to carry binaries in git.
+**/keyhash
+**/keyring-file/
+**/keyring-test/
 **/target/
-Cargo.lock.orig
-
-# --- Secrets and keys: NEVER COMMIT ---------------------------------------
-*.pem
+*.a
+*.db
+*.exe
 *.key
-!**/testdata/**/*.pem
-priv_validator_key.json
-node_key.json
-priv_validator_state.json
+*.log
 *.mnemonic
+*.o
+*.out
+*.pem
+*.so
+*.sqlite
+*.sqlite3
+*.swp
+*.test
+*.wal
 *mnemonic*
 *seed-phrase*
 *seedphrase*
-.env
-.env.*
-!.env.example
-/secrets/
-**/keyring-file/
-**/keyring-test/
-**/keyhash
-
-# --- Runtime / node home ---------------------------------------------------
-/.hashgram/
-/.hashgramd/
-/devnet/
-/testnet-data/
-/localnet/
-*.db
-*.wal
-*.sqlite
-*.sqlite3
-
-# --- Genesis working files (canonical genesis is published separately) -----
-/genesis-work/
-genesis.json.tmp
-
-# --- Logs ------------------------------------------------------------------
-*.log
-/logs/
-
-# --- Editors / OS ----------------------------------------------------------
-.idea/
-.vscode/
-*.swp
 *~
 .DS_Store
-
-# --- Tooling caches --------------------------------------------------------
+.env
+.env.*
+.idea/
+.vscode/
 /.cache/
-/vendor/
-coverage.out
-coverage.html
-
-# Release artefacts. Reproducible from source with scripts/dev/release.sh, so
-# there is no reason to carry binaries in git.
+/.hashgram/
+/.hashgramd/
+/bin/
+/build/
+/devnet/
 /dist/
-
-# Rust build output. Reproducible from source.
+/genesis-work/
+/localnet/
+/logs/
+/secrets/
+/testnet-data/
+/vendor/
+Cargo.lock.orig
+coverage.html
+coverage.out
+genesis.json.tmp
 node/target/
+node_key.json
+phase2-data/
+priv_validator_key.json
+priv_validator_state.json
+target/

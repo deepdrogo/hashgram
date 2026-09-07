@@ -289,7 +289,7 @@ func TestValidReceiptCreditsProvider(t *testing.T) {
 	credit, err := f.keeper.GetCredit(f.ctx, 0, n.operator.String())
 	require.NoError(t, err)
 	// 10 GiB * 200 credit per GiB.
-	require.Equal(t, "2000", credit.RelayCredit.String())
+	require.Equal(t, "2000000000", credit.RelayCredit.String())
 }
 
 // TestSelfTrafficIsRejectedAndScored is §29: a provider serving itself is not
@@ -381,7 +381,7 @@ func TestReceiptReplayIsRejectedAndScored(t *testing.T) {
 	// Credit was counted once, not twice.
 	credit, err := f.keeper.GetCredit(f.ctx, 0, n.operator.String())
 	require.NoError(t, err)
-	require.Equal(t, "2000", credit.RelayCredit.String())
+	require.Equal(t, "2000000000", credit.RelayCredit.String())
 }
 
 // TestReceiptForAnotherNetworkIsRejected: evidence minted on a devnet or a
@@ -520,7 +520,7 @@ func TestOneBadReceiptDoesNotDiscardTheBatch(t *testing.T) {
 	credit, err := f.keeper.GetCredit(f.ctx, 0, n.operator.String())
 	require.NoError(t, err)
 	// 4 receipts x 2 GiB x 200.
-	require.Equal(t, "1600", credit.RelayCredit.String())
+	require.Equal(t, "1600000000", credit.RelayCredit.String())
 }
 
 // ---------------------------------------------------------------------------
@@ -571,7 +571,7 @@ func TestTwoNodeRingIsDiscounted(t *testing.T) {
 	// Raw credit is 20 GiB * 200 = 4000 each.
 	creditA, err := f.keeper.GetCredit(f.ctx, 0, opA.String())
 	require.NoError(t, err)
-	require.Equal(t, "4000", creditA.RelayCredit.String())
+	require.Equal(t, "4000000000", creditA.RelayCredit.String())
 
 	// An honest provider serving many clients, with the same raw total.
 	honest := newNode("honest")
@@ -585,7 +585,7 @@ func TestTwoNodeRingIsDiscounted(t *testing.T) {
 	}
 	creditH, err := f.keeper.GetCredit(f.ctx, 0, honest.operator.String())
 	require.NoError(t, err)
-	require.Equal(t, "4000", creditH.RelayCredit.String(),
+	require.Equal(t, "4000000000", creditH.RelayCredit.String(),
 		"the honest provider should have the same raw credit for a fair comparison")
 
 	// The mechanism: the ring's effective credit is discounted to the
@@ -604,10 +604,10 @@ func TestTwoNodeRingIsDiscounted(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(20), honestDistinct)
 
-	require.Equal(t, "4000", honestEffective.String(),
+	require.Equal(t, "4000000000", honestEffective.String(),
 		"the honest provider's credit was discounted")
 	// 4000 * 2000bps / 10000 = 800.
-	require.Equal(t, "800", ringEffective.String(),
+	require.Equal(t, "800000000", ringEffective.String(),
 		"the ring kept %s of its 4000 claimed credit; the 20%% cap implies 800", ringEffective)
 
 	// And the effect on payout. The per-provider cap is lifted for this
@@ -654,12 +654,12 @@ func TestHonestProviderWithManyClientsIsNotDiscounted(t *testing.T) {
 	credit, err := f.keeper.GetCredit(f.ctx, 0, n.operator.String())
 	require.NoError(t, err)
 	raw := credit.RelayCredit
-	require.Equal(t, "20000", raw.String())
+	require.Equal(t, "20000000000", raw.String())
 
 	largest, distinct, err := f.keeper.LargestClientCredit(f.ctx, 0, n.operator.String())
 	require.NoError(t, err)
 	require.Equal(t, uint64(10), distinct)
-	require.Equal(t, "2000", largest.String())
+	require.Equal(t, "2000000000", largest.String())
 
 	// The largest client contributed 10%, below the 20% cap, so nothing is
 	// discounted. Settle and confirm the provider takes the whole budget it

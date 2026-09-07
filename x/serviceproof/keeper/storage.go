@@ -239,14 +239,12 @@ func (k Keeper) AccrueStorageCredit(ctx context.Context, epoch uint64, params ty
 			return false, nil
 		}
 
-		gib := heldBytes / gibibyte
-		if gib == 0 {
-			// Less than a gibibyte held: rounds to no credit. A storage
-			// provider is expected to hold gibibytes, not kilobytes.
-			return false, nil
-		}
-
-		base := math.NewIntFromUint64(gib).Mul(math.NewIntFromUint64(params.StorageCreditPerGibEpoch))
+		// Proportional to bytes held, in the same scaled credit units as
+		// receipts (see creditScale): bytes * rate * scale / GiB, exact.
+		base := math.NewIntFromUint64(heldBytes).
+			Mul(math.NewIntFromUint64(creditScale)).
+			Mul(math.NewIntFromUint64(params.StorageCreditPerGibEpoch)).
+			Quo(math.NewIntFromUint64(gibibyte))
 		scaled := base.
 			Mul(math.NewIntFromUint64(credit.ChallengesPassed)).
 			Quo(math.NewIntFromUint64(credit.ChallengesIssued))

@@ -11,6 +11,11 @@
 #   scripts/testnet/four-validator.sh stop     stop, keep the state
 #   scripts/testnet/four-validator.sh clean    stop and delete the state
 #
+# Hooks for the Phase 2 acceptance (scripts/testnet/phase2.sh):
+#   EXTRA_GENESIS_ACCOUNTS="addr:amount addr:amount"  fund more accounts
+#   EXTRA_GENESIS_PY=/path/to/edit.py                 python applied to genesis.json
+#   SKIP_FORK_TESTS=1                                 stop after the resilience test
+#
 # The validators run on one host with distinct ports, which tests consensus
 # and gossip but not network partitions or independent operators. That
 # limitation is real and is stated in the output rather than glossed over.
@@ -128,6 +133,10 @@ for i in $(seq 0 $((N - 1))); do
   "$HASHGRAMD" genesis add-genesis-account "$addr" "$((STAKE + SPARE))$DENOM" \
     --home "$GENESIS_HOME" >/dev/null 2>&1
 done
+for entry in ${EXTRA_GENESIS_ACCOUNTS:-}; do
+  "$HASHGRAMD" genesis add-genesis-account "${entry%%:*}" "${entry##*:}$DENOM" \
+    --home "$GENESIS_HOME" >/dev/null 2>&1 && ok "extra genesis account ${entry%%:*}"
+done
 ok "four genesis accounts funded"
 
 # Devnet denominations throughout, and short governance periods so a
@@ -155,6 +164,11 @@ if "expedited_voting_period" in s["gov"]["params"]:
 json.dump(d,open(p,"w"),indent=2)
 PY
 ok "denominations and governance periods set for a test run"
+
+if [ -n "${EXTRA_GENESIS_PY:-}" ] && [ -f "$EXTRA_GENESIS_PY" ]; then
+  python3 "$EXTRA_GENESIS_PY" "$GENESIS_HOME/config/genesis.json"
+  ok "extra genesis edits applied from $EXTRA_GENESIS_PY"
+fi
 
 # Each validator signs its own gentx in its own home, then all gentxs are
 # collected into validator 0's genesis.
@@ -230,7 +244,7 @@ PY
 import re,sys
 path,grpc,api,ghash = sys.argv[1:5]
 t=open(path).read()
-t=re.sub(r'^address = "127\.0\.0\.1:9090"', f'address = "127.0.0.1:{grpc}"', t, flags=re.M)
+t=re.sub(r'^address = "127\.0\.0\.1:909[01]"', f'address = "127.0.0.1:{grpc}"', t, flags=re.M)
 t=re.sub(r'^address = "tcp://127\.0\.0\.1:1317"', f'address = "tcp://127.0.0.1:{api}"', t, flags=re.M)
 t=re.sub(r'genesis-hash = ".*"', f'genesis-hash = "{ghash}"', t)
 t=re.sub(r'network-id = ".*"', 'network-id = "hashgram-devnet"', t)
@@ -464,6 +478,18 @@ done
 [ "$CAUGHT_UP" -eq 0 ] && { printf '\n'; bad "validator3 did not catch up to height $TARGET"; }
 
 # --- FOREIGN FORK REJECTION -------------------------------------------------
+
+if [ "${SKIP_FORK_TESTS:-0}" = "1" ]; then
+  head1 "RESULT"
+  if [ "$FAILURES" -eq 0 ]; then
+    printf '  %sAll checks passed (fork isolation skipped by SKIP_FORK_TESTS).%s\n' "$GREEN" "$RESET"
+  else
+    printf '  %s%d check(s) failed.%s\n' "$RED" "$FAILURES" "$RESET"
+  fi
+  say "  State     $TESTNET_DIR"
+  say "  RPC       $(rpc_of 0), $(rpc_of 1), $(rpc_of 2), $(rpc_of 3)"
+  exit "$FAILURES"
+fi
 
 head1 "FORK ISOLATION"
 

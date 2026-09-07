@@ -16,6 +16,18 @@ import (
 // gibibyte is the divisor used when converting receipt units into credit.
 const gibibyte = uint64(1024 * 1024 * 1024)
 
+// creditScale is the number of credit units per "rate unit".
+//
+// Params express rates per GiB (storage, relay, retrieval) and per hour
+// (calls). Credit is only ever compared with other credit — a provider's
+// share of an epoch's budget is its credit over everyone's — so the absolute
+// scale is free to choose, and it is chosen large enough that a kilobyte of
+// real service is a positive integer rather than a truncated zero. Without
+// this, a messaging relay serving thousands of small clients earned nothing
+// while a single gibibyte download earned a full unit, which is the opposite
+// of "pay for useful service".
+const creditScale = uint64(1_000_000)
+
 // SubmitReceipts validates a batch of client-signed receipts and credits the
 // providers they name.
 //
@@ -258,7 +270,7 @@ func (k Keeper) applyReceipt(
 // gas to submit, and the per-client concentration cap discounts credit that
 // comes from one counterparty.
 func creditForReceipt(r types.ServiceReceipt, p types.Params) math.Int {
-	units := math.NewIntFromUint64(r.Units)
+	units := math.NewIntFromUint64(r.Units).Mul(math.NewIntFromUint64(creditScale))
 	switch r.Role {
 	case types.SERVICE_ROLE_RELAY:
 		return units.Mul(math.NewIntFromUint64(p.RelayCreditPerGib)).Quo(math.NewIntFromUint64(gibibyte))

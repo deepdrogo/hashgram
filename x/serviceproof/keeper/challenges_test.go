@@ -510,7 +510,7 @@ func TestStorageCreditScalesWithChallengeSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	// 4 GiB * 100 credit per GiB-epoch * (2/4) = 200.
-	require.Equal(t, "200", credit.StorageCredit.String())
+	require.Equal(t, "200000000", credit.StorageCredit.String())
 }
 
 func TestStorageCreditIsNotCountedTwiceForOneEpoch(t *testing.T) {
