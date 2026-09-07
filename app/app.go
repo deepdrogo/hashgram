@@ -118,6 +118,9 @@ import (
 	"github.com/hashgram/hashgram/x/serviceproof"
 	serviceproofkeeper "github.com/hashgram/hashgram/x/serviceproof/keeper"
 	serviceprooftypes "github.com/hashgram/hashgram/x/serviceproof/types"
+	"github.com/hashgram/hashgram/x/treasury"
+	treasurykeeper "github.com/hashgram/hashgram/x/treasury/keeper"
+	treasurytypes "github.com/hashgram/hashgram/x/treasury/types"
 	"github.com/hashgram/hashgram/x/username"
 	usernamekeeper "github.com/hashgram/hashgram/x/username/keeper"
 	usernametypes "github.com/hashgram/hashgram/x/username/types"
@@ -166,6 +169,18 @@ var maccPerms = map[string][]string{
 	serviceprooftypes.BondPoolName: nil,
 }
 
+// init adds the x/treasury reserve sub-accounts to maccPerms.
+//
+// Each named genesis allocation gets its own account so that its balance is
+// independently queryable; merging them would make the per-allocation figures
+// the specification asks for unverifiable. The names have to come from a
+// compile-time list because maccPerms is built before genesis is read.
+func init() {
+	for _, name := range treasurytypes.MainnetSubAccountNames() {
+		maccPerms[name] = nil
+	}
+}
+
 var (
 	_ runtime.AppI            = (*HashgramApp)(nil)
 	_ servertypes.Application = (*HashgramApp)(nil)
@@ -203,6 +218,7 @@ type HashgramApp struct {
 	ServiceProofKeeper serviceproofkeeper.Keeper
 	UsernameKeeper     usernamekeeper.Keeper
 	IdentityKeeper     identitykeeper.Keeper
+	TreasuryKeeper     treasurykeeper.Keeper
 
 	ModuleManager      *module.Manager
 	BasicModuleManager module.BasicManager
@@ -278,6 +294,7 @@ func NewHashgramApp(
 		serviceprooftypes.StoreKey,
 		usernametypes.StoreKey,
 		identitytypes.StoreKey,
+		treasurytypes.StoreKey,
 	)
 
 	if err := bApp.RegisterStreamingServices(appOpts, keys); err != nil {
@@ -513,6 +530,16 @@ func NewHashgramApp(
 		logger,
 	)
 
+	// x/treasury holds the named genesis allocations. Governance is the only
+	// authority that can move them.
+	app.TreasuryKeeper = treasurykeeper.NewKeeper(
+		appCodec,
+		runtime.NewKVStoreService(keys[treasurytypes.StoreKey]),
+		app.BankKeeper,
+		govAuthority,
+		logger,
+	)
+
 	// ---------------------------------------------------------------------
 	// Module manager
 	// ---------------------------------------------------------------------
@@ -540,6 +567,7 @@ func NewHashgramApp(
 		serviceproof.NewAppModule(appCodec, app.ServiceProofKeeper),
 		username.NewAppModule(appCodec, app.UsernameKeeper),
 		identity.NewAppModule(appCodec, app.IdentityKeeper),
+		treasury.NewAppModule(appCodec, app.TreasuryKeeper),
 	)
 
 	app.BasicModuleManager = module.NewBasicManagerFromManager(
@@ -617,6 +645,7 @@ func NewHashgramApp(
 		serviceprooftypes.ModuleName,
 		usernametypes.ModuleName,
 		identitytypes.ModuleName,
+		treasurytypes.ModuleName,
 	)
 
 	app.ModuleManager.SetOrderExportGenesis(
@@ -627,6 +656,7 @@ func NewHashgramApp(
 		serviceprooftypes.ModuleName,
 		usernametypes.ModuleName,
 		identitytypes.ModuleName,
+		treasurytypes.ModuleName,
 		consensusparamtypes.ModuleName,
 		authtypes.ModuleName,
 		banktypes.ModuleName,

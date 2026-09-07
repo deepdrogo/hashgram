@@ -1,0 +1,67 @@
+syntax = "proto3";
+package hashgram.treasury.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/treasury/types";
+
+// Reserve is one named genesis allocation held on chain.
+//
+// The specification requires every allocation to be transparently visible on
+// chain. Holding each in its own module account, rather than merging them
+// into the distribution community pool, means "how much is left in developer
+// grants?" is answerable with an ordinary bank query against a stable
+// address, and stays answerable years later.
+//
+// Only governance can move these funds. There is no founder key, admin key or
+// operator key with authority here.
+message Reserve {
+  // name is the stable allocation identifier, e.g. "treasury",
+  // "dev_grants", "liquidity", "growth".
+  string name = 1;
+
+  // description is human-readable purpose text, fixed at genesis.
+  string description = 2;
+
+  // initial is the amount funded at genesis. It never changes, so the
+  // difference between it and the account's live balance is exactly what has
+  // been spent.
+  repeated cosmos.base.v1beta1.Coin initial = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // spent is the cumulative amount disbursed by governance.
+  repeated cosmos.base.v1beta1.Coin spent = 4 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // sub_account is the module sub-account name holding this reserve. Its
+  // address is derived deterministically and is queryable.
+  string sub_account = 5;
+}
+
+// Disbursement is a record of one governance-approved spend.
+//
+// Kept as explicit history so that "where did the treasury go?" does not
+// require replaying the chain or trusting an operator's spreadsheet.
+message Disbursement {
+  uint64 sequence = 1;
+  string reserve = 2;
+  string recipient = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  repeated cosmos.base.v1beta1.Coin amount = 4 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  int64 height = 5;
+  string memo = 6;
+}

@@ -1,0 +1,49 @@
+syntax = "proto3";
+package hashgram.treasury.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/treasury/types";
+
+// Msg is the x/treasury message service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // Spend disburses from a named reserve.
+  //
+  // The only valid authority is the governance module account. This is the
+  // sole way genesis allocations other than the Founder's can move, and it
+  // requires a proposal the validator set votes on.
+  rpc Spend(MsgSpend) returns (MsgSpendResponse);
+}
+
+// MsgSpend disburses from a named reserve.
+message MsgSpend {
+  option (cosmos.msg.v1.signer) = "authority";
+  option (amino.name) = "hashgram/MsgTreasurySpend";
+
+  // authority must be the governance module account.
+  string authority = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // reserve is the allocation to spend from.
+  string reserve = 2;
+
+  // recipient receives the funds.
+  string recipient = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  repeated cosmos.base.v1beta1.Coin amount = 4 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // memo records why, and is retained in the disbursement history.
+  string memo = 5;
+}
+
+// MsgSpendResponse is the response type.
+message MsgSpendResponse {}

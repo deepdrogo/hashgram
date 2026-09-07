@@ -1,0 +1,70 @@
+syntax = "proto3";
+package hashgram.treasury.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "hashgram/treasury/v1/treasury.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/treasury/types";
+
+// Query is the x/treasury query service.
+service Query {
+  // Reserves returns every named allocation with its live balance.
+  rpc Reserves(QueryReservesRequest) returns (QueryReservesResponse) {
+    option (google.api.http).get = "/hashgram/treasury/v1/reserves";
+  }
+
+  // Reserve returns one named allocation.
+  rpc Reserve(QueryReserveRequest) returns (QueryReserveResponse) {
+    option (google.api.http).get = "/hashgram/treasury/v1/reserve/{name}";
+  }
+
+  // Disbursements returns the governance spend history.
+  rpc Disbursements(QueryDisbursementsRequest) returns (QueryDisbursementsResponse) {
+    option (google.api.http).get = "/hashgram/treasury/v1/disbursements";
+  }
+}
+
+message QueryReservesRequest {}
+
+message QueryReservesResponse {
+  repeated ReserveInfo reserves = 1 [(gogoproto.nullable) = false];
+}
+
+// ReserveInfo pairs a reserve's record with its live on-chain balance.
+//
+// The balance comes from the bank rather than from a counter, so it cannot
+// drift away from reality, and it is cross-checkable with a plain bank query
+// against the reported address.
+message ReserveInfo {
+  Reserve reserve = 1 [(gogoproto.nullable) = false];
+
+  string address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  repeated cosmos.base.v1beta1.Coin balance = 3 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+}
+
+message QueryReserveRequest {
+  string name = 1;
+}
+
+message QueryReserveResponse {
+  bool found = 1;
+  ReserveInfo reserve = 2 [(gogoproto.nullable) = false];
+}
+
+message QueryDisbursementsRequest {
+  // reserve optionally filters to one allocation.
+  string reserve = 1;
+}
+
+message QueryDisbursementsResponse {
+  repeated Disbursement disbursements = 1 [(gogoproto.nullable) = false];
+}

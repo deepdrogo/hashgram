@@ -1,0 +1,16 @@
+syntax = "proto3";
+package hashgram.treasury.v1;
+
+import "gogoproto/gogo.proto";
+import "hashgram/treasury/v1/treasury.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/treasury/types";
+
+// GenesisState is the x/treasury genesis state.
+message GenesisState {
+  // reserves are the named genesis allocations.
+  repeated Reserve reserves = 1 [(gogoproto.nullable) = false];
+
+  // disbursements is the spend history. Empty on a fresh chain.
+  repeated Disbursement disbursements = 2 [(gogoproto.nullable) = false];
+}
