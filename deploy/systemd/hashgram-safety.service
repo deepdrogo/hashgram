@@ -1,0 +1,91 @@
+[Unit]
+# The Hashgram Safety Engine.
+#
+# Scans PUBLIC content only. It has no access to end-to-end encrypted
+# material, and there is no code path by which it could: the keys do not
+# exist on this machine, and InaccessiblePaths below removes even the
+# theoretical route to the messaging node's state.
+#
+# This is the concrete implementation of "private messages are never
+# scanned". See docs/MODERATION.md.
+Description=Hashgram Safety Engine (public content only)
+Documentation=https://github.com/hashgram/hashgram/blob/main/docs/MODERATION.md
+After=network-online.target hashgramd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hashgram-safety
+Group=hashgram-safety
+
+Environment=HASHGRAM_SAFETY_HOME=/var/lib/hashgram/safety
+WorkingDirectory=/var/lib/hashgram/safety
+
+ExecStart=/usr/local/bin/hashgram-safety run --config /etc/hashgram/safety.toml
+
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=300
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+# --- Filesystem -------------------------------------------------------------
+
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hashgram/safety
+PrivateTmp=true
+
+# The safety engine must not be able to reach the messaging node's state or
+# the chain's keys. It examines public content that was handed to it, and
+# nothing else. Removing the path is stronger than promising not to look.
+InaccessiblePaths=-/var/lib/hashgram/chain
+InaccessiblePaths=-/var/lib/hashgram/node
+
+# --- Privileges -------------------------------------------------------------
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @mount @debug @cpu-emulation @module @raw-io @reboot @swap
+
+MemoryDenyWriteExecute=true
+
+# --- Resources --------------------------------------------------------------
+
+MemoryMax=1G
+MemoryHigh=768M
+TasksMax=512
+LimitNOFILE=8192
+
+# Files this service creates are readable only by its own account. The
+# default 0022 would make node state world-readable, which systemd-analyze
+# correctly flags.
+UMask=0077
+
+# --- Logging ----------------------------------------------------------------
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hashgram-safety
+
+[Install]
+WantedBy=multi-user.target

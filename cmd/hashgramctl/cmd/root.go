@@ -1,8 +1,15 @@
+// Package cmd implements the hashgramctl operator command tree.
+//
+// Commands here favour refusing an unsafe action over completing it:
+// join-mainnet requires a pinned genesis hash, mainnet-preflight refuses to
+// pass on a host with development keys or an exposed admin RPC, and backup
+// excludes private key material rather than archiving it.
 package cmd
 
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
@@ -63,11 +70,25 @@ Joining an existing network from a second server:
 			if home == "" {
 				home = app.DefaultNodeHome
 			}
-			paths = hgconfig.Paths{
-				ConfigDir: flagConfigDir,
-				DataDir:   flagDataDir,
-				NodeHome:  home,
+
+			// Resolve the three directory flags to absolute, cleaned paths
+			// once, here, rather than letting every command join onto whatever
+			// the operator typed.
+			//
+			// This is not a privilege boundary: hashgramctl runs with the
+			// operator's own permissions, so a deliberately hostile --home is
+			// an operator attacking themselves. It matters because of the
+			// accident case. A relative --home means every path this tool
+			// prints depends on the working directory it was run from, so a
+			// backup taken from one directory and a restore run from another
+			// silently touch different files, and an error message naming
+			// "config/genesis.json" tells the reader nothing about where that
+			// actually is. Absolute paths make the output say what it means.
+			var err error
+			if paths, err = resolvePaths(flagConfigDir, flagDataDir, home); err != nil {
+				return err
 			}
+
 			rpc = hgrpc.New(flagRPC)
 			return nil
 		},
@@ -136,7 +157,7 @@ func hashgramdPath() (string, error) {
 	if p := os.Getenv("HASHGRAMD_BIN"); p != "" {
 		return p, nil
 	}
-	if p, err := exec_LookPath("hashgramd"); err == nil {
+	if p, err := exec.LookPath("hashgramd"); err == nil {
 		return p, nil
 	}
 	for _, candidate := range []string{

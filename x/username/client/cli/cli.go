@@ -1,3 +1,5 @@
+// Package cli provides the x/username commands. The availability query
+// reports confusable collisions as unavailable, not merely taken names.
 package cli
 
 import (

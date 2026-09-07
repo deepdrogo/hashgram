@@ -11,9 +11,19 @@ GO           ?= go
 GOBIN        ?= $(CURDIR)/build
 GOFLAGS      ?=
 
-# CGO is required for the default cometbft-db backend (goleveldb is pure Go but
-# rocksdb/pebble paths and libsecp256k1 are not). We build with CGO on.
-export CGO_ENABLED := 1
+# CGO is off by default, which was verified rather than assumed: a
+# CGO_ENABLED=0 build of hashgramd was run as a single-node devnet and produced
+# blocks. The default database backend is goleveldb and the default secp256k1
+# implementation is btcec, both pure Go, so nothing in the default
+# configuration needs a C toolchain.
+#
+# Turning CGO off buys two things worth having. The binary is static, so it
+# does not depend on the glibc version of whatever host built it. And the build
+# is far easier to make reproducible, which is the only reason a published
+# checksum is worth anything to an operator.
+#
+# Set CGO_ENABLED=1 if you build with the rocksdb or libsecp256k1 build tags.
+export CGO_ENABLED ?= 0
 
 LDFLAGS = -X github.com/cosmos/cosmos-sdk/version.Name=hashgram \
           -X github.com/cosmos/cosmos-sdk/version.AppName=hashgramd \
@@ -41,6 +51,19 @@ $(addprefix build-,$(BINARIES)): build-%:
 	@echo ">>> building $*"
 	@$(GO) build $(BUILD_FLAGS) -o $(GOBIN)/$* ./cmd/$*
 
+# Developer tools live under tools/ rather than cmd/ because they are not
+# part of a node deployment: nothing in the release archive needs them.
+TOOLS = tokenomics-simulator
+
+.PHONY: tools
+tools: $(addprefix build-tool-,$(TOOLS))
+
+.PHONY: $(addprefix build-tool-,$(TOOLS))
+$(addprefix build-tool-,$(TOOLS)): build-tool-%:
+	@mkdir -p $(GOBIN)
+	@echo ">>> building tool $*"
+	@$(GO) build $(BUILD_FLAGS) -o $(GOBIN)/$* ./tools/$*
+
 .PHONY: install
 install:
 	@echo ">>> installing $(BINARIES) into /usr/local/bin"
@@ -60,6 +83,50 @@ clean:
 .PHONY: test
 test:
 	$(GO) test -race -timeout 20m ./...
+
+# Policy and configuration checks that are not Go tests.
+#
+# check-logging asserts that message plaintext and key material are absent
+# from every log call, metric label and chain event, and self-tests its own
+# patterns against deliberate violations.
+#
+# check-dashboards asserts that every PromQL expression in the shipped
+# dashboards parses. Pass --live to also query a running Prometheus, which is
+# the only way to tell a broken query from a healthy zero.
+.PHONY: check-policy
+check-policy:
+	@scripts/dev/check-logging.sh
+	@scripts/dev/check-dashboards.sh
+
+.PHONY: check-policy-live
+check-policy-live:
+	@scripts/dev/check-logging.sh
+	@scripts/dev/check-dashboards.sh --live
+
+# The whole CI pipeline, exactly as it runs in GitHub Actions.
+.PHONY: ci
+ci:
+	@scripts/dev/ci.sh
+
+.PHONY: ci-fast
+ci-fast:
+	@scripts/dev/ci.sh fast
+
+# ---------------------------------------------------------------------------
+# Release
+# ---------------------------------------------------------------------------
+
+# Reproducible release binaries with checksums. Unlike `make build`, this does
+# not stamp the build date or commit: either would make the output
+# unreproducible, and an operator who cannot reproduce a checksum cannot
+# verify a download.
+.PHONY: release
+release:
+	@scripts/dev/release.sh
+
+.PHONY: release-verify
+release-verify:
+	@scripts/dev/release.sh --verify
 
 .PHONY: test-short
 test-short:

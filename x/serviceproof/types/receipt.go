@@ -1,12 +1,12 @@
 package types
 
 import (
-	"encoding/binary"
-
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+
+	"github.com/hashgram/hashgram/app/canonical"
 )
 
 // CanonicalReceiptBytes returns the exact bytes a client signs.
@@ -30,27 +30,19 @@ import (
 // The client's own public key is inside the signed bytes. Without it, an
 // attacker who observed a receipt could re-present the same signature
 // alongside a different declared key.
-func CanonicalReceiptBytes(r ServiceReceipt) []byte {
-	provider := []byte(r.Provider)
-
-	out := make([]byte, 0, 4+len(provider)+4+4+len(r.ClientPubkey)+4+8+8+8+8)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(len(provider)))
-	out = append(out, provider...)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(r.Role))
-
-	out = binary.BigEndian.AppendUint32(out, uint32(len(r.ClientPubkey)))
-	out = append(out, r.ClientPubkey...)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(r.ClientKeyType))
-	out = binary.BigEndian.AppendUint64(out, r.Epoch)
-	out = binary.BigEndian.AppendUint64(out, r.Nonce)
-	out = binary.BigEndian.AppendUint64(out, r.Units)
-	//nolint:gosec // two's-complement round trip is intentional and exact
-	out = binary.BigEndian.AppendUint64(out, uint64(r.ExpiryHeight))
-
-	return out
+// Returns an error when a field cannot be length-prefixed unambiguously. See
+// app/canonical.
+func CanonicalReceiptBytes(r ServiceReceipt) ([]byte, error) {
+	return canonical.New(4+len(r.Provider)+4+4+len(r.ClientPubkey)+4+8+8+8+8).
+		String("provider", r.Provider).
+		Enum(int32(r.Role)).
+		Bytes("client_pubkey", r.ClientPubkey).
+		Enum(int32(r.ClientKeyType)).
+		Uint64(r.Epoch).
+		Uint64(r.Nonce).
+		Uint64(r.Units).
+		Height(r.ExpiryHeight).
+		Finish()
 }
 
 // ValidateBasic performs stateless validation of a receipt.

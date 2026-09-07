@@ -1,0 +1,82 @@
+# Prometheus scrape configuration for a Hashgram node.
+#
+# Installed to /etc/prometheus/prometheus.yml by
+# scripts/install/monitoring.sh. Kept in the repository so that the monitoring
+# configuration is reviewed and versioned alongside the code that produces the
+# metrics: a dashboard referring to a metric name that no longer exists is
+# worse than no dashboard, because it reads as zero rather than as broken.
+#
+# Every target binds to localhost. Prometheus is an operator tool and holds a
+# detailed picture of the node's internals; exposing it publicly hands an
+# attacker a reconnaissance feed. Remote access should go through an SSH
+# tunnel:
+#
+#   ssh -N -L 9090:127.0.0.1:9090 -L 3000:127.0.0.1:3000 operator@node
+#
+# See docs/OPERATIONS.md and docs/SECURITY.md.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+  # Attached to every series so that metrics from several nodes can be
+  # distinguished after federation. Overwritten per host by the installer.
+  external_labels:
+    hashgram_node: "localhost"
+
+rule_files:
+  - /etc/prometheus/rules/hashgram-alerts.yml
+
+scrape_configs:
+  # ---------------------------------------------------------------------
+  # The chain node.
+  #
+  # This single endpoint carries three families of metrics:
+  #   cometbft_*   consensus, mempool and P2P, from CometBFT
+  #   hashgram_*   supply, reserve, Founder revenue, from app/metrics.go
+  #   tx_*, *_blocker  transaction counts and module timings, from the SDK
+  #
+  # They share an endpoint because CometBFT serves the Prometheus default
+  # registry, and both the SDK's telemetry sink and app/metrics.go register
+  # into it.
+  #
+  # Requires prometheus = true in the node's config.toml. Without it this
+  # target is simply down, which the HashgramExporterDown alert catches.
+  # ---------------------------------------------------------------------
+  - job_name: hashgramd
+    static_configs:
+      - targets: ["127.0.0.1:26660"]
+        labels:
+          role: chain
+
+  # ---------------------------------------------------------------------
+  # Host metrics: CPU, memory, disk, filesystem, network.
+  # ---------------------------------------------------------------------
+  - job_name: node
+    static_configs:
+      - targets: ["127.0.0.1:9100"]
+        labels:
+          role: host
+
+  # ---------------------------------------------------------------------
+  # PostgreSQL, used by the phase 2 indexer.
+  #
+  # Left configured even before the indexer exists so that the target being
+  # down is a visible, expected state rather than a surprise on the day the
+  # indexer is deployed.
+  # ---------------------------------------------------------------------
+  - job_name: postgres
+    static_configs:
+      - targets: ["127.0.0.1:9187"]
+        labels:
+          role: indexer
+
+  # ---------------------------------------------------------------------
+  # Prometheus scraping itself, so that a stalled rule evaluation or a
+  # struggling Prometheus is visible in the same place as everything else.
+  # ---------------------------------------------------------------------
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:9090"]
+        labels:
+          role: monitoring

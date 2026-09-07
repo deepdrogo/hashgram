@@ -1,3 +1,9 @@
+// Package keeper implements the x/founder revenue ledger.
+//
+// The Founder share is taken from protocol fee revenue the chain has already
+// collected, never from transferred principal. Accrued, paid and pending are
+// tracked separately so that a payout failure is visible rather than being
+// absorbed into a single total.
 package keeper
 
 import (

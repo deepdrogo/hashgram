@@ -172,8 +172,11 @@ func (k Keeper) applyReceipt(
 		return types.ErrSelfTraffic.Wrapf("client %s", clientStr)
 	}
 
-	digest, err := k.networkKeeper.SigningDigest(ctx, hgparams.PurposeServiceReceipt,
-		types.CanonicalReceiptBytes(r))
+	payload, err := types.CanonicalReceiptBytes(r)
+	if err != nil {
+		return types.ErrInvalidReceipt.Wrapf("building the signing preimage: %v", err)
+	}
+	digest, err := k.networkKeeper.SigningDigest(ctx, hgparams.PurposeServiceReceipt, payload)
 	if err != nil {
 		return err
 	}

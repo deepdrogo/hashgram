@@ -1,0 +1,263 @@
+name: CI
+
+# Every job here runs the same scripts an engineer runs locally
+# (scripts/dev/ci.sh and scripts/dev/release.sh) rather than reimplementing
+# the checks in YAML. A pipeline that only exists inside a CI provider is a
+# pipeline nobody runs before pushing, and it drifts from the local commands
+# within a month.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  # Dependency advisories appear without anyone pushing code, so the security
+  # job also runs on a schedule.
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Pinned rather than "stable". The build is reproducible only when the
+  # toolchain version matches, so the version that produces release binaries
+  # has to be an explicit, reviewable input.
+  GO_VERSION: "1.26.8"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------
+  build:
+    name: Build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Confirm the toolchain matches go.mod
+        run: |
+          # A mismatch here silently breaks reproducibility, so it fails the
+          # build rather than producing binaries nobody can reproduce.
+          want="$(awk '/^toolchain /{print $2}' go.mod | sed 's/^go//')"
+          have="$(go version | awk '{print $3}' | sed 's/^go//')"
+          if [ -n "$want" ] && [ "$want" != "$have" ]; then
+            echo "go.mod pins toolchain go$want but the runner has go$have"
+            exit 1
+          fi
+          echo "toolchain go$have"
+
+      - name: Build
+        run: make build
+
+      - name: Test with the race detector
+        run: go test -race -timeout 30m ./...
+
+      - name: Upload development binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-binaries
+          path: build/
+          retention-days: 7
+
+  # ---------------------------------------------------------------------
+  lint:
+    name: Lint and static analysis
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install analysers
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@2026.2.1
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - name: gofmt, go vet, staticcheck, gosec
+        run: |
+          scripts/dev/ci.sh fmt
+          scripts/dev/ci.sh vet
+          scripts/dev/ci.sh lint
+          scripts/dev/ci.sh sec
+
+  # ---------------------------------------------------------------------
+  policy:
+    name: Logging and dashboard policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install promtool
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq prometheus ripgrep
+
+      - name: Logging policy
+        # Asserts that message plaintext, key material and user-identifying
+        # metric labels are absent, and self-tests its own patterns against
+        # deliberate violations so a broken check cannot pass silently.
+        run: scripts/dev/check-logging.sh
+
+      - name: Dashboards and alert rules
+        run: scripts/dev/check-dashboards.sh
+
+  # ---------------------------------------------------------------------
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: a key committed and then removed is still a leaked
+          # key, and a shallow clone would not see it.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install gitleaks
+        run: go install github.com/zricethezav/gitleaks/v8@latest
+
+      - name: Scan the working tree
+        run: scripts/dev/ci.sh secrets
+
+      - name: Scan the full git history
+        run: gitleaks git . --no-banner --redact
+
+  # ---------------------------------------------------------------------
+  vulnerabilities:
+    name: Dependency vulnerabilities
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Build the binary under test
+        # The scan runs in binary mode, which asks whether the vulnerable
+        # code is in the artefact we would ship rather than whether it is
+        # anywhere in the module graph. It also avoids the multi-gigabyte
+        # call-graph analysis that source mode performs on a Cosmos tree.
+        run: make build
+
+      - name: Scan
+        run: scripts/dev/ci.sh vuln
+
+  # ---------------------------------------------------------------------
+  reproducible-release:
+    name: Reproducible release build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    needs: [build, lint]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Determine the version
+        id: version
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=dev" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the release
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: scripts/dev/release.sh
+
+      - name: Prove the build is reproducible
+        # Builds twice with the build cache cleared in between and compares
+        # bytes. If this fails, the published checksum is decorative: an
+        # operator could not reproduce it from source, which is the only
+        # defence against a tampered download.
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: scripts/dev/release.sh --verify
+
+      - name: Show the checksums
+        run: |
+          cat dist/BUILD_INFO
+          echo
+          cat dist/SHA256SUMS
+
+      - name: Upload the release artefacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ steps.version.outputs.value }}
+          path: |
+            dist/hashgramd
+            dist/hashgramctl
+            dist/hashgram-test-client
+            dist/hashgram-keygen
+            dist/SHA256SUMS
+            dist/BUILD_INFO
+          retention-days: 90
+
+  # ---------------------------------------------------------------------
+  devnet:
+    name: Devnet acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Build
+        run: make build
+
+      - name: Single-node devnet acceptance checks
+        # Brings up a real chain from the real genesis tooling and asserts the
+        # economic claims against it: no transfer tax, the Founder share is
+        # exactly one percent of fee revenue, total supply never moves, and
+        # mainnet-preflight refuses to pass on a devnet host.
+        run: scripts/testnet/devnet.sh
+
+      - name: Four-validator consensus and fork isolation
+        run: scripts/testnet/four-validator.sh
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          for f in testnet-data/*/node.log devnet-data/node.log; do
+            [ -f "$f" ] || continue
+            echo "===== $f ====="
+            tail -100 "$f"
+          done

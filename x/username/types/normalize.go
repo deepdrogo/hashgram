@@ -112,11 +112,11 @@ func Validate(normalized string, minLen, maxLen uint32, allowNonASCII bool) erro
 		maxLen = MaxNameLength
 	}
 
-	if uint32(len(runes)) < minLen {
+	if len(runes) < int(minLen) {
 		return &ValidationError{ReasonTooShort,
 			fmt.Sprintf("%d code points, minimum is %d", len(runes), minLen)}
 	}
-	if uint32(len(runes)) > maxLen {
+	if len(runes) > int(maxLen) {
 		return &ValidationError{ReasonTooLong,
 			fmt.Sprintf("%d code points, maximum is %d", len(runes), maxLen)}
 	}

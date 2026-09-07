@@ -1,0 +1,486 @@
+{
+  "uid": "hashgram-economics",
+  "title": "Hashgram / Economics and Invariants",
+  "description": "Supply, the Founder revenue share, the useful-service reward reserve and the Welcome pool. Every series here comes from app/metrics.go, which reads the same keeper state the state machine writes. The point of this dashboard is that Hashgram's economic claims are checkable by anyone running a node rather than only by reading the source.",
+  "tags": ["hashgram", "tokenomics", "invariants"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Supply invariant",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Supply above ceiling",
+      "description": "Must be exactly zero, forever. Hashgram has no mint module, no inflation and no bridge that can create canonical HASH, so any value above zero means either the binary is not a genuine Hashgram build or there is a consensus fault. Computed with exact integer arithmetic on the node before being exported, so a one-uhash breach is still visible.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_supply_over_ceiling_uhash",
+          "legendFormat": "excess uhash"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "textMode": "value_and_name" }
+    },
+    {
+      "type": "stat",
+      "title": "Total supply",
+      "description": "Total HASH in existence. Should be a flat line at exactly 1,000,000,000 HASH on Mainnet.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_supply_total_uhash / 1000000",
+          "legendFormat": "HASH"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Total supply over time",
+      "description": "The most boring graph in the system, and deliberately so. Any slope at all is a fault.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_supply_total_uhash / 1000000",
+          "legendFormat": "total supply"
+        },
+        {
+          "refId": "B",
+          "expr": "hashgram_supply_ceiling_uhash / 1000000",
+          "legendFormat": "ceiling"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "ceiling" },
+            "properties": [
+              { "id": "custom.lineStyle", "value": { "dash": [8, 8], "fill": "dash" } },
+              { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }
+            ]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "row",
+      "title": "Founder revenue share",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Founder fee",
+      "description": "The Founder share of qualifying protocol revenue, in basis points. 100 bps is 1%. The compile-time ceiling makes raising it impossible without a binary the validator set adopts; governance can only lower it.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 6, "w": 4, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_founder_fee_basis_points",
+          "legendFormat": "bps"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "orange", "value": null },
+              { "color": "green", "value": 100 },
+              { "color": "red", "value": 101 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Founder revenue: accrued, paid, pending",
+      "description": "Three series rather than one so that a payout failure is visible. Pending rising while paid stays flat means accrual is working and the transfer to the beneficiary is not.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 6, "w": 10, "x": 4, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_founder_revenue_accrued_uhash / 1000000",
+          "legendFormat": "accrued"
+        },
+        {
+          "refId": "B",
+          "expr": "hashgram_founder_revenue_paid_uhash / 1000000",
+          "legendFormat": "paid"
+        },
+        {
+          "refId": "C",
+          "expr": "hashgram_founder_revenue_pending_uhash / 1000000",
+          "legendFormat": "pending"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 6,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Fee routing split",
+      "description": "Qualifying protocol revenue and how it divides. The identity total equals founder plus validator plus treasury is asserted on chain on every block that routes revenue, so these three should always reconcile.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 6, "w": 10, "x": 14, "y": 8 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_revenue_qualifying_total_uhash / 1000000",
+          "legendFormat": "qualifying total"
+        },
+        {
+          "refId": "B",
+          "expr": "hashgram_revenue_founder_share_uhash / 1000000",
+          "legendFormat": "founder 1%"
+        },
+        {
+          "refId": "C",
+          "expr": "hashgram_revenue_validator_share_uhash / 1000000",
+          "legendFormat": "validators 99%"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 6,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Realised Founder share, in basis points",
+      "description": "The Founder share divided by qualifying revenue, computed from the recorded totals rather than from the parameter. This is the panel that demonstrates the 1% figure is what the chain actually did, not merely what it is configured to do. Integer truncation always rounds in the network's favour, so this sits at or just under 100.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 14 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "10000 * hashgram_revenue_founder_share_uhash / clamp_min(hashgram_revenue_qualifying_total_uhash, 1)",
+          "legendFormat": "realised bps"
+        },
+        {
+          "refId": "B",
+          "expr": "hashgram_founder_fee_basis_points",
+          "legendFormat": "configured bps"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "max": 200,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "row",
+      "title": "Useful-service reward reserve",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 20 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "gauge",
+      "title": "Reserve remaining",
+      "description": "The reserve is 500,000,000 HASH at genesis, finite, and never topped up. It declines geometrically and asymptotes rather than hitting a cliff, so a low value is expected eventually and is not a fault.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 7, "w": 6, "x": 0, "y": 21 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * hashgram_service_reserve_remaining_ratio",
+          "legendFormat": "% of genesis"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "blue", "value": null },
+              { "color": "green", "value": 25 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Reserve balance and cumulative emission",
+      "description": "These two must always sum to the genesis reserve plus any slashed bond that was returned to it. Emission moves coins out of a finite pot; it never creates them.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 7, "w": 9, "x": 6, "y": 21 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_service_reserve_remaining_uhash / 1000000",
+          "legendFormat": "reserve remaining"
+        },
+        {
+          "refId": "B",
+          "expr": "hashgram_service_emitted_total_uhash / 1000000",
+          "legendFormat": "emitted to date"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Epoch budget",
+      "description": "What the declining schedule allocates for the next settlement. A ceiling, not a guaranteed payout: with fewer than twenty providers the per-provider cap leaves part of it undrawn, and the remainder stays in the reserve to fund later epochs.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 7, "w": 9, "x": 15, "y": 21 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_service_epoch_budget_uhash / 1000000",
+          "legendFormat": "budget HASH"
+        },
+        {
+          "refId": "B",
+          "expr": "hashgram_service_epoch",
+          "legendFormat": "epoch"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "epoch" },
+            "properties": [{ "id": "custom.axisPlacement", "value": "right" }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Providers by status",
+      "description": "Recomputed every 100 blocks rather than every block, because counting providers iterates state and this runs inside consensus. The children of this series are created at startup so an alert on jailed providers is not evaluating against a missing series on a fresh node.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 28 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_service_providers",
+          "legendFormat": "{{status}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 20, "stacking": { "mode": "normal" }, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "jailed" },
+            "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Storage assignments and challenges",
+      "description": "Assigned bytes are what providers are actually paid on. Declared disk is advertising and earns nothing. Open challenges that stay open turn into fraud score and eventually jailing.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 28 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_service_assigned_bytes",
+          "legendFormat": "assigned bytes"
+        },
+        {
+          "refId": "B",
+          "expr": "hashgram_service_storage_assignments",
+          "legendFormat": "assignments"
+        },
+        {
+          "refId": "C",
+          "expr": "hashgram_service_open_challenges",
+          "legendFormat": "open challenges"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "assigned bytes" },
+            "properties": [{ "id": "unit", "value": "bytes" }]
+          }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Bonded stake",
+      "description": "Total bond posted by providers. The bond is what makes fraud expensive: without it, the cost of being caught cheating would be the cost of generating a new keypair.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 28 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_service_bonded_total_uhash / 1000000",
+          "legendFormat": "bonded HASH"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "row",
+      "title": "Welcome pool",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Current tier",
+      "description": "Derived from the next claim sequence. The schedule is fixed in the binary, not in governance: sequences 1 to 10,000 receive 50 HASH, up to 100,000 receive 5, up to 1,000,000 receive 1, and everything after receives nothing. The bool modifiers are required rather than stylistic: a bare PromQL comparison filters the series out instead of yielding zero, and adding an empty vector to a non-empty one gives an empty result, so the whole panel read No data at every sequence below 10,000.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 6, "w": 5, "x": 0, "y": 36 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(hashgram_welcome_next_sequence <= bool 10000) * 50 + ((hashgram_welcome_next_sequence > bool 10000) * (hashgram_welcome_next_sequence <= bool 100000)) * 5 + ((hashgram_welcome_next_sequence > bool 100000) * (hashgram_welcome_next_sequence <= bool 1000000)) * 1",
+          "legendFormat": "HASH per claim"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Next sequence",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 6, "w": 5, "x": 5, "y": 36 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_welcome_next_sequence",
+          "legendFormat": "sequence"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Welcome pool consumption",
+      "description": "The pool is capped at 1,850,000 HASH, which is exactly the worst-case payout of the tier schedule. Reaching zero is the schedule completing, not a failure.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 6, "w": 14, "x": 10, "y": 36 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "hashgram_welcome_pool_remaining_uhash / 1000000",
+          "legendFormat": "remaining"
+        },
+        {
+          "refId": "B",
+          "expr": "hashgram_welcome_paid_total_uhash / 1000000",
+          "legendFormat": "paid out"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull"] } }
+    }
+  ]
+}

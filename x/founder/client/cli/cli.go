@@ -1,3 +1,7 @@
+// Package cli provides the x/founder query and transaction commands.
+//
+// Claiming pending Founder revenue is permissionless: anyone may push it to
+// the beneficiary. Changing the beneficiary requires governance.
 package cli
 
 import (

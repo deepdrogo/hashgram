@@ -92,8 +92,12 @@ func (k Keeper) InitiateRecovery(ctx context.Context, msg *types.MsgInitiateReco
 	return request.ExecutableHeight, nil
 }
 
-// ApproveRecovery records a guardian's approval.
-func (k Keeper) ApproveRecovery(ctx context.Context, guardian, rootAddress string) (uint32, uint32, error) {
+// ApproveRecovery records a guardian's approval and reports the approvals
+// collected so far alongside the threshold needed.
+//
+// Both are ints: approvals is a slice length and the threshold is bounded by
+// the guardian list, which MaxGuardians caps at a small value.
+func (k Keeper) ApproveRecovery(ctx context.Context, guardian, rootAddress string) (int, int, error) {
 	identity, found, err := k.GetIdentity(ctx, rootAddress)
 	if err != nil {
 		return 0, 0, err
@@ -124,7 +128,7 @@ func (k Keeper) ApproveRecovery(ctx context.Context, guardian, rootAddress strin
 		return 0, 0, err
 	}
 
-	approvals := uint32(len(request.Approvals))
+	approvals := len(request.Approvals)
 
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
 		types.EventTypeRecoveryApproved,
@@ -134,7 +138,7 @@ func (k Keeper) ApproveRecovery(ctx context.Context, guardian, rootAddress strin
 		sdk.NewAttribute(types.AttributeKeyThreshold, fmt.Sprintf("%d", identity.Recovery.Threshold)),
 	))
 
-	return approvals, identity.Recovery.Threshold, nil
+	return approvals, int(identity.Recovery.Threshold), nil
 }
 
 // CancelRecovery lets the identity owner reject a recovery attempt.
@@ -200,7 +204,7 @@ func (k Keeper) ExecuteRecovery(ctx context.Context, rootAddress string) error {
 		return types.ErrRecoveryCancelled.Wrapf("%s", rootAddress)
 	}
 
-	if uint32(len(request.Approvals)) < identity.Recovery.Threshold {
+	if len(request.Approvals) < int(identity.Recovery.Threshold) {
 		return types.ErrThresholdNotMet.Wrapf(
 			"%d of %d required approvals", len(request.Approvals), identity.Recovery.Threshold)
 	}

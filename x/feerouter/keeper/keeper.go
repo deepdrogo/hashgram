@@ -1,3 +1,10 @@
+// Package keeper implements x/feerouter, which splits qualifying protocol
+// revenue between the Founder share and validators.
+//
+// Gas fees are measured before service fees are swept into the fee
+// collector, which is what prevents service revenue being taxed twice. The
+// identity total equals founder plus validator plus treasury is re-asserted
+// after every update.
 package keeper
 
 import (

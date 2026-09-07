@@ -1,0 +1,23 @@
+# Grafana dashboard provisioning for Hashgram.
+#
+# Installed to /etc/grafana/provisioning/dashboards/. Dashboards are loaded
+# from disk rather than imported by hand so that they are versioned with the
+# code that produces the metrics, and so that rebuilding a node restores the
+# same dashboards without anyone remembering to re-import them.
+
+apiVersion: 1
+
+providers:
+  - name: hashgram
+    orgId: 1
+    folder: Hashgram
+    type: file
+    # Edits made in the browser are discarded on reload. That is deliberate:
+    # the file on disk is the source of truth, and a panel someone changed at
+    # 3am during an incident should not silently become permanent.
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/hashgram
+      foldersFromFilesStructure: false

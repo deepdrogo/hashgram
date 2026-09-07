@@ -1,7 +1,6 @@
 package types
 
 import (
-	"encoding/binary"
 	"regexp"
 	"strings"
 
@@ -9,6 +8,8 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+
+	"github.com/hashgram/hashgram/app/canonical"
 )
 
 // PubKeyFromBytes reconstructs a public key from raw bytes and a key type.
@@ -55,27 +56,19 @@ func PubKeyFromBytes(raw []byte, kt KeyType) (cryptotypes.PubKey, error) {
 //	uint32(device_key_type)
 //	uint32(rotation_count)
 //	uint64(expiry_height as unsigned two's complement)
-func CanonicalCertificateBytes(rootAddress string, c DeviceCertificate) []byte {
-	addr := []byte(rootAddress)
-	id := []byte(c.DeviceId)
-
-	out := make([]byte, 0, 4+len(addr)+4+len(id)+4+len(c.DevicePubkey)+4+4+8)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(len(addr)))
-	out = append(out, addr...)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(len(id)))
-	out = append(out, id...)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(len(c.DevicePubkey)))
-	out = append(out, c.DevicePubkey...)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(c.DeviceKeyType))
-	out = binary.BigEndian.AppendUint32(out, c.RotationCount)
-	//nolint:gosec // two's-complement round trip is intentional and exact
-	out = binary.BigEndian.AppendUint64(out, uint64(c.ExpiryHeight))
-
-	return out
+//
+// Returns an error when a field cannot be length-prefixed unambiguously. See
+// app/canonical.
+func CanonicalCertificateBytes(rootAddress string, c DeviceCertificate) ([]byte, error) {
+	return canonical.New(4+len(rootAddress)+4+len(c.DeviceId)+
+		4+len(c.DevicePubkey)+4+4+8).
+		String("root_address", rootAddress).
+		String("device_id", c.DeviceId).
+		Bytes("device_pubkey", c.DevicePubkey).
+		Enum(int32(c.DeviceKeyType)).
+		Uint32(c.RotationCount).
+		Height(c.ExpiryHeight).
+		Finish()
 }
 
 // CanonicalRotationBytes returns the bytes the outgoing root key signs to
@@ -90,21 +83,18 @@ func CanonicalCertificateBytes(rootAddress string, c DeviceCertificate) []byte {
 //
 // The current rotation count is included so that a rotation signature cannot
 // be replayed to undo a later rotation.
-func CanonicalRotationBytes(address string, newPubkey []byte, kt KeyType, currentRotation uint32) []byte {
-	addr := []byte(address)
-
-	out := make([]byte, 0, 4+len(addr)+4+len(newPubkey)+4+4)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(len(addr)))
-	out = append(out, addr...)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(len(newPubkey)))
-	out = append(out, newPubkey...)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(kt))
-	out = binary.BigEndian.AppendUint32(out, currentRotation)
-
-	return out
+//
+// Returns an error when a field cannot be length-prefixed unambiguously. See
+// app/canonical.
+func CanonicalRotationBytes(
+	address string, newPubkey []byte, kt KeyType, currentRotation uint32,
+) ([]byte, error) {
+	return canonical.New(4+len(address)+4+len(newPubkey)+4+4).
+		String("address", address).
+		Bytes("new_root_pubkey", newPubkey).
+		Enum(int32(kt)).
+		Uint32(currentRotation).
+		Finish()
 }
 
 // deviceIDPattern restricts device ids to a conservative character set.
@@ -119,7 +109,7 @@ func ValidateDeviceID(id string, maxLen uint32) error {
 	if id == "" {
 		return ErrInvalidDeviceID.Wrap("device id must not be empty")
 	}
-	if maxLen > 0 && uint32(len(id)) > maxLen {
+	if maxLen > 0 && len(id) > int(maxLen) {
 		return ErrInvalidDeviceID.Wrapf("device id is %d bytes, maximum is %d", len(id), maxLen)
 	}
 	if !deviceIDPattern.MatchString(id) {
@@ -149,7 +139,7 @@ func (c DeviceCertificate) ValidateBasic(maxDeviceIDLen uint32) error {
 
 // Validate checks a recovery configuration.
 func (r RecoveryConfig) Validate(maxGuardians uint32, minDelay int64) error {
-	if uint32(len(r.Guardians)) > maxGuardians {
+	if len(r.Guardians) > int(maxGuardians) {
 		return ErrInvalidRecovery.Wrapf(
 			"%d guardians, maximum is %d", len(r.Guardians), maxGuardians)
 	}
@@ -175,7 +165,7 @@ func (r RecoveryConfig) Validate(maxGuardians uint32, minDelay int64) error {
 		return nil
 	}
 
-	if uint32(len(r.Guardians)) < r.Threshold {
+	if len(r.Guardians) < int(r.Threshold) {
 		return ErrInvalidRecovery.Wrapf(
 			"threshold %d exceeds the %d configured guardians; recovery would be impossible",
 			r.Threshold, len(r.Guardians))
@@ -218,7 +208,7 @@ func (r RecoveryRequest) HasApproved(guardian string) bool {
 
 // ValidateLabel checks a client-supplied device label.
 func ValidateLabel(label string, maxLen uint32) error {
-	if maxLen > 0 && uint32(len(label)) > maxLen {
+	if maxLen > 0 && len(label) > int(maxLen) {
 		return ErrInvalidDeviceID.Wrapf(
 			"device label is %d bytes, maximum is %d", len(label), maxLen)
 	}

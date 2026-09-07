@@ -118,7 +118,7 @@ live database produces a corrupt copy.`,
 
 			o := newOut()
 			o.row("Archive", archive)
-			o.row("Size", hgsys.HumanBytes(uint64(info.Size())))
+			o.row("Size", hgsys.HumanBytes(info.Size()))
 			o.row("Chain data included", includeChainDB)
 			o.blank()
 			o.raw("EXCLUDED from this archive, on purpose:")

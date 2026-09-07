@@ -86,7 +86,8 @@ func Inspect(ctx context.Context, unit string) UnitState {
 	return state
 }
 
-// Start, Stop, Restart and Enable drive a unit.
+// Start starts a unit. Stop, Restart, Enable and Disable below are the same
+// shape and drive the corresponding systemctl verb.
 func Start(ctx context.Context, unit string) error   { return run(ctx, "start", unit) }
 func Stop(ctx context.Context, unit string) error    { return run(ctx, "stop", unit) }
 func Restart(ctx context.Context, unit string) error { return run(ctx, "restart", unit) }
@@ -122,7 +123,16 @@ func DiskUsage(path string) (free, total uint64, err error) {
 	if err := syscall.Statfs(path, &st); err != nil {
 		return 0, 0, err
 	}
-	//nolint:gosec // Bsize is a filesystem block size and fits comfortably
+	// Only Bsize needs checking: on Linux, Statfs_t.Blocks and Bavail are
+	// already uint64, so comparing them against zero is dead code that
+	// staticcheck rightly rejects. Bsize is int64 and is the one value that
+	// could be non-positive on a filesystem reporting nonsense, which would
+	// otherwise turn into an enormous free-space figure in preflight output.
+	if st.Bsize <= 0 {
+		return 0, 0, fmt.Errorf(
+			"statfs on %s reported a block size of %d", path, st.Bsize)
+	}
+	// #nosec G115 -- checked positive immediately above.
 	bsize := uint64(st.Bsize)
 	return st.Bavail * bsize, st.Blocks * bsize, nil
 }
@@ -136,7 +146,8 @@ func DirSize(path string) (uint64, error) {
 			// skip it rather than failing the whole measurement.
 			return nil
 		}
-		if info.Mode().IsRegular() {
+		if info.Mode().IsRegular() && info.Size() > 0 {
+			// #nosec G115 -- checked positive above.
 			total += uint64(info.Size())
 		}
 		return nil
@@ -220,7 +231,12 @@ func Uptime() (time.Duration, error) {
 }
 
 // HumanBytes renders a byte count for operator output.
-func HumanBytes(n uint64) string {
+//
+// Generic over int64 and uint64 because both appear naturally: os.FileInfo
+// reports an int64 size while DiskUsage reports uint64 totals. Accepting only
+// one forced a conversion at half the call sites, which was both noise and
+// the one place such a conversion could go wrong.
+func HumanBytes[T int64 | uint64](n T) string {
 	const unit = 1024
 	if n < unit {
 		return fmt.Sprintf("%d B", n)

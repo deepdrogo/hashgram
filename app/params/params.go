@@ -167,11 +167,11 @@ const (
 	// DefaultNodeHomeDirName is the default node home directory name under $HOME.
 	DefaultNodeHomeDirName = ".hashgram"
 
-	// Bip44CoinType is the SLIP-0044 coin type used for HD key derivation.
+	// BIP44CoinType is the SLIP-0044 coin type used for HD key derivation.
 	// 118 is the Cosmos coin type; Hashgram uses it so that standard Cosmos
 	// hardware-wallet and keyring tooling works without modification, which
 	// matters for keeping the Founder key on a hardware wallet.
-	Bip44CoinType uint32 = 118
+	BIP44CoinType uint32 = 118
 
 	// DefaultBondDenom is the denomination used for staking.
 	DefaultBondDenom = BaseCoinDenom

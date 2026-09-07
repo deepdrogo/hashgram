@@ -59,7 +59,7 @@ func (k Keeper) IssueChallenges(ctx sdk.Context, epoch uint64, params types.Para
 			// zero remains an unambiguous "no challenge".
 			id++
 
-			pick := types.ChallengeChunkIndex(appHash, id, []byte(p.Operator), uint32(i), uint32(len(active)))
+			pick := types.SelectIndex(appHash, id, []byte(p.Operator), i, len(active))
 			a := active[pick]
 
 			chunkIndex := types.ChallengeChunkIndex(appHash, id, a.BlobId, a.ReplicaIndex, a.ChunkCount)

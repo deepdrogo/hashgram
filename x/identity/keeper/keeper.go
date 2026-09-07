@@ -1,3 +1,9 @@
+// Package keeper implements x/identity: root identities, device
+// certificates and social recovery.
+//
+// Only public keys are stored. No Hashgram component ever holds a user's
+// private key, which is why recovery is a threshold of chosen guardians
+// rather than an administrative reset.
 package keeper
 
 import (
@@ -216,12 +222,16 @@ func (k Keeper) ListDevices(ctx context.Context, rootAddress string, includeRevo
 }
 
 // ActiveDeviceCount counts an identity's unrevoked devices.
-func (k Keeper) ActiveDeviceCount(ctx context.Context, rootAddress string) (uint32, error) {
+//
+// Returns an int rather than the uint32 the proto field uses, because this
+// is a slice length and int is its natural type. Callers that need to fill
+// the proto field convert at that point, where the bound is visible.
+func (k Keeper) ActiveDeviceCount(ctx context.Context, rootAddress string) (int, error) {
 	devices, err := k.ListDevices(ctx, rootAddress, false)
 	if err != nil {
 		return 0, err
 	}
-	return uint32(len(devices)), nil
+	return len(devices), nil
 }
 
 // AllDevices returns every device, for genesis export.

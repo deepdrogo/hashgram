@@ -80,6 +80,9 @@ func MaxPool() sdk.Coins {
 	var total int64
 	prev := uint64(0)
 	for _, t := range Tiers() {
+		// #nosec G115 -- tier limits are compile-time constants in the low
+		// millions, and app/params asserts they are strictly increasing, so the
+		// subtraction cannot wrap and the result is far inside int64.
 		count := int64(t.MaxSequence - prev)
 		perClaim := t.Amount.AmountOf(hgparams.BaseCoinDenom)
 		total += count * perClaim.Quo(math.NewInt(hgparams.MicroUnit)).Int64()

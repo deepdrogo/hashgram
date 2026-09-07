@@ -1,3 +1,6 @@
+// Package cli provides the x/serviceproof commands: provider registration
+// and lifecycle, receipt submission, challenge answers, and the reward and
+// emission queries an operator needs to see what a node earned and why.
 package cli
 
 import (

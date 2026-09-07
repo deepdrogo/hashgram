@@ -1,3 +1,5 @@
+// Package cmd wires the hashgramd command tree: the CometBFT and Cosmos SDK
+// server commands, key management, and the genesis subcommands.
 package cmd
 
 import (

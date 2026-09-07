@@ -104,8 +104,6 @@ type client struct {
 
 func newClient() client { return client{priv: secp256k1.GenPrivKey()} }
 
-func (c client) address() sdk.AccAddress { return sdk.AccAddress(c.priv.PubKey().Address()) }
-
 func hash(n int64) sdk.Coins {
 	return sdk.NewCoins(sdk.NewCoin(hgparams.BaseCoinDenom, hgparams.HashToBase(n)))
 }
@@ -152,8 +150,9 @@ func (f *fixture) signReceipt(t *testing.T, c client, provider sdk.AccAddress, r
 		ExpiryHeight:  f.ctx.BlockHeight() + 1_000,
 	}
 
-	digest, err := f.network.SigningDigest(f.ctx, hgparams.PurposeServiceReceipt,
-		types.CanonicalReceiptBytes(r))
+	payload, err := types.CanonicalReceiptBytes(r)
+	require.NoError(t, err)
+	digest, err := f.network.SigningDigest(f.ctx, hgparams.PurposeServiceReceipt, payload)
 	require.NoError(t, err)
 
 	sig, err := c.priv.Sign(digest[:])
@@ -404,7 +403,9 @@ func TestReceiptForAnotherNetworkIsRejected(t *testing.T) {
 		ExpiryHeight:  f.ctx.BlockHeight() + 100,
 	}
 	devnet := hgparams.DevnetIdentity("")
-	digest := devnet.SigningDigest(hgparams.PurposeServiceReceipt, types.CanonicalReceiptBytes(r))
+	payload, err := types.CanonicalReceiptBytes(r)
+	require.NoError(t, err)
+	digest := devnet.SigningDigest(hgparams.PurposeServiceReceipt, payload)
 	sig, err := c.priv.Sign(digest[:])
 	require.NoError(t, err)
 	r.ClientSignature = sig

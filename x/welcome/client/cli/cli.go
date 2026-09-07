@@ -1,3 +1,5 @@
+// Package cli provides the x/welcome query and claim commands, including the
+// tier schedule, which is fixed in the binary rather than in governance.
 package cli
 
 import (

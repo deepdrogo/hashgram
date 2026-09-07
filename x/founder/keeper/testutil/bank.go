@@ -114,13 +114,13 @@ func (b *Bank) move(from, to sdk.AccAddress, amt sdk.Coins) error {
 	if amt.IsZero() {
 		return nil
 	}
-	src := b.GetAllBalances(nil, from)
+	src := b.GetAllBalances(context.TODO(), from)
 	remaining, negative := src.SafeSub(amt...)
 	if negative {
 		return fmt.Errorf("insufficient funds: %s has %s, needs %s", from, src, amt)
 	}
 	b.balances[from.String()] = remaining
-	b.balances[to.String()] = b.GetAllBalances(nil, to).Add(amt...)
+	b.balances[to.String()] = b.GetAllBalances(context.TODO(), to).Add(amt...)
 	return nil
 }
 

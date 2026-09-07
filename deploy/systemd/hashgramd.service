@@ -1,0 +1,106 @@
+[Unit]
+# The Hashgram blockchain node.
+#
+# This is the consensus-critical service. Every hardening directive below is
+# there because the alternative was a way for a compromise of this process to
+# become a compromise of the machine or of the consensus key.
+Description=Hashgram blockchain node
+Documentation=https://github.com/hashgram/hashgram/blob/main/docs/OPERATIONS.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hashgram-chain
+Group=hashgram-chain
+
+Environment=HASHGRAM_HOME=/var/lib/hashgram/chain
+WorkingDirectory=/var/lib/hashgram/chain
+
+ExecStart=/usr/local/bin/hashgramd start --home /var/lib/hashgram/chain
+
+# Restart on failure, with a floor on how fast. A node that crash-loops
+# instantly floods the journal and hides the original error.
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
+# SIGTERM and a generous stop timeout. Killing a node mid-commit is how a
+# database ends up corrupt, and IAVL commits on a large state are not instant.
+KillSignal=SIGTERM
+TimeoutStopSec=300
+
+# --- Filesystem -------------------------------------------------------------
+
+# The whole filesystem is read-only except the paths named below. A process
+# that cannot write cannot persist a backdoor.
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hashgram/chain
+PrivateTmp=true
+
+# The chain node has no business reading the operator config directory, which
+# is where the network pin and role configuration live.
+InaccessiblePaths=-/etc/hashgram/roles.json
+
+# --- Privileges -------------------------------------------------------------
+
+# No path to gaining privileges, and no capabilities at all: the node binds
+# high ports only, so it needs none.
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+
+# Only the address families the node actually uses.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+# A conservative syscall allow-list. @system-service covers what a network
+# service needs; the exclusions remove families a consensus node has no use
+# for and which appear in most privilege-escalation chains.
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @mount @debug @cpu-emulation @module @raw-io @reboot @swap
+
+# Writable memory should not also be executable.
+MemoryDenyWriteExecute=true
+
+# --- Resources --------------------------------------------------------------
+
+# Bounded so that a memory leak or a state explosion takes down this service
+# rather than the machine, including the SSH session an operator needs to fix
+# it. Tune MemoryMax to the host: this suits an 8 GB VPS.
+MemoryMax=6G
+MemoryHigh=5G
+TasksMax=4096
+
+# A node opens a file per store, per peer and per WAL segment; the default
+# 1024 is not enough on a busy node.
+LimitNOFILE=65535
+
+# Files this service creates are readable only by its own account. The
+# default 0022 would make node state world-readable, which systemd-analyze
+# correctly flags.
+UMask=0077
+
+# --- Logging ----------------------------------------------------------------
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hashgramd
+
+[Install]
+WantedBy=multi-user.target

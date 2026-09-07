@@ -1,3 +1,8 @@
+// Package cmd implements the hashgram-test-client command tree.
+//
+// This is a developer tool that exercises the protocol from outside a node,
+// so that claims such as a transfer being untaxed are demonstrated against a
+// running chain rather than only in unit tests.
 package cmd
 
 import (

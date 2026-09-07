@@ -1,3 +1,8 @@
+// Package keeper implements the x/username registry.
+//
+// A name is stored alongside a confusable skeleton, and a registration is
+// refused when its skeleton collides with an existing one. That is what
+// stops a visually identical name being registered next to a real one.
 package keeper
 
 import (

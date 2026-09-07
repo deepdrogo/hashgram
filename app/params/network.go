@@ -2,11 +2,12 @@ package params
 
 import (
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/hashgram/hashgram/app/canonical"
 )
 
 // ---------------------------------------------------------------------------
@@ -273,16 +274,20 @@ func (n NetworkIdentity) SigningDomain(p SigningPurpose) string {
 // Length prefixes are mandatory: without them, (domain="ab", payload="c") and
 // (domain="a", payload="bc") would hash identically and a signature for one
 // would verify for the other.
+// The length prefixes here are 64-bit rather than 32-bit, because this is the
+// outer wrapper: the payload is a whole inner preimage of arbitrary length,
+// not a bounded field. A non-negative int converts to uint64 exactly on every
+// platform, so no length can overflow and there is nothing to check. See
+// app/canonical for the distinction between the bounded and unbounded
+// builders.
 func (n NetworkIdentity) SigningPreimage(p SigningPurpose, payload []byte) []byte {
-	domain := []byte(n.SigningDomain(p))
+	domain := n.SigningDomain(p)
 
-	out := make([]byte, 0, 4+4+len(domain)+4+len(payload))
-	out = append(out, n.NetworkMagic[:]...)
-	out = binary.BigEndian.AppendUint32(out, uint32(len(domain)))
-	out = append(out, domain...)
-	out = binary.BigEndian.AppendUint32(out, uint32(len(payload)))
-	out = append(out, payload...)
-	return out
+	return canonical.NewFixed(len(n.NetworkMagic) + 8 + len(domain) + 8 + len(payload)).
+		Raw(n.NetworkMagic[:]).
+		String(domain).
+		Bytes(payload).
+		Preimage()
 }
 
 // SigningDigest returns SHA-256 over SigningPreimage, which is what signature

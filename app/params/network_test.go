@@ -3,6 +3,7 @@ package params_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"strings"
@@ -315,18 +316,37 @@ func TestSigningPreimageIsUnambiguous(t *testing.T) {
 	if !bytes.HasPrefix(pre, id.NetworkMagic[:]) {
 		t.Fatal("preimage does not begin with the network magic")
 	}
-	// magic(4) + len(4) + domain + len(4) + payload
-	wantLen := 4 + 4 + len(domain) + 4 + len("payload")
+
+	// magic(4) + uint64 len + domain + uint64 len + payload.
+	//
+	// The length prefixes are 64-bit because this is the outer wrapper and it
+	// frames a whole inner preimage of arbitrary length rather than a bounded
+	// field. A 32-bit prefix would need an overflow check that has no
+	// meaningful handling at this layer; a 64-bit prefix cannot overflow,
+	// because a Go len() is a non-negative int. See app/canonical.
+	const prefixLen = 8
+	wantLen := len(id.NetworkMagic) + prefixLen + len(domain) + prefixLen + len("payload")
 	if len(pre) != wantLen {
 		t.Fatalf("preimage length = %d, want %d", len(pre), wantLen)
 	}
-	// The domain length must be encoded big-endian right after the magic.
-	gotLen := int(pre[4])<<24 | int(pre[5])<<16 | int(pre[6])<<8 | int(pre[7])
-	if gotLen != len(domain) {
+
+	magicLen := len(id.NetworkMagic)
+	gotLen := binary.BigEndian.Uint64(pre[magicLen : magicLen+prefixLen])
+	if gotLen != uint64(len(domain)) {
 		t.Fatalf("encoded domain length = %d, want %d", gotLen, len(domain))
 	}
-	if !bytes.Equal(pre[8:8+len(domain)], domain) {
+
+	domainStart := magicLen + prefixLen
+	if !bytes.Equal(pre[domainStart:domainStart+len(domain)], domain) {
 		t.Fatal("domain bytes are not where the framing says they are")
+	}
+
+	// And the payload length must be committed to as well, which is what
+	// stops a payload being extended without changing the digest.
+	payloadLenAt := domainStart + len(domain)
+	gotPayloadLen := binary.BigEndian.Uint64(pre[payloadLenAt : payloadLenAt+prefixLen])
+	if gotPayloadLen != uint64(len("payload")) {
+		t.Fatalf("encoded payload length = %d, want %d", gotPayloadLen, len("payload"))
 	}
 
 	// Distinct payloads must give distinct digests even when one is a prefix

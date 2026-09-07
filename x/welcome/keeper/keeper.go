@@ -1,3 +1,8 @@
+// Package keeper implements x/welcome, the tiered joining reward.
+//
+// Creating a keypair earns nothing. A claim requires a signed eligibility
+// attestation, a sequence number that has not been used, and a nonce that
+// has not been seen, which is what makes the reward resistant to a script.
 package keeper
 
 import (

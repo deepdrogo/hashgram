@@ -1,3 +1,5 @@
+// Package cli provides the read-only x/identity query commands: identities,
+// authorised devices, and the reverse lookup from a device key to its owner.
 package cli
 
 import (

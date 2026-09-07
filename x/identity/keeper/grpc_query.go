@@ -34,14 +34,21 @@ func (q Querier) Identity(ctx context.Context, req *types.QueryIdentityRequest) 
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
 	}
-	var active uint32
+	var active int
 	if found {
 		active, err = q.k.ActiveDeviceCount(ctx, req.Address)
 		if err != nil {
 			return nil, status.Error(codes.Internal, err.Error())
 		}
 	}
-	return &types.QueryIdentityResponse{Found: found, Identity: id, ActiveDevices: active}, nil
+	// Bounded by MaxDevicesPerIdentity, a small configured value, so the
+	// narrowing to the proto's uint32 field cannot lose information.
+	return &types.QueryIdentityResponse{
+		Found:    found,
+		Identity: id,
+		// #nosec G115 -- bounded by MaxDevicesPerIdentity, enforced on every AddDevice.
+		ActiveDevices: uint32(active),
+	}, nil
 }
 
 func (q Querier) Devices(ctx context.Context, req *types.QueryDevicesRequest) (*types.QueryDevicesResponse, error) {

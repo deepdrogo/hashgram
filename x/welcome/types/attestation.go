@@ -1,12 +1,12 @@
 package types
 
 import (
-	"encoding/binary"
-
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+
+	"github.com/hashgram/hashgram/app/canonical"
 )
 
 // CanonicalAttestationBytes returns the exact bytes an attestor signs.
@@ -36,29 +36,18 @@ import (
 // attestation from one Hashgram network being replayed on another and
 // prevents these bytes being reinterpreted as some other kind of signed
 // object.
-func CanonicalAttestationBytes(a EligibilityAttestation) []byte {
-	subject := []byte(a.Subject)
-	attestor := []byte(a.Attestor)
-	method := []byte(a.Method)
-
-	out := make([]byte, 0, 4+len(subject)+4+len(attestor)+8+8+4+len(method)+4)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(len(subject)))
-	out = append(out, subject...)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(len(attestor)))
-	out = append(out, attestor...)
-
-	out = binary.BigEndian.AppendUint64(out, a.Nonce)
-	//nolint:gosec // two's-complement round trip is intentional and exact
-	out = binary.BigEndian.AppendUint64(out, uint64(a.ExpiryHeight))
-
-	out = binary.BigEndian.AppendUint32(out, uint32(len(method)))
-	out = append(out, method...)
-
-	out = binary.BigEndian.AppendUint32(out, a.Confidence)
-
-	return out
+//
+// Returns an error when a field cannot be length-prefixed unambiguously. See
+// app/canonical for why that is an error rather than a silent truncation.
+func CanonicalAttestationBytes(a EligibilityAttestation) ([]byte, error) {
+	return canonical.New(4+len(a.Subject)+4+len(a.Attestor)+8+8+4+len(a.Method)+4).
+		String("subject", a.Subject).
+		String("attestor", a.Attestor).
+		Uint64(a.Nonce).
+		Height(a.ExpiryHeight).
+		String("method", a.Method).
+		Uint32(a.Confidence).
+		Finish()
 }
 
 // ValidateBasic performs stateless validation of an attestation.

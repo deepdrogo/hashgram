@@ -1,0 +1,21 @@
+# Grafana datasource provisioning for Hashgram.
+#
+# Installed to /etc/grafana/provisioning/datasources/. The uid is fixed at
+# hashgram-prometheus because the shipped dashboards reference it by uid; a
+# generated uid would leave every panel pointing at nothing.
+
+apiVersion: 1
+
+datasources:
+  - name: Hashgram Prometheus
+    uid: hashgram-prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # Matches Prometheus's own scrape_interval. Grafana uses this to pick
+      # sensible step sizes rather than requesting more resolution than exists.
+      timeInterval: 15s
+      httpMethod: POST

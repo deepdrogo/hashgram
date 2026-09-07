@@ -116,6 +116,7 @@ func (q Querier) CurrentEpoch(ctx context.Context, _ *types.QueryCurrentEpochReq
 	}
 
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	// #nosec G115 -- EpochBlocks is a validated positive block count.
 	remaining := start + int64(params.EpochBlocks) - sdkCtx.BlockHeight()
 	if remaining < 0 {
 		remaining = 0
@@ -172,6 +173,8 @@ func (q Querier) Rewards(ctx context.Context, req *types.QueryRewardsRequest) (*
 
 	// Walk backwards from the epoch before the open one.
 	var recent []types.ProviderEpochCredit
+	// #nosec G115 -- the epoch counter advances once per EpochBlocks blocks,
+	// so reaching 2^63 would take longer than the age of the universe.
 	for e := int64(current) - 1; e >= 0 && len(recent) < RecentEpochsInRewardsQuery; e-- {
 		c, err := q.k.GetCredit(ctx, uint64(e), req.Operator)
 		if err != nil {

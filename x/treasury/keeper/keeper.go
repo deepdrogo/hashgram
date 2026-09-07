@@ -1,3 +1,9 @@
+// Package keeper implements x/treasury, which holds the named genesis
+// allocations.
+//
+// Each reserve is a separate module sub-account so that treasury, developer
+// grants, liquidity and growth are individually auditable, and every spend
+// requires a governance proposal and leaves a disbursement record.
 package keeper
 
 import (

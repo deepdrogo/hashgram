@@ -63,7 +63,14 @@ func (s msgServer) ApproveRecovery(ctx context.Context, msg *types.MsgApproveRec
 	if err != nil {
 		return nil, err
 	}
-	return &types.MsgApproveRecoveryResponse{Approvals: approvals, Threshold: threshold}, nil
+	// Both are bounded by the guardian list, which MaxGuardians caps at a
+	// small value, so narrowing to the proto's uint32 fields is exact.
+	return &types.MsgApproveRecoveryResponse{
+		// #nosec G115 -- both bounded by the guardian list, which MaxGuardians caps.
+		Approvals: uint32(approvals),
+		// #nosec G115 -- as above.
+		Threshold: uint32(threshold),
+	}, nil
 }
 
 func (s msgServer) CancelRecovery(ctx context.Context, msg *types.MsgCancelRecovery) (*types.MsgCancelRecoveryResponse, error) {

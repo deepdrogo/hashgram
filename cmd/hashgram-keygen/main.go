@@ -16,6 +16,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -238,7 +239,7 @@ ever touching the private key.`,
 // hardware wallets and every Cosmos-compatible wallet expect. Choosing a
 // custom coin type would have meant the Founder could not use a Ledger.
 func derive(mnemonic, passphrase string, account, index uint32) (address, pubkeyHex, path string, err error) {
-	hdPath := hd.CreateHDPath(hgparams.Bip44CoinType, account, index)
+	hdPath := hd.CreateHDPath(hgparams.BIP44CoinType, account, index)
 
 	master, ch := hd.ComputeMastersFromSeed(bip39SeedFromMnemonic(mnemonic, passphrase))
 	privBytes, err := hd.DerivePrivateKeyForPath(master, ch, hdPath.String())
@@ -259,18 +260,22 @@ func bip39SeedFromMnemonic(mnemonic, passphrase string) []byte {
 	return bip39.NewSeed(mnemonic, passphrase)
 }
 
+// decodeHex parses a public key given on the command line.
+//
+// encoding/hex rather than a hand-rolled Sscanf loop. The loop worked, but it
+// accepted whatever Sscanf's %02x accepted, which includes forms a reader
+// would not predict, and it needed an int-to-byte narrowing that no reader
+// can verify at a glance. The standard library validates the alphabet
+// strictly and returns a typed error naming the offending byte.
 func decodeHex(s string) ([]byte, error) {
 	s = strings.TrimPrefix(strings.TrimSpace(s), "0x")
-	out := make([]byte, len(s)/2)
 	if len(s)%2 != 0 {
-		return nil, fmt.Errorf("hex input has an odd number of characters")
+		return nil, fmt.Errorf("hex input has an odd number of characters (%d)", len(s))
 	}
-	for i := 0; i < len(out); i++ {
-		var b int
-		if _, err := fmt.Sscanf(s[i*2:i*2+2], "%02x", &b); err != nil {
-			return nil, fmt.Errorf("invalid hex at position %d", i*2)
-		}
-		out[i] = byte(b)
+
+	out, err := hex.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("not valid hex: %w", err)
 	}
 	return out, nil
 }

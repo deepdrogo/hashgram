@@ -1,3 +1,5 @@
+// Package cli provides the read-only x/feerouter query commands, including
+// the cumulative revenue split that demonstrates the realised Founder share.
 package cli
 
 import (

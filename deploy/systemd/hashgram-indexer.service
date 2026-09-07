@@ -1,0 +1,86 @@
+[Unit]
+# The Hashgram PostgreSQL indexer.
+#
+# The index is a cache. It is derived entirely from chain state and from
+# signed, replicated off-chain data, so if it is destroyed it can be rebuilt
+# and if it disagrees with the chain it is wrong. Nothing canonical lives in
+# PostgreSQL.
+Description=Hashgram PostgreSQL indexer
+Documentation=https://github.com/hashgram/hashgram/blob/main/docs/OPERATIONS.md
+After=network-online.target postgresql.service hashgramd.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=simple
+User=hashgram-index
+Group=hashgram-index
+
+Environment=HASHGRAM_INDEX_HOME=/var/lib/hashgram/index
+WorkingDirectory=/var/lib/hashgram/index
+
+ExecStart=/usr/local/bin/hashgram-indexer run --config /etc/hashgram/indexer.toml
+
+Restart=on-failure
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=300
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+# --- Filesystem -------------------------------------------------------------
+
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hashgram/index
+PrivateTmp=true
+
+# The indexer reads the chain over RPC, not off the chain node's disk, and it
+# has no business near the consensus key.
+InaccessiblePaths=-/var/lib/hashgram/chain
+
+# --- Privileges -------------------------------------------------------------
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @mount @debug @cpu-emulation @module @raw-io @reboot @swap
+
+MemoryDenyWriteExecute=true
+
+# --- Resources --------------------------------------------------------------
+
+MemoryMax=1G
+MemoryHigh=768M
+TasksMax=512
+LimitNOFILE=8192
+
+# Files this service creates are readable only by its own account. The
+# default 0022 would make node state world-readable, which systemd-analyze
+# correctly flags.
+UMask=0077
+
+# --- Logging ----------------------------------------------------------------
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hashgram-indexer
+
+[Install]
+WantedBy=multi-user.target

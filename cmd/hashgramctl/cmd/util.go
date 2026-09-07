@@ -5,16 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/hashgram/hashgram/cmd/hashgramctl/internal/hgconfig"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
 )
-
-// exec_LookPath is a thin alias so root.go can call it without importing
-// os/exec, keeping that import in one place.
-func exec_LookPath(name string) (string, error) { return exec.LookPath(name) }
 
 // commandContext returns a context with a sensible timeout for an
 // interactive operator command.
@@ -144,4 +142,39 @@ func queryJSON(ctx context.Context, out any, args ...string) error {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// resolvePaths turns the three directory flags into absolute, cleaned paths.
+//
+// filepath.Abs applies filepath.Clean, which resolves "." and ".." segments
+// lexically. It does not resolve symlinks, and deliberately so: a node home
+// that is a symlink to a larger volume is a normal deployment, and following
+// the link here would make every printed path disagree with the path the
+// operator configured.
+func resolvePaths(configDir, dataDir, nodeHome string) (hgconfig.Paths, error) {
+	abs := func(label, p string) (string, error) {
+		if strings.TrimSpace(p) == "" {
+			return "", fmt.Errorf("%s must not be empty", label)
+		}
+		out, err := filepath.Abs(p)
+		if err != nil {
+			return "", fmt.Errorf("resolving %s %q: %w", label, p, err)
+		}
+		return out, nil
+	}
+
+	var (
+		out hgconfig.Paths
+		err error
+	)
+	if out.ConfigDir, err = abs("--config-dir", configDir); err != nil {
+		return hgconfig.Paths{}, err
+	}
+	if out.DataDir, err = abs("--data-dir", dataDir); err != nil {
+		return hgconfig.Paths{}, err
+	}
+	if out.NodeHome, err = abs("--home", nodeHome); err != nil {
+		return hgconfig.Paths{}, err
+	}
+	return out, nil
 }

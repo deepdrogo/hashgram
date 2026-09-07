@@ -1,0 +1,93 @@
+[Unit]
+# The Hashgram P2P node: relay, storage, media and bootstrap roles.
+#
+# Runs as a different account from the chain node on purpose. This process is
+# the one exposed to arbitrary peer traffic, and it must not be able to read
+# the consensus signing key. Separate accounts are what makes that true.
+Description=Hashgram P2P node (relay, storage, media)
+Documentation=https://github.com/hashgram/hashgram/blob/main/docs/NODE_ROLES.md
+After=network-online.target hashgramd.service
+Wants=network-online.target
+# Started after the chain node because it verifies the network identity
+# against chain state before it will serve anything.
+After=hashgramd.service
+
+[Service]
+Type=simple
+User=hashgram-node
+Group=hashgram-node
+
+Environment=HASHGRAM_NODE_HOME=/var/lib/hashgram/node
+WorkingDirectory=/var/lib/hashgram/node
+
+ExecStart=/usr/local/bin/hashgram-node run --home /var/lib/hashgram/node --config /etc/hashgram/node.toml
+
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=300
+KillSignal=SIGTERM
+TimeoutStopSec=60
+
+# --- Filesystem -------------------------------------------------------------
+
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hashgram/node
+PrivateTmp=true
+
+# This process must never be able to read the consensus key or the chain's
+# keyring. It is the one exposed to arbitrary peer traffic.
+InaccessiblePaths=-/var/lib/hashgram/chain
+
+# --- Privileges -------------------------------------------------------------
+
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @mount @debug @cpu-emulation @module @raw-io @reboot @swap
+
+MemoryDenyWriteExecute=true
+
+# --- Resources --------------------------------------------------------------
+
+# Lower than the chain node: this process handles peer traffic and blob
+# storage, both of which are bounded work, and a memory blow-up here must not
+# take consensus down with it.
+MemoryMax=2G
+MemoryHigh=1500M
+TasksMax=2048
+
+# A relay holds a socket per peer and a file handle per open blob.
+LimitNOFILE=65535
+
+# Files this service creates are readable only by its own account. The
+# default 0022 would make node state world-readable, which systemd-analyze
+# correctly flags.
+UMask=0077
+
+# --- Logging ----------------------------------------------------------------
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hashgram-node
+
+[Install]
+WantedBy=multi-user.target

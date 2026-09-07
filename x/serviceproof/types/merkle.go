@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+
+	"github.com/hashgram/hashgram/app/canonical"
 )
 
 // Storage proofs use a binary Merkle tree over fixed-size chunk hashes.
@@ -218,7 +220,45 @@ func ChallengeChunkIndex(appHash []byte, challengeID uint64, blobID []byte, repl
 	// Modulo bias is negligible here: chunkCount is bounded by uint32 while
 	// the source is 64 bits of hash output.
 	n := binary.BigEndian.Uint64(sum[:8])
+	// #nosec G115 -- the modulus is chunkCount, a uint32, so the result is
+	// strictly less than it and the narrowing is exact.
 	return uint32(n % uint64(chunkCount))
+}
+
+// SelectIndex deterministically picks one element from a list of n.
+//
+// Separate from ChallengeChunkIndex because the two answer different
+// questions with different types. ChallengeChunkIndex picks a chunk within a
+// blob, and its inputs are the proto's uint32 replica index and chunk count.
+// This picks which assignment to challenge, and its inputs are a loop counter
+// and a slice length, both ints. Reusing the chunk function for that meant
+// two int-to-uint32 narrowings in consensus code that nothing bounded.
+//
+// The entropy source is the same: the app hash of the previous block, which
+// no single party can predict or steer. A provider that could predict which
+// assignment would be challenged could keep only that data on disk.
+//
+// Domain-separated from ChallengeChunkIndex so that the two never produce
+// correlated selections from the same inputs.
+func SelectIndex(appHash []byte, challengeID uint64, operator []byte, round, n int) int {
+	if n <= 0 {
+		return 0
+	}
+
+	h := sha256.New()
+	h.Write([]byte("hashgram/storage-challenge-select"))
+	h.Write(appHash)
+	_ = binary.Write(h, binary.BigEndian, challengeID)
+	h.Write(operator)
+	_ = binary.Write(h, binary.BigEndian, int64(round))
+
+	sum := h.Sum(nil)
+	// Modulo bias is negligible: n is a realistic assignment count and the
+	// source is 64 bits of hash output.
+	pick := binary.BigEndian.Uint64(sum[:8]) % uint64(n)
+
+	// #nosec G115 -- pick is strictly less than n, which is an int, so it fits.
+	return int(pick)
 }
 
 // CanonicalChallengeResponseBytes returns the bytes a provider's node key
@@ -227,18 +267,14 @@ func ChallengeChunkIndex(appHash []byte, challengeID uint64, blobID []byte, repl
 // Length-prefixed, like every other signed object in Hashgram. Without the
 // signature, a Merkle proof observed on chain could be replayed by anyone;
 // the signature ties the answer to the node that was actually challenged.
+// The proof path is framed with both an element count and a per-element
+// length, so a path cannot be re-split into a different one that hashes the
+// same. Prefixes are 64-bit here because a proof path has no small natural
+// bound; see app/canonical.
 func CanonicalChallengeResponseBytes(challengeID uint64, chunkHash []byte, path [][]byte) []byte {
-	out := make([]byte, 0, 8+4+len(chunkHash)+4+len(path)*(4+ChunkHashSize))
-
-	out = binary.BigEndian.AppendUint64(out, challengeID)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(len(chunkHash)))
-	out = append(out, chunkHash...)
-
-	out = binary.BigEndian.AppendUint32(out, uint32(len(path)))
-	for _, p := range path {
-		out = binary.BigEndian.AppendUint32(out, uint32(len(p)))
-		out = append(out, p...)
-	}
-	return out
+	return canonical.NewFixed(8 + 8 + len(chunkHash) + 8 + len(path)*(8+ChunkHashSize)).
+		Uint64(challengeID).
+		Bytes(chunkHash).
+		Bytes64Slice(path).
+		Preimage()
 }

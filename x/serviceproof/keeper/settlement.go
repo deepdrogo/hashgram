@@ -53,6 +53,7 @@ func (k Keeper) BeginBlocker(ctx sdk.Context) error {
 		return nil
 	}
 
+	// #nosec G115 -- EpochBlocks is a validated positive block count.
 	if height-start < int64(params.EpochBlocks) {
 		return nil
 	}

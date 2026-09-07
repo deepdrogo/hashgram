@@ -208,7 +208,13 @@ func (k Keeper) verifyAttestationSignature(
 	attestor types.Attestor,
 	att types.EligibilityAttestation,
 ) error {
-	payload := types.CanonicalAttestationBytes(att)
+	payload, err := types.CanonicalAttestationBytes(att)
+	if err != nil {
+		// An unrepresentable preimage means no signature can verify against
+		// it. Failing here rather than verifying against a mangled encoding is
+		// the whole point of app/canonical returning an error.
+		return types.ErrInvalidAttestation.Wrapf("building the signing preimage: %v", err)
+	}
 
 	digest, err := k.networkKeeper.SigningDigest(ctx, hgparams.PurposeEligibility, payload)
 	if err != nil {
@@ -223,6 +229,9 @@ func (k Keeper) verifyAttestationSignature(
 // implementation has to reproduce the canonical encoding by hand and get it
 // subtly wrong.
 func (k Keeper) AttestationDigest(ctx context.Context, att types.EligibilityAttestation) ([32]byte, error) {
-	return k.networkKeeper.SigningDigest(ctx, hgparams.PurposeEligibility,
-		types.CanonicalAttestationBytes(att))
+	payload, err := types.CanonicalAttestationBytes(att)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return k.networkKeeper.SigningDigest(ctx, hgparams.PurposeEligibility, payload)
 }

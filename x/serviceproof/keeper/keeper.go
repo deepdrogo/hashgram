@@ -1,3 +1,10 @@
+// Package keeper implements x/serviceproof, the Proof of Useful Service
+// reward system.
+//
+// Nothing is rewarded for merely existing. Relay and call work is paid
+// against receipts the served client signed; storage is paid against bytes
+// the network assigned and challenges the provider answered. Rewards come
+// from a finite genesis reserve that is never topped up.
 package keeper
 
 import (

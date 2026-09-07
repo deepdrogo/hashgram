@@ -446,7 +446,9 @@ func TestAttestationFromAForeignNetworkIsRejected(t *testing.T) {
 
 	// Sign under the DEVNET domain rather than Mainnet's.
 	devnet := hgparams.DevnetIdentity("")
-	digest := devnet.SigningDigest(hgparams.PurposeEligibility, types.CanonicalAttestationBytes(att))
+	payload, err := types.CanonicalAttestationBytes(att)
+	require.NoError(t, err)
+	digest := devnet.SigningDigest(hgparams.PurposeEligibility, payload)
 	sig, err := f.attestor.priv.Sign(digest[:])
 	require.NoError(t, err)
 	att.Signature = sig
@@ -471,7 +473,9 @@ func TestAttestationSignedForAnotherPurposeIsRejected(t *testing.T) {
 	}
 
 	id := hgparams.MainnetIdentity("")
-	digest := id.SigningDigest(hgparams.PurposeServiceReceipt, types.CanonicalAttestationBytes(att))
+	payload, err := types.CanonicalAttestationBytes(att)
+	require.NoError(t, err)
+	digest := id.SigningDigest(hgparams.PurposeServiceReceipt, payload)
 	sig, err := f.attestor.priv.Sign(digest[:])
 	require.NoError(t, err)
 	att.Signature = sig

@@ -142,7 +142,7 @@ func (k Keeper) AddDevice(ctx context.Context, address string, cert types.Device
 	if err != nil {
 		return err
 	}
-	if count >= params.MaxDevicesPerIdentity {
+	if count >= int(params.MaxDevicesPerIdentity) {
 		return types.ErrTooManyDevices.Wrapf(
 			"%s has %d of %d permitted devices; revoke one first",
 			address, count, params.MaxDevicesPerIdentity)
@@ -187,7 +187,10 @@ func (k Keeper) verifyCertificate(ctx context.Context, identity types.RootIdenti
 		return err
 	}
 
-	payload := types.CanonicalCertificateBytes(identity.Address, cert)
+	payload, err := types.CanonicalCertificateBytes(identity.Address, cert)
+	if err != nil {
+		return types.ErrInvalidCertificate.Wrapf("building the signing preimage: %v", err)
+	}
 	digest, err := k.networkKeeper.SigningDigest(ctx, hgparams.PurposeDeviceCert, payload)
 	if err != nil {
 		return err
@@ -283,8 +286,12 @@ func (k Keeper) RotateRootKey(ctx context.Context, msg *types.MsgRotateRootKey) 
 		return 0, err
 	}
 
-	payload := types.CanonicalRotationBytes(
+	payload, err := types.CanonicalRotationBytes(
 		msg.Address, msg.NewRootPubkey, msg.NewRootKeyType, identity.RotationCount)
+	if err != nil {
+		return 0, types.ErrInvalidRotationSignature.Wrapf(
+			"building the signing preimage: %v", err)
+	}
 	digest, err := k.networkKeeper.SigningDigest(ctx, hgparams.PurposeDeviceCert, payload)
 	if err != nil {
 		return 0, err

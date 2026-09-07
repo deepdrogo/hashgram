@@ -1,0 +1,435 @@
+{
+  "uid": "hashgram-chain",
+  "title": "Hashgram / Chain and Consensus",
+  "description": "Liveness, consensus health and P2P connectivity for a Hashgram node. Every panel here is driven by metrics CometBFT actually exports, verified by scraping a running v0.38.26 node. Note that cometbft_p2p_peers does not exist until a node's first peer event, so the peer panel reads as No data rather than zero on a node that has never peered.",
+  "tags": ["hashgram", "chain", "consensus"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "chain_id",
+        "label": "Chain",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+        "query": "label_values(cometbft_consensus_latest_block_height, chain_id)",
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Liveness",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "title": "Block height",
+      "description": "The chain's current height. A flat line here is the single clearest sign of a halt.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cometbft_consensus_latest_block_height{chain_id=\"$chain_id\"}",
+          "legendFormat": "height"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "none", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "text" } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "textMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Blocks per second",
+      "description": "Target is roughly 0.25, i.e. a four second block. Sustained values well below that mean consensus is struggling.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(cometbft_consensus_latest_block_height{chain_id=\"$chain_id\"}[5m])",
+          "legendFormat": "blocks/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 3,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 0.1 },
+              { "color": "green", "value": 0.2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Peers",
+      "description": "CometBFT creates this series on the first peer connect or disconnect. No data means this node has never had a peer since starting, which is a different problem from having zero peers now.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cometbft_p2p_peers{chain_id=\"$chain_id\"}",
+          "legendFormat": "peers"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "noValue": "never peered",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "green", "value": 3 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Bonded validators",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cometbft_consensus_validators{chain_id=\"$chain_id\"}",
+          "legendFormat": "validators"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "type": "stat",
+      "title": "Missing from commits",
+      "description": "Validators absent from recent commits. Read alongside missing voting power, which matters far more than the count.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cometbft_consensus_missing_validators{chain_id=\"$chain_id\"}",
+          "legendFormat": "missing"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" }
+    },
+    {
+      "type": "stat",
+      "title": "Byzantine evidence",
+      "description": "Non-zero means conflicting votes were observed, which is double signing. If this is your validator, stop it now.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 1 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cometbft_consensus_byzantine_validators{chain_id=\"$chain_id\"}",
+          "legendFormat": "byzantine"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" }
+    },
+    {
+      "type": "timeseries",
+      "title": "Block interval",
+      "description": "Time between committed blocks. The 0.99 quantile is where proposer timeouts show up before they become missed blocks.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by(le) (rate(cometbft_consensus_block_interval_seconds_bucket{chain_id=\"$chain_id\"}[5m])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum by(le) (rate(cometbft_consensus_block_interval_seconds_bucket{chain_id=\"$chain_id\"}[5m])))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Consensus rounds",
+      "description": "Round zero is a first-vote commit. Anything above zero means at least one round failed.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cometbft_consensus_rounds{chain_id=\"$chain_id\"}",
+          "legendFormat": "rounds"
+        },
+        {
+          "refId": "B",
+          "expr": "cometbft_consensus_round_voting_power_percent{chain_id=\"$chain_id\"}",
+          "legendFormat": "voting power %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "row",
+      "title": "Validator signing",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "Blocks behind last signature",
+      "description": "CometBFT exports no missed-blocks counter. This gap between the chain height and this validator's last signed height is the measurement. A rising line means blocks are being missed and jailing is approaching.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cometbft_consensus_latest_block_height{chain_id=\"$chain_id\"} - on(chain_id) group_left() max by(chain_id) (cometbft_consensus_validator_last_signed_height{chain_id=\"$chain_id\"})",
+          "legendFormat": "blocks behind"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "noValue": "not a validator",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Missing voting power",
+      "description": "The share of voting power absent from commits. Consensus stops above one third.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * cometbft_consensus_missing_validators_power{chain_id=\"$chain_id\"} / clamp_min(cometbft_consensus_validators_power{chain_id=\"$chain_id\"}, 1)",
+          "legendFormat": "missing power %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "max": 100,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 10 },
+              { "color": "red", "value": 33 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "row",
+      "title": "P2P and throughput",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "title": "P2P bandwidth by peer",
+      "description": "Bytes per second in and out, per peer. A peer consuming far more than the others is worth looking at.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by(peer_id) (rate(cometbft_p2p_peer_receive_bytes_total{chain_id=\"$chain_id\"}[5m]))",
+          "legendFormat": "in {{peer_id}}"
+        },
+        {
+          "refId": "B",
+          "expr": "-sum by(peer_id) (rate(cometbft_p2p_peer_send_bytes_total{chain_id=\"$chain_id\"}[5m]))",
+          "legendFormat": "out {{peer_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "P2P bandwidth by message type",
+      "description": "Which protocol is using the bandwidth. Sustained blocksync traffic on a synced node usually means a peer is catching up from this node.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(8, sum by(message_type) (rate(cometbft_p2p_message_send_bytes_total{chain_id=\"$chain_id\"}[5m]) + rate(cometbft_p2p_message_receive_bytes_total{chain_id=\"$chain_id\"}[5m])))",
+          "legendFormat": "{{message_type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 20, "stacking": { "mode": "normal" }, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean"] } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Transactions",
+      "description": "Transactions per block from CometBFT, and the successful count from the SDK's own telemetry.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 32 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cometbft_consensus_num_txs{chain_id=\"$chain_id\"}",
+          "legendFormat": "txs in block"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(tx_successful[5m])",
+          "legendFormat": "successful/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Mempool",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 32 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "cometbft_mempool_size{chain_id=\"$chain_id\"}",
+          "legendFormat": "pending txs"
+        },
+        {
+          "refId": "B",
+          "expr": "cometbft_mempool_size_bytes{chain_id=\"$chain_id\"}",
+          "legendFormat": "bytes"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "none", "custom": { "drawStyle": "line", "lineWidth": 2, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } }
+    },
+    {
+      "type": "timeseries",
+      "title": "Block processing time by module",
+      "description": "Where block time is spent. A module climbing here is the first sign that a state migration or an unbounded iteration has been introduced.",
+      "datasource": { "type": "prometheus", "uid": "hashgram-prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 32 },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(6, begin_blocker{quantile=\"0.99\"})",
+          "legendFormat": "begin {{module}}"
+        },
+        {
+          "refId": "B",
+          "expr": "topk(6, end_blocker{quantile=\"0.99\"})",
+          "legendFormat": "end {{module}}"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "lineWidth": 1, "showPoints": "never" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["max"] } }
+    }
+  ]
+}

@@ -719,8 +719,22 @@ func (app *HashgramApp) BeginBlocker(ctx sdk.Context) (sdk.BeginBlock, error) {
 }
 
 // EndBlocker runs at the end of every block.
+//
+// Metrics are recorded after the modules have run, so the gauges describe the
+// state the block actually committed. Metric errors are logged rather than
+// returned: an observability fault must not become a liveness fault for the
+// whole network. See app/metrics.go.
 func (app *HashgramApp) EndBlocker(ctx sdk.Context) (sdk.EndBlock, error) {
-	return app.ModuleManager.EndBlock(ctx)
+	res, err := app.ModuleManager.EndBlock(ctx)
+	if err != nil {
+		return res, err
+	}
+
+	for _, mErr := range app.RecordMetrics(ctx) {
+		app.Logger().Error("recording metrics", "height", ctx.BlockHeight(), "err", mErr)
+	}
+
+	return res, nil
 }
 
 // Configurator exposes the module configurator for upgrade handlers.

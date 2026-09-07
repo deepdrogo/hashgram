@@ -1,3 +1,10 @@
+// Package keeper implements the x/network state machine: the five-part
+// network identity, the pinned genesis hash and the signature domain
+// separation scheme.
+//
+// The identity is written once at genesis and is refused thereafter, which
+// is what makes a fork of this software a different network rather than a
+// competing version of this one.
 package keeper
 
 import (

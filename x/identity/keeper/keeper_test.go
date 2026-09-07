@@ -99,8 +99,9 @@ func (f *fixture) certify(t *testing.T, u user, deviceID string, devicePub crypt
 		ExpiryHeight:  f.ctx.BlockHeight() + 1_000,
 	}
 
-	digest, err := f.network.SigningDigest(f.ctx, hgparams.PurposeDeviceCert,
-		types.CanonicalCertificateBytes(u.address.String(), cert))
+	payload, err := types.CanonicalCertificateBytes(u.address.String(), cert)
+	require.NoError(t, err)
+	digest, err := f.network.SigningDigest(f.ctx, hgparams.PurposeDeviceCert, payload)
 	require.NoError(t, err)
 
 	sig, err := u.rootKey.Sign(digest[:])
@@ -196,8 +197,9 @@ func TestUnsignedCertificateIsRejected(t *testing.T) {
 		RotationCount: 0,
 		ExpiryHeight:  f.ctx.BlockHeight() + 100,
 	}
-	digest, err := f.network.SigningDigest(f.ctx, hgparams.PurposeDeviceCert,
-		types.CanonicalCertificateBytes(u.address.String(), cert))
+	payload, err := types.CanonicalCertificateBytes(u.address.String(), cert)
+	require.NoError(t, err)
+	digest, err := f.network.SigningDigest(f.ctx, hgparams.PurposeDeviceCert, payload)
 	require.NoError(t, err)
 	sig, err := attacker.rootKey.Sign(digest[:]) // wrong key
 	require.NoError(t, err)
@@ -278,8 +280,9 @@ func TestCertificateFromAnotherNetworkIsRejected(t *testing.T) {
 		ExpiryHeight:  f.ctx.BlockHeight() + 100,
 	}
 	devnet := hgparams.DevnetIdentity("")
-	digest := devnet.SigningDigest(hgparams.PurposeDeviceCert,
-		types.CanonicalCertificateBytes(u.address.String(), cert))
+	payload, err := types.CanonicalCertificateBytes(u.address.String(), cert)
+	require.NoError(t, err)
+	digest := devnet.SigningDigest(hgparams.PurposeDeviceCert, payload)
 	sig, err := u.rootKey.Sign(digest[:])
 	require.NoError(t, err)
 	cert.Signature = sig
@@ -318,8 +321,9 @@ func TestOverlongCertificateIsRejected(t *testing.T) {
 		RotationCount: 0,
 		ExpiryHeight:  f.ctx.BlockHeight() + types.DefaultMaxCertificateAgeBlocks + 1,
 	}
-	digest, err := f.network.SigningDigest(f.ctx, hgparams.PurposeDeviceCert,
-		types.CanonicalCertificateBytes(u.address.String(), cert))
+	payload, err := types.CanonicalCertificateBytes(u.address.String(), cert)
+	require.NoError(t, err)
+	digest, err := f.network.SigningDigest(f.ctx, hgparams.PurposeDeviceCert, payload)
 	require.NoError(t, err)
 	sig, err := u.rootKey.Sign(digest[:])
 	require.NoError(t, err)
@@ -444,8 +448,9 @@ func TestCannotRevokeTheLastDevice(t *testing.T) {
 func (f *fixture) rotate(t *testing.T, u user, newKey cryptotypes.PrivKey, currentRotation uint32, revokeDevices bool) *types.MsgRotateRootKey {
 	t.Helper()
 
-	payload := types.CanonicalRotationBytes(u.address.String(),
+	payload, err := types.CanonicalRotationBytes(u.address.String(),
 		newKey.PubKey().Bytes(), types.KEY_TYPE_SECP256K1, currentRotation)
+	require.NoError(t, err)
 	digest, err := f.network.SigningDigest(f.ctx, hgparams.PurposeDeviceCert, payload)
 	require.NoError(t, err)
 	sig, err := u.rootKey.Sign(digest[:])
@@ -472,8 +477,9 @@ func TestRotationRequiresTheOutgoingRootKey(t *testing.T) {
 	newKey := secp256k1.GenPrivKey()
 
 	// Signed by the attacker's key rather than the identity's root key.
-	payload := types.CanonicalRotationBytes(u.address.String(),
+	payload, err := types.CanonicalRotationBytes(u.address.String(),
 		newKey.PubKey().Bytes(), types.KEY_TYPE_SECP256K1, 0)
+	require.NoError(t, err)
 	digest, err := f.network.SigningDigest(f.ctx, hgparams.PurposeDeviceCert, payload)
 	require.NoError(t, err)
 	sig, err := attacker.rootKey.Sign(digest[:])
@@ -658,8 +664,8 @@ func TestRecoveryRequiresThresholdAndDelay(t *testing.T) {
 
 	approvals, threshold, err := f.keeper.ApproveRecovery(f.ctx, g2.String(), u.address.String())
 	require.NoError(t, err)
-	require.Equal(t, uint32(2), approvals)
-	require.Equal(t, uint32(2), threshold)
+	require.Equal(t, 2, approvals)
+	require.Equal(t, 2, threshold)
 
 	// Threshold met but the delay has not elapsed.
 	err = f.keeper.ExecuteRecovery(f.ctx, u.address.String())

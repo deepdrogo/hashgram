@@ -284,3 +284,93 @@ func TestAssignmentValidationTiesSizeToChunking(t *testing.T) {
 	partial.SizeBytes = 3*1024*1024 + 1
 	require.NoError(t, partial.Validate(), "a partial final chunk was rejected")
 }
+
+// SelectIndex must always land inside the slice it is choosing from. An
+// out-of-range pick here would panic inside BeginBlock, which is a chain halt
+// rather than a bad selection.
+func TestSelectIndexStaysInRange(t *testing.T) {
+	appHash := []byte("app-hash-for-selection")
+	operator := []byte("hash1operator")
+
+	for n := 1; n <= 64; n++ {
+		for round := 0; round < 8; round++ {
+			for id := uint64(1); id <= 4; id++ {
+				got := types.SelectIndex(appHash, id, operator, round, n)
+				if got < 0 || got >= n {
+					t.Fatalf("SelectIndex(n=%d, round=%d, id=%d) = %d, out of range",
+						n, round, id, got)
+				}
+			}
+		}
+	}
+}
+
+// An empty list must yield zero rather than panicking on a modulo by zero.
+func TestSelectIndexHandlesEmptyList(t *testing.T) {
+	for _, n := range []int{0, -1} {
+		if got := types.SelectIndex([]byte("h"), 1, []byte("op"), 0, n); got != 0 {
+			t.Fatalf("SelectIndex with n=%d = %d, want 0", n, got)
+		}
+	}
+}
+
+// The selection must be deterministic: every validator computes the same
+// challenge from the same state, or they disagree on the block.
+func TestSelectIndexIsDeterministic(t *testing.T) {
+	a := types.SelectIndex([]byte("hash"), 7, []byte("op"), 3, 100)
+	b := types.SelectIndex([]byte("hash"), 7, []byte("op"), 3, 100)
+	if a != b {
+		t.Fatalf("two calls with identical inputs gave %d and %d", a, b)
+	}
+}
+
+// Changing any input must be able to change the selection, otherwise a
+// provider could predict which assignment is challenged and keep only that
+// data on disk.
+func TestSelectIndexRespondsToEveryInput(t *testing.T) {
+	base := types.SelectIndex([]byte("hash"), 7, []byte("op"), 3, 1_000)
+
+	cases := map[string]int{
+		"different app hash":  types.SelectIndex([]byte("other"), 7, []byte("op"), 3, 1_000),
+		"different challenge": types.SelectIndex([]byte("hash"), 8, []byte("op"), 3, 1_000),
+		"different operator":  types.SelectIndex([]byte("hash"), 7, []byte("op2"), 3, 1_000),
+		"different round":     types.SelectIndex([]byte("hash"), 7, []byte("op"), 4, 1_000),
+	}
+
+	same := 0
+	for _, got := range cases {
+		if got == base {
+			same++
+		}
+	}
+	// With a thousand possible values, all four colliding with the base would
+	// mean an input is being ignored rather than being unlucky.
+	if same == len(cases) {
+		t.Fatalf("all four varied inputs produced the same selection (%d); "+
+			"an input is not reaching the hash", base)
+	}
+}
+
+// SelectIndex and ChallengeChunkIndex must be domain-separated, so that the
+// assignment chosen and the chunk chosen within it are not correlated.
+func TestSelectIndexIsDomainSeparatedFromChunkIndex(t *testing.T) {
+	appHash := []byte("shared-app-hash")
+	operator := []byte("hash1operator")
+
+	const n = 4096
+	collisions := 0
+	for id := uint64(1); id <= 32; id++ {
+		sel := types.SelectIndex(appHash, id, operator, 0, n)
+		chunk := int(types.ChallengeChunkIndex(appHash, id, operator, 0, n))
+		if sel == chunk {
+			collisions++
+		}
+	}
+	// Over 32 trials with 4096 outcomes, the expected number of coincidental
+	// collisions is well under one. More than a handful means the two are
+	// computing the same value from the same inputs.
+	if collisions > 3 {
+		t.Fatalf("%d of 32 selections matched the chunk index; the two functions "+
+			"do not appear to be domain-separated", collisions)
+	}
+}

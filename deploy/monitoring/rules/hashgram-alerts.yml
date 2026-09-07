@@ -1,0 +1,393 @@
+# Prometheus alert rules for a Hashgram node.
+#
+# Ordered by what they protect rather than by severity, and every rule states
+# what an operator should actually do. An alert that fires without telling the
+# person woken up what to check is an alert they will eventually silence.
+#
+# Two things about these rules are worth knowing before editing them.
+#
+# First, CometBFT registers several metrics lazily: the child series is not
+# created until the value is first set. cometbft_p2p_peers does not exist on a
+# node that has never had a peer, so `cometbft_p2p_peers == 0` cannot fire
+# there. Where that matters the rule below pairs the comparison with an
+# absent() rule. This was verified against CometBFT v0.38.26 by scraping a
+# running node with and without peers, not assumed.
+#
+# Second, CometBFT has no missed-blocks metric. Validator signing is inferred
+# from the gap between the chain height and the validator's last signed
+# height, which is what cometbft_consensus_validator_last_signed_height gives.
+#
+# Validate before installing:
+#   promtool check rules deploy/monitoring/rules/hashgram-alerts.yml
+
+groups:
+  # -----------------------------------------------------------------------
+  # Supply. The claim the whole tokenomics rests on.
+  # -----------------------------------------------------------------------
+  - name: hashgram-supply
+    rules:
+      - alert: HashgramSupplyExceedsCeiling
+        expr: hashgram_supply_over_ceiling_uhash > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Total HASH supply exceeds the compile-time ceiling"
+          description: >-
+            Total supply is {{ $value }} uhash above the maximum. Hashgram has
+            no mint module and no inflation, so this should be unreachable.
+            Either the binary is not a genuine Hashgram build or there is a
+            consensus-level fault. Stop accepting deposits, capture the node's
+            state, and compare the binary checksum against the published
+            release before doing anything else.
+
+      - alert: HashgramSupplyChanged
+        expr: |
+          abs(
+            hashgram_supply_total_uhash
+            - hashgram_supply_total_uhash offset 1h
+          ) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Total HASH supply moved in the last hour"
+          description: >-
+            Supply changed by {{ $value }} uhash. Every uhash is created at
+            genesis and only moves between accounts thereafter, so the total
+            should be a flat line forever. Investigate before assuming a
+            metrics fault.
+
+      - alert: HashgramFounderFeeChanged
+        expr: hashgram_founder_fee_basis_points != 100
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The Founder revenue share is no longer 100 basis points"
+          description: >-
+            founder_fee_basis_points is {{ $value }}. The compile-time ceiling
+            makes raising it above 100 impossible without a binary upgrade, so
+            a lower value means a governance proposal passed. Confirm that the
+            proposal was expected by checking the governance history.
+
+  # -----------------------------------------------------------------------
+  # Liveness. Is the chain making progress at all.
+  # -----------------------------------------------------------------------
+  - name: hashgram-liveness
+    rules:
+      - alert: HashgramExporterDown
+        expr: up{job="hashgramd"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The chain node's metrics endpoint is unreachable"
+          description: >-
+            Prometheus cannot scrape 127.0.0.1:26660. Either hashgramd is not
+            running, or prometheus = true is missing from its config.toml.
+            Check `hashgramctl status` and `journalctl -u hashgramd -n 100`.
+            Every other alert in this file is blind until this clears.
+
+      - alert: HashgramChainHalted
+        expr: increase(cometbft_consensus_latest_block_height[3m]) == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "No new blocks for at least three minutes"
+          description: >-
+            The height has not moved. At the four second target this is around
+            forty-five missed blocks. Either this node has lost its peers or
+            the network has lost quorum. Check cometbft_p2p_peers first: if
+            peers are healthy and the height is still frozen, the network needs
+            more than two thirds of voting power back online.
+
+      - alert: HashgramBlockProductionSlow
+        expr: rate(cometbft_consensus_latest_block_height[5m]) < 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Blocks are being produced more slowly than expected"
+          description: >-
+            Producing {{ $value | printf "%.3f" }} blocks per second against a
+            target of about 0.25. Consensus rounds may be going to more than
+            one vote. Check cometbft_consensus_rounds and the round duration
+            histogram.
+
+      - alert: HashgramConsensusRoundsHigh
+        expr: cometbft_consensus_rounds > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Consensus is taking more than one round to commit"
+          description: >-
+            Round {{ $value }} sustained for five minutes. Normally every
+            block commits in round zero. Usually a proposer that is offline or
+            unreachable, or network latency between validators.
+
+  # -----------------------------------------------------------------------
+  # P2P connectivity.
+  # -----------------------------------------------------------------------
+  - name: hashgram-p2p
+    rules:
+      - alert: HashgramNoPeers
+        expr: cometbft_p2p_peers == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The node has no peers"
+          description: >-
+            An isolated node cannot learn about new blocks and cannot have its
+            own transactions relayed. Check the firewall on the P2P port, and
+            check that persistent_peers in config.toml still resolves.
+
+      - alert: HashgramPeerMetricNeverReported
+        expr: absent(cometbft_p2p_peers)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The peer count metric has never been reported"
+          description: >-
+            CometBFT creates cometbft_p2p_peers only when a peer first
+            connects or disconnects, so an absent series means this node has
+            never had a single peer since it started. HashgramNoPeers cannot
+            fire in that state, which is why this rule exists separately.
+            Verify seeds and persistent_peers.
+
+      - alert: HashgramPeerCountLow
+        expr: cometbft_p2p_peers < 3
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Fewer than three peers"
+          description: >-
+            {{ $value }} peer(s) connected. A node with very few peers is
+            slower to learn about blocks and easier to partition or eclipse.
+            Add more persistent peers.
+
+  # -----------------------------------------------------------------------
+  # Validator health. Only meaningful on a validator.
+  # -----------------------------------------------------------------------
+  - name: hashgram-validator
+    rules:
+      - alert: HashgramValidatorNotSigning
+        expr: |
+          cometbft_consensus_latest_block_height
+          - on(chain_id) group_left()
+            max by(chain_id) (cometbft_consensus_validator_last_signed_height)
+          > 20
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "This validator has not signed for more than 20 blocks"
+          description: >-
+            {{ $value }} blocks behind its last signature. Continued missed
+            blocks lead to being jailed and slashed by x/slashing. CometBFT has
+            no missed-blocks counter, so this gap is the measurement. Check
+            that the remote signer or tmkms process is reachable and that the
+            validator key is where the node expects it.
+
+      - alert: HashgramMissingValidators
+        expr: cometbft_consensus_missing_validators > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Validators are missing from commits"
+          description: >-
+            {{ $value }} validator(s) absent from recent commits. One offline
+            operator is normal on a large set. Compare against
+            cometbft_consensus_missing_validators_power: the voting power that
+            is absent matters far more than the count.
+
+      - alert: HashgramByzantineValidators
+        expr: cometbft_consensus_byzantine_validators > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Byzantine validator evidence observed"
+          description: >-
+            {{ $value }} validator(s) produced conflicting votes, which means
+            double signing. x/evidence will slash them. If this is your own
+            validator, stop it immediately: the usual cause is two instances
+            running with the same key, and every additional block makes the
+            slash worse.
+
+  # -----------------------------------------------------------------------
+  # Hashgram economics.
+  # -----------------------------------------------------------------------
+  - name: hashgram-economics
+    rules:
+      - alert: HashgramFounderPayoutStalled
+        expr: |
+          hashgram_founder_revenue_pending_uhash > 1000000
+          and
+          increase(hashgram_founder_revenue_paid_uhash[6h]) == 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Founder revenue is accruing but not being paid out"
+          description: >-
+            {{ $value }} uhash pending with nothing paid in six hours. Payouts
+            are automatic once the accrual clears the minimum, so a stall
+            usually means the beneficiary address is unset or is blocked from
+            receiving funds. Check `hashgramctl` founder queries.
+
+      - alert: HashgramServiceReserveLow
+        expr: hashgram_service_reserve_remaining_ratio < 0.05
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "The useful-service reserve is below 5% of its genesis size"
+          description: >-
+            {{ $value | printf "%.4f" }} of the reserve remains. This is
+            expected eventually: the reserve is finite, declines geometrically
+            and is never topped up. It is informational rather than a fault,
+            but it means node operators are increasingly funded by real service
+            fee revenue instead of subsidy.
+
+      - alert: HashgramProvidersJailed
+        expr: hashgram_service_providers{status="jailed"} > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Useful-service providers are jailed"
+          description: >-
+            {{ $value }} provider(s) jailed for failed storage challenges or
+            rejected evidence. If one is yours, it is earning nothing and has
+            been slashed part of its bond. Check disk health first: a failing
+            disk looks exactly like fraud to the challenge system.
+
+      - alert: HashgramNoActiveProviders
+        expr: hashgram_service_providers{status="active"} == 0
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "No active useful-service providers"
+          description: >-
+            Nobody is registered to provide storage, relay or call service.
+            The epoch budget will go undrawn and stay in the reserve. Expected
+            on a fresh network; a concern on an established one.
+
+  # -----------------------------------------------------------------------
+  # Host resources.
+  # -----------------------------------------------------------------------
+  - name: hashgram-host
+    rules:
+      - alert: HashgramDiskAlmostFull
+        expr: |
+          node_filesystem_avail_bytes{fstype!~"tmpfs|squashfs|overlay"}
+          / node_filesystem_size_bytes{fstype!~"tmpfs|squashfs|overlay"}
+          < 0.10
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Less than 10% of disk free on {{ $labels.mountpoint }}"
+          description: >-
+            A chain node that runs out of disk stops committing blocks and can
+            corrupt its database. Prune with the node's pruning settings or
+            grow the volume. Do not delete files under /var/lib/hashgram by
+            hand.
+
+      - alert: HashgramDiskFillingFast
+        expr: |
+          predict_linear(
+            node_filesystem_avail_bytes{fstype!~"tmpfs|squashfs|overlay"}[6h],
+            7 * 24 * 3600
+          ) < 0
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.mountpoint }} is on track to fill within a week"
+          description: >-
+            Extrapolating the last six hours, this filesystem runs out inside
+            seven days. Acting now is far cheaper than recovering a node that
+            filled its disk mid-block.
+
+      - alert: HashgramMemoryPressure
+        expr: |
+          node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Less than 10% of memory available"
+          description: >-
+            The kernel OOM killer will eventually pick a process, and on this
+            host that is likely to be hashgramd. Check for other workloads
+            before assuming the node is at fault.
+
+      - alert: HashgramCPUSaturated
+        expr: |
+          100 * (1 - avg by(instance) (
+            rate(node_cpu_seconds_total{mode="idle"}[5m])
+          )) > 90
+        for: 20m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU above 90% for twenty minutes"
+          description: >-
+            Sustained CPU saturation shows up first as slower block
+            processing and missed precommits. Compare against
+            cometbft_state_block_processing_time to see whether consensus is
+            actually being affected.
+
+      - alert: HashgramClockDriftSuspected
+        expr: |
+          abs(node_timex_offset_seconds) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "System clock offset above half a second"
+          description: >-
+            CometBFT validators rely on roughly synchronised clocks for
+            proposal timing. Check that systemd-timesyncd or chrony is running
+            and reaching its servers.
+
+  # -----------------------------------------------------------------------
+  # PostgreSQL, for the phase 2 indexer.
+  # -----------------------------------------------------------------------
+  - name: hashgram-indexer
+    rules:
+      - alert: HashgramPostgresDown
+        expr: pg_up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL is not responding"
+          description: >-
+            The indexer cannot write. The chain itself is unaffected, since
+            consensus does not depend on Postgres, and the indexer can be
+            rebuilt from chain state with `hashgramctl indexer rebuild` once
+            the database is back.
+
+      - alert: HashgramPostgresConnectionsHigh
+        expr: |
+          sum by(instance) (pg_stat_activity_count)
+          / on(instance) pg_settings_max_connections
+          > 0.80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL is above 80% of its connection limit"
+          description: >-
+            New connections will start being refused. Usually a client that is
+            not returning connections to its pool.

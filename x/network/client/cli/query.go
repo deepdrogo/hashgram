@@ -1,3 +1,6 @@
+// Package cli provides the read-only x/network query commands. Network
+// identity cannot be changed by a transaction, so there are no tx commands
+// here to provide.
 package cli
 
 import (
