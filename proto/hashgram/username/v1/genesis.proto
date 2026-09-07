@@ -1,0 +1,15 @@
+syntax = "proto3";
+package hashgram.username.v1;
+
+import "gogoproto/gogo.proto";
+import "hashgram/username/v1/username.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/username/types";
+
+// GenesisState is the x/username genesis state.
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+
+  // registrations is the set of owned names. Empty on a fresh chain.
+  repeated Registration registrations = 2 [(gogoproto.nullable) = false];
+}

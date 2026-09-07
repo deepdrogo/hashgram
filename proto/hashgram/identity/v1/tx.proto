@@ -1,0 +1,216 @@
+syntax = "proto3";
+package hashgram.identity.v1;
+
+import "amino/amino.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "hashgram/identity/v1/identity.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/identity/types";
+
+// Msg is the x/identity message service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // CreateIdentity establishes a root identity.
+  rpc CreateIdentity(MsgCreateIdentity) returns (MsgCreateIdentityResponse);
+
+  // AddDevice authorises a device using a root-signed certificate.
+  rpc AddDevice(MsgAddDevice) returns (MsgAddDeviceResponse);
+
+  // RevokeDevice withdraws a device's authorisation.
+  rpc RevokeDevice(MsgRevokeDevice) returns (MsgRevokeDeviceResponse);
+
+  // RotateRootKey replaces the root key, invalidating certificates issued
+  // under the previous one.
+  rpc RotateRootKey(MsgRotateRootKey) returns (MsgRotateRootKeyResponse);
+
+  // SetRecoveryConfig changes the recovery configuration.
+  rpc SetRecoveryConfig(MsgSetRecoveryConfig) returns (MsgSetRecoveryConfigResponse);
+
+  // InitiateRecovery opens a recovery request.
+  rpc InitiateRecovery(MsgInitiateRecovery) returns (MsgInitiateRecoveryResponse);
+
+  // ApproveRecovery records a guardian's approval.
+  rpc ApproveRecovery(MsgApproveRecovery) returns (MsgApproveRecoveryResponse);
+
+  // CancelRecovery lets the identity owner reject a recovery attempt during
+  // the delay window. This is what makes the delay protective rather than
+  // decorative.
+  rpc CancelRecovery(MsgCancelRecovery) returns (MsgCancelRecoveryResponse);
+
+  // ExecuteRecovery completes an approved recovery after its delay.
+  rpc ExecuteRecovery(MsgExecuteRecovery) returns (MsgExecuteRecoveryResponse);
+
+  // RevokeIdentity abandons an identity.
+  rpc RevokeIdentity(MsgRevokeIdentity) returns (MsgRevokeIdentityResponse);
+}
+
+// MsgCreateIdentity establishes a root identity.
+message MsgCreateIdentity {
+  option (cosmos.msg.v1.signer) = "address";
+  option (amino.name) = "hashgram/MsgCreateIdentity";
+
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // root_pubkey is a PUBLIC key. The chain never receives a private key.
+  bytes root_pubkey = 2;
+  KeyType root_key_type = 3;
+
+  RecoveryConfig recovery = 4 [(gogoproto.nullable) = false];
+
+  // initial_device optionally authorises the first device in the same
+  // transaction, so a new user does not have to send two.
+  DeviceCertificate initial_device = 5 [(gogoproto.nullable) = false];
+
+  string initial_device_label = 6;
+  string initial_device_platform = 7;
+}
+
+// MsgCreateIdentityResponse is the response type.
+message MsgCreateIdentityResponse {}
+
+// MsgAddDevice authorises a device.
+message MsgAddDevice {
+  option (cosmos.msg.v1.signer) = "address";
+  option (amino.name) = "hashgram/MsgAddDevice";
+
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // certificate must be signed by the identity's current root key. The
+  // account signing this transaction is not sufficient authority on its own:
+  // whoever pays the gas cannot insert a device.
+  DeviceCertificate certificate = 2 [(gogoproto.nullable) = false];
+
+  string label = 3;
+  string platform = 4;
+}
+
+// MsgAddDeviceResponse is the response type.
+message MsgAddDeviceResponse {}
+
+// MsgRevokeDevice withdraws a device's authorisation.
+message MsgRevokeDevice {
+  option (cosmos.msg.v1.signer) = "address";
+  option (amino.name) = "hashgram/MsgRevokeDevice";
+
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string device_id = 2;
+}
+
+// MsgRevokeDeviceResponse is the response type.
+message MsgRevokeDeviceResponse {}
+
+// MsgRotateRootKey replaces the root key.
+message MsgRotateRootKey {
+  option (cosmos.msg.v1.signer) = "address";
+  option (amino.name) = "hashgram/MsgRotateRootKey";
+
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  bytes new_root_pubkey = 2;
+  KeyType new_root_key_type = 3;
+
+  // signature_by_old_root proves possession of the key being replaced, over
+  // the canonical rotation preimage.
+  //
+  // Required so that an attacker who has compromised only the account key
+  // cannot install their own root key and take over the identity's devices.
+  bytes signature_by_old_root = 4;
+
+  // revoke_existing_devices withdraws every current device in the same
+  // operation. The right default after a suspected root-key compromise,
+  // since certificates issued by the old root can no longer be trusted.
+  bool revoke_existing_devices = 5;
+}
+
+// MsgRotateRootKeyResponse is the response type.
+message MsgRotateRootKeyResponse {}
+
+// MsgSetRecoveryConfig changes the recovery configuration.
+message MsgSetRecoveryConfig {
+  option (cosmos.msg.v1.signer) = "address";
+  option (amino.name) = "hashgram/MsgSetRecovery";
+
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  RecoveryConfig recovery = 2 [(gogoproto.nullable) = false];
+}
+
+// MsgSetRecoveryConfigResponse is the response type.
+message MsgSetRecoveryConfigResponse {}
+
+// MsgInitiateRecovery opens a recovery request.
+message MsgInitiateRecovery {
+  option (cosmos.msg.v1.signer) = "initiator";
+  option (amino.name) = "hashgram/MsgInitiateRecovery";
+
+  // initiator must be one of the identity's guardians.
+  string initiator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  string root_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string new_address = 3 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  bytes new_root_pubkey = 4;
+  KeyType new_root_key_type = 5;
+}
+
+// MsgInitiateRecoveryResponse reports when recovery becomes executable.
+message MsgInitiateRecoveryResponse {
+  int64 executable_height = 1;
+}
+
+// MsgApproveRecovery records a guardian's approval.
+message MsgApproveRecovery {
+  option (cosmos.msg.v1.signer) = "guardian";
+  option (amino.name) = "hashgram/MsgApproveRecovery";
+
+  string guardian = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string root_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgApproveRecoveryResponse reports progress toward the threshold.
+message MsgApproveRecoveryResponse {
+  uint32 approvals = 1;
+  uint32 threshold = 2;
+}
+
+// MsgCancelRecovery rejects a recovery attempt.
+message MsgCancelRecovery {
+  option (cosmos.msg.v1.signer) = "address";
+  option (amino.name) = "hashgram/MsgCancelRecovery";
+
+  // address must be the identity's current administering account.
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgCancelRecoveryResponse is the response type.
+message MsgCancelRecoveryResponse {}
+
+// MsgExecuteRecovery completes an approved recovery.
+message MsgExecuteRecovery {
+  option (cosmos.msg.v1.signer) = "executor";
+  option (amino.name) = "hashgram/MsgExecuteRecovery";
+
+  // executor may be anyone: the authorisation is the recorded guardian
+  // approvals plus the elapsed delay, not the sender's identity. This means
+  // a recovering user who has lost access to any funded account can still
+  // have somebody submit the final step for them.
+  string executor = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  string root_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgExecuteRecoveryResponse is the response type.
+message MsgExecuteRecoveryResponse {}
+
+// MsgRevokeIdentity abandons an identity.
+message MsgRevokeIdentity {
+  option (cosmos.msg.v1.signer) = "address";
+  option (amino.name) = "hashgram/MsgRevokeIdentity";
+
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+// MsgRevokeIdentityResponse is the response type.
+message MsgRevokeIdentityResponse {}

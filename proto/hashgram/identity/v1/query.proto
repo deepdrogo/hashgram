@@ -1,0 +1,110 @@
+syntax = "proto3";
+package hashgram.identity.v1;
+
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "hashgram/identity/v1/identity.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/identity/types";
+
+// Query is the x/identity query service.
+service Query {
+  // Identity returns a root identity.
+  rpc Identity(QueryIdentityRequest) returns (QueryIdentityResponse) {
+    option (google.api.http).get = "/hashgram/identity/v1/identity/{address}";
+  }
+
+  // Devices returns an identity's devices.
+  rpc Devices(QueryDevicesRequest) returns (QueryDevicesResponse) {
+    option (google.api.http).get = "/hashgram/identity/v1/devices/{address}";
+  }
+
+  // Device returns one device.
+  rpc Device(QueryDeviceRequest) returns (QueryDeviceResponse) {
+    option (google.api.http).get = "/hashgram/identity/v1/device/{address}/{device_id}";
+  }
+
+  // ResolveDeviceKey finds the identity a device public key belongs to.
+  //
+  // This is the query a client makes when it receives a signed social event
+  // or message and needs to know which identity authorised the signing
+  // device. Without it, a client would have to trust the sender's own claim
+  // about who they are.
+  rpc ResolveDeviceKey(QueryResolveDeviceKeyRequest) returns (QueryResolveDeviceKeyResponse) {
+    option (google.api.http).get = "/hashgram/identity/v1/resolve_device_key";
+  }
+
+  // Recovery returns an identity's in-progress recovery request.
+  rpc Recovery(QueryRecoveryRequest) returns (QueryRecoveryResponse) {
+    option (google.api.http).get = "/hashgram/identity/v1/recovery/{root_address}";
+  }
+
+  // Identities returns paginated identities.
+  rpc Identities(QueryIdentitiesRequest) returns (QueryIdentitiesResponse) {
+    option (google.api.http).get = "/hashgram/identity/v1/identities";
+  }
+}
+
+message QueryIdentityRequest {
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+message QueryIdentityResponse {
+  bool found = 1;
+  RootIdentity identity = 2 [(gogoproto.nullable) = false];
+  uint32 active_devices = 3;
+}
+
+message QueryDevicesRequest {
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // include_revoked returns revoked devices too, which a client needs in
+  // order to decide whether a historical signature was valid at the time it
+  // was made.
+  bool include_revoked = 2;
+}
+
+message QueryDevicesResponse {
+  repeated Device devices = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryDeviceRequest {
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  string device_id = 2;
+}
+
+message QueryDeviceResponse {
+  bool found = 1;
+  Device device = 2 [(gogoproto.nullable) = false];
+}
+
+message QueryResolveDeviceKeyRequest {
+  bytes device_pubkey = 1;
+}
+
+message QueryResolveDeviceKeyResponse {
+  bool found = 1;
+  string root_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  Device device = 3 [(gogoproto.nullable) = false];
+}
+
+message QueryRecoveryRequest {
+  string root_address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+message QueryRecoveryResponse {
+  bool found = 1;
+  RecoveryRequest request = 2 [(gogoproto.nullable) = false];
+  uint32 threshold = 3;
+}
+
+message QueryIdentitiesRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryIdentitiesResponse {
+  repeated RootIdentity identities = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}

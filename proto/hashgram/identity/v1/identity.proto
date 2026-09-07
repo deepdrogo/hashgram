@@ -1,0 +1,180 @@
+syntax = "proto3";
+package hashgram.identity.v1;
+
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/identity/types";
+
+// KeyType identifies a signature scheme.
+enum KeyType {
+  option (gogoproto.goproto_enum_prefix) = false;
+
+  KEY_TYPE_UNSPECIFIED = 0;
+
+  // KEY_TYPE_SECP256K1 is a 33-byte compressed secp256k1 public key, the
+  // scheme ordinary accounts and hardware wallets use.
+  KEY_TYPE_SECP256K1 = 1;
+
+  // KEY_TYPE_ED25519 is a 32-byte ed25519 public key, the scheme device keys
+  // use. Chosen for devices because it is what platform secure enclaves and
+  // MLS credentials work with.
+  KEY_TYPE_ED25519 = 2;
+}
+
+// RootIdentity is a user's long-lived cryptographic identity.
+//
+// Only public keys appear here. The chain never sees, stores or transports a
+// private key, and no Hashgram server holds one: the root key lives on the
+// user's own hardware, and devices hold their own keys. This is why a
+// compromised Hashgram VPS cannot impersonate users.
+//
+// The root key is deliberately *not* the account key that pays gas. Signing a
+// transaction is a routine act; authorising a new device is not, and they
+// should not share a key whose exposure is routine.
+message RootIdentity {
+  // address is the account that administers this identity on chain.
+  string address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // root_pubkey is the identity's root public key. Device certificates are
+  // verified against it.
+  bytes root_pubkey = 2;
+
+  // root_key_type is the root key's signature scheme.
+  KeyType root_key_type = 3;
+
+  // created_height is when the identity was established.
+  int64 created_height = 4;
+
+  // rotation_count increases each time the root key is rotated, and is part
+  // of the signed device-certificate preimage so that certificates issued
+  // under a superseded root key stop verifying.
+  uint32 rotation_count = 5;
+
+  // recovery is the user's recovery configuration.
+  RecoveryConfig recovery = 6 [(gogoproto.nullable) = false];
+
+  // revoked marks an identity the user has abandoned. The record is kept
+  // rather than deleted so that historical signatures remain attributable and
+  // the address cannot be silently reused as if fresh.
+  bool revoked = 7;
+  int64 revoked_height = 8;
+}
+
+// RecoveryConfig describes how an identity may be recovered.
+//
+// The chain stores only what is needed to verify a recovery attempt. It holds
+// no seed phrase, no key share and no secret of any kind: a recovery
+// mechanism that requires the network to hold a secret is a mechanism whose
+// compromise loses every user at once.
+message RecoveryConfig {
+  // guardians are addresses that can jointly authorise recovery.
+  repeated string guardians = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // threshold is how many guardians must approve. Zero disables social
+  // recovery.
+  uint32 threshold = 2;
+
+  // recovery_delay_blocks is a mandatory waiting period between a recovery
+  // being approved and taking effect.
+  //
+  // The delay is the substance of the mechanism, not a formality: it is the
+  // window in which a user whose guardians have been socially engineered can
+  // notice and cancel. Without it, compromising the threshold is immediately
+  // final.
+  int64 recovery_delay_blocks = 3;
+
+  // recovery_hash optionally commits to an out-of-band recovery secret the
+  // user holds, for example a passphrase kept in a safe. Only the hash is on
+  // chain.
+  bytes recovery_hash = 4;
+}
+
+// Device is an authorised device belonging to a root identity.
+message Device {
+  // root_address is the identity this device belongs to.
+  string root_address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // device_id is a stable identifier chosen by the client, unique within the
+  // identity.
+  string device_id = 2;
+
+  // device_pubkey is the device's public key. Messaging and social events
+  // signed by this device verify against it.
+  bytes device_pubkey = 3;
+
+  // device_key_type is the device key's signature scheme.
+  KeyType device_key_type = 4;
+
+  // label is a human-readable name, e.g. "Windows desktop".
+  string label = 5;
+
+  // platform is a coarse platform hint, e.g. "windows", "ios", "android".
+  string platform = 6;
+
+  // authorized_height is when the device was added.
+  int64 authorized_height = 7;
+
+  // certificate is the root-signed authorisation for this device. Retained so
+  // that any party can re-verify the chain from root key to device key
+  // without trusting the chain's own bookkeeping.
+  DeviceCertificate certificate = 8 [(gogoproto.nullable) = false];
+
+  // revoked devices can no longer produce valid events. The record is kept so
+  // that events signed before revocation remain attributable, and so a
+  // revoked device id cannot be quietly reused.
+  bool revoked = 9;
+  int64 revoked_height = 10;
+}
+
+// DeviceCertificate is a root-key signature authorising a device key.
+//
+// Verified on chain at the moment the device is added, so an unauthorised
+// device cannot be inserted by whoever happens to control the account that
+// pays the gas.
+message DeviceCertificate {
+  // device_id, device_pubkey and device_key_type are the subject.
+  string device_id = 1;
+  bytes device_pubkey = 2;
+  KeyType device_key_type = 3;
+
+  // rotation_count must match the identity's current rotation count.
+  // Including it means certificates issued under a superseded root key stop
+  // verifying, which is what makes root-key rotation meaningful.
+  uint32 rotation_count = 4;
+
+  // expiry_height bounds how long the certificate may be presented for.
+  int64 expiry_height = 5;
+
+  // signature is by the root key over the canonical certificate encoding,
+  // domain-separated under the "device-cert" purpose.
+  bytes signature = 6;
+}
+
+// RecoveryRequest is an in-progress identity recovery.
+message RecoveryRequest {
+  // root_address is the identity being recovered.
+  string root_address = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // new_address is the account that will administer the identity if recovery
+  // completes.
+  string new_address = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // new_root_pubkey is the root key that will replace the current one.
+  bytes new_root_pubkey = 3;
+  KeyType new_root_key_type = 4;
+
+  // approvals are the guardians that have approved so far.
+  repeated string approvals = 5 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // initiated_height is when the request was opened.
+  int64 initiated_height = 6;
+
+  // executable_height is the earliest height at which recovery may complete,
+  // once the threshold is met.
+  int64 executable_height = 7;
+
+  // cancelled marks a request the identity owner rejected. Kept rather than
+  // deleted so an attempted takeover leaves a trace.
+  bool cancelled = 8;
+}

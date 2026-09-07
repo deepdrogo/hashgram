@@ -1,0 +1,101 @@
+syntax = "proto3";
+package hashgram.username.v1;
+
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "google/api/annotations.proto";
+import "hashgram/username/v1/username.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/username/types";
+
+// Query is the x/username query service.
+service Query {
+  // Params returns the username configuration.
+  rpc Params(QueryParamsRequest) returns (QueryParamsResponse) {
+    option (google.api.http).get = "/hashgram/username/v1/params";
+  }
+
+  // Lookup resolves a name to its owner.
+  rpc Lookup(QueryLookupRequest) returns (QueryLookupResponse) {
+    option (google.api.http).get = "/hashgram/username/v1/lookup/{name}";
+  }
+
+  // ReverseLookup resolves an address to the names it owns.
+  rpc ReverseLookup(QueryReverseLookupRequest) returns (QueryReverseLookupResponse) {
+    option (google.api.http).get = "/hashgram/username/v1/reverse/{owner}";
+  }
+
+  // Availability reports whether a name can be registered, and if not, why.
+  //
+  // A dedicated query rather than "try it and see": a client should be able
+  // to tell a user "that name is visually confusable with @alice" before they
+  // pay a registration fee.
+  rpc Availability(QueryAvailabilityRequest) returns (QueryAvailabilityResponse) {
+    option (google.api.http).get = "/hashgram/username/v1/availability/{name}";
+  }
+
+  // Registrations returns paginated registrations.
+  rpc Registrations(QueryRegistrationsRequest) returns (QueryRegistrationsResponse) {
+    option (google.api.http).get = "/hashgram/username/v1/registrations";
+  }
+}
+
+message QueryParamsRequest {}
+
+message QueryParamsResponse {
+  Params params = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryLookupRequest {
+  string name = 1;
+}
+
+message QueryLookupResponse {
+  bool found = 1;
+  Registration registration = 2 [(gogoproto.nullable) = false];
+
+  // normalized is the form the name was reduced to before lookup, so a client
+  // can show the user what was actually resolved.
+  string normalized = 3;
+}
+
+message QueryReverseLookupRequest {
+  string owner = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+}
+
+message QueryReverseLookupResponse {
+  repeated Registration registrations = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAvailabilityRequest {
+  string name = 1;
+}
+
+message QueryAvailabilityResponse {
+  bool available = 1;
+
+  // normalized is the form that would be registered.
+  string normalized = 2;
+
+  // skeleton is the confusable-folded form used for the collision check.
+  string skeleton = 3;
+
+  // reason explains an unavailable name: "taken", "reserved",
+  // "confusable_with", "invalid", "too_short", "too_long", "mixed_script",
+  // "non_ascii_not_allowed".
+  string reason = 4;
+
+  // conflicting_name is the existing registration a confusable name collides
+  // with, so a client can say precisely what it looks like.
+  string conflicting_name = 5;
+}
+
+message QueryRegistrationsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryRegistrationsResponse {
+  repeated Registration registrations = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}

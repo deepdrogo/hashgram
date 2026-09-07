@@ -1,0 +1,92 @@
+syntax = "proto3";
+package hashgram.username.v1;
+
+import "amino/amino.proto";
+import "cosmos/base/v1beta1/coin.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/username/types";
+
+// Registration is an owned @username.
+//
+// Ownership is on-chain and canonical. The PostgreSQL indexer that serves
+// fast lookups is a cache: if it is destroyed, it is rebuilt from this state,
+// and if it disagrees with this state it is wrong. See docs/OPERATIONS.md on
+// `hashgramctl indexer rebuild`.
+message Registration {
+  // name is the normalised username, without the leading '@'.
+  //
+  // Normalisation is NFKC plus Unicode-aware lowercasing, applied before
+  // storage, so "Alice" and "alice" are the same registration rather than two.
+  string name = 1;
+
+  // owner is the address that controls this name.
+  string owner = 2 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+
+  // skeleton is the confusable-folded form of the name.
+  //
+  // Two names with the same skeleton are visually confusable, so only the
+  // first may be registered. Stored so that the collision check is an index
+  // lookup rather than a scan.
+  string skeleton = 3;
+
+  // registered_height is when the name was first claimed.
+  int64 registered_height = 4;
+
+  // expiry_height is when the registration lapses. Zero means it never does.
+  //
+  // Expiry exists so that abandoned names can return to circulation. A
+  // permanent free claim on a namespace rewards whoever registered fastest,
+  // forever.
+  int64 expiry_height = 5;
+
+  // transferable is false for names locked by their owner, which blocks
+  // transfer even if the owner's key is later compromised.
+  bool transferable = 6;
+}
+
+// Params configures the username system.
+message Params {
+  // registration_fee is charged per registration and routed through
+  // x/feerouter as qualifying protocol revenue.
+  //
+  // A fee is necessary rather than merely nice: a free namespace is
+  // registered in its entirety by whoever scripts it first.
+  repeated cosmos.base.v1beta1.Coin registration_fee = 1 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // renewal_fee is charged per renewal.
+  repeated cosmos.base.v1beta1.Coin renewal_fee = 2 [
+    (gogoproto.nullable) = false,
+    (gogoproto.castrepeated) = "github.com/cosmos/cosmos-sdk/types.Coins",
+    (amino.dont_omitempty) = true
+  ];
+
+  // registration_period_blocks is how long a registration lasts before it
+  // must be renewed. Zero means registrations are permanent.
+  int64 registration_period_blocks = 3;
+
+  // grace_period_blocks is how long after expiry the previous owner retains
+  // an exclusive right to renew, before the name is open to anyone.
+  int64 grace_period_blocks = 4;
+
+  // min_length and max_length bound a name in Unicode code points.
+  uint32 min_length = 5;
+  uint32 max_length = 6;
+
+  // reserved_names may not be registered by anyone. Governance manages the
+  // list; it exists so that names like "admin", "support" and "hashgram"
+  // cannot be used to impersonate the project or its operators.
+  repeated string reserved_names = 7;
+
+  // allow_non_ascii permits names outside [a-z0-9_-].
+  //
+  // When true, names must still pass single-script and confusable checks. The
+  // launch default is false: an ASCII-only namespace has no homograph attacks
+  // at all, and widening it later is a smaller decision than narrowing it.
+  bool allow_non_ascii = 8;
+}

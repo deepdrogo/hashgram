@@ -1,0 +1,48 @@
+syntax = "proto3";
+package hashgram.identity.v1;
+
+import "gogoproto/gogo.proto";
+import "hashgram/identity/v1/identity.proto";
+
+option go_package = "github.com/hashgram/hashgram/x/identity/types";
+
+// GenesisState is the x/identity genesis state.
+message GenesisState {
+  Params params = 1 [(gogoproto.nullable) = false];
+
+  // identities and devices are empty on a fresh chain.
+  repeated RootIdentity identities = 2 [(gogoproto.nullable) = false];
+  repeated Device devices = 3 [(gogoproto.nullable) = false];
+  repeated RecoveryRequest recovery_requests = 4 [(gogoproto.nullable) = false];
+}
+
+// Params configures the identity system.
+message Params {
+  // max_devices_per_identity bounds how many devices one identity may hold.
+  //
+  // A bound is necessary because every device is a signing key that other
+  // users' clients must fetch and check; an unbounded set is both a state
+  // growth vector and a way to make a client's verification work unbounded.
+  uint32 max_devices_per_identity = 1;
+
+  // max_guardians bounds the recovery guardian set.
+  uint32 max_guardians = 2;
+
+  // min_recovery_delay_blocks is the shortest recovery delay a user may
+  // configure.
+  //
+  // A floor rather than a suggestion: the delay is the window in which a user
+  // whose guardians have been socially engineered can notice and cancel, and
+  // a user who sets it to zero has no such window.
+  int64 min_recovery_delay_blocks = 3;
+
+  // max_certificate_age_blocks bounds how far in the future a device
+  // certificate's expiry may be set, so a certificate cannot become an
+  // effectively permanent bearer authorisation.
+  int64 max_certificate_age_blocks = 4;
+
+  // max_device_label_length and max_device_id_length bound client-supplied
+  // strings.
+  uint32 max_device_label_length = 5;
+  uint32 max_device_id_length = 6;
+}

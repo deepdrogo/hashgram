@@ -109,12 +109,18 @@ import (
 	"github.com/hashgram/hashgram/x/founder"
 	founderkeeper "github.com/hashgram/hashgram/x/founder/keeper"
 	foundertypes "github.com/hashgram/hashgram/x/founder/types"
+	"github.com/hashgram/hashgram/x/identity"
+	identitykeeper "github.com/hashgram/hashgram/x/identity/keeper"
+	identitytypes "github.com/hashgram/hashgram/x/identity/types"
 	"github.com/hashgram/hashgram/x/network"
 	networkkeeper "github.com/hashgram/hashgram/x/network/keeper"
 	networktypes "github.com/hashgram/hashgram/x/network/types"
 	"github.com/hashgram/hashgram/x/serviceproof"
 	serviceproofkeeper "github.com/hashgram/hashgram/x/serviceproof/keeper"
 	serviceprooftypes "github.com/hashgram/hashgram/x/serviceproof/types"
+	"github.com/hashgram/hashgram/x/username"
+	usernamekeeper "github.com/hashgram/hashgram/x/username/keeper"
+	usernametypes "github.com/hashgram/hashgram/x/username/types"
 	"github.com/hashgram/hashgram/x/welcome"
 	welcomekeeper "github.com/hashgram/hashgram/x/welcome/keeper"
 	welcometypes "github.com/hashgram/hashgram/x/welcome/types"
@@ -195,6 +201,8 @@ type HashgramApp struct {
 	FeeRouterKeeper    feerouterkeeper.Keeper
 	WelcomeKeeper      welcomekeeper.Keeper
 	ServiceProofKeeper serviceproofkeeper.Keeper
+	UsernameKeeper     usernamekeeper.Keeper
+	IdentityKeeper     identitykeeper.Keeper
 
 	ModuleManager      *module.Manager
 	BasicModuleManager module.BasicManager
@@ -268,6 +276,8 @@ func NewHashgramApp(
 		feeroutertypes.StoreKey,
 		welcometypes.StoreKey,
 		serviceprooftypes.StoreKey,
+		usernametypes.StoreKey,
+		identitytypes.StoreKey,
 	)
 
 	if err := bApp.RegisterStreamingServices(appOpts, keys); err != nil {
@@ -481,6 +491,28 @@ func NewHashgramApp(
 		logger,
 	)
 
+	// x/username charges its registration fee through x/feerouter rather than
+	// straight to the fee collector, so username revenue is recorded as
+	// qualifying protocol revenue and appears in the per-service breakdown.
+	app.UsernameKeeper = usernamekeeper.NewKeeper(
+		appCodec,
+		runtime.NewKVStoreService(keys[usernametypes.StoreKey]),
+		app.FeeRouterKeeper,
+		govAuthority,
+		logger,
+	)
+
+	// x/identity stores only public keys. It depends on x/network for the
+	// digest a device certificate is signed over, so a certificate minted on
+	// a devnet or a fork cannot authorise a device here.
+	app.IdentityKeeper = identitykeeper.NewKeeper(
+		appCodec,
+		runtime.NewKVStoreService(keys[identitytypes.StoreKey]),
+		app.NetworkKeeper,
+		govAuthority,
+		logger,
+	)
+
 	// ---------------------------------------------------------------------
 	// Module manager
 	// ---------------------------------------------------------------------
@@ -506,6 +538,8 @@ func NewHashgramApp(
 		feerouter.NewAppModule(appCodec, app.FeeRouterKeeper),
 		welcome.NewAppModule(appCodec, app.WelcomeKeeper),
 		serviceproof.NewAppModule(appCodec, app.ServiceProofKeeper),
+		username.NewAppModule(appCodec, app.UsernameKeeper),
+		identity.NewAppModule(appCodec, app.IdentityKeeper),
 	)
 
 	app.BasicModuleManager = module.NewBasicManagerFromManager(
@@ -581,6 +615,8 @@ func NewHashgramApp(
 		feeroutertypes.ModuleName,
 		welcometypes.ModuleName,
 		serviceprooftypes.ModuleName,
+		usernametypes.ModuleName,
+		identitytypes.ModuleName,
 	)
 
 	app.ModuleManager.SetOrderExportGenesis(
@@ -589,6 +625,8 @@ func NewHashgramApp(
 		feeroutertypes.ModuleName,
 		welcometypes.ModuleName,
 		serviceprooftypes.ModuleName,
+		usernametypes.ModuleName,
+		identitytypes.ModuleName,
 		consensusparamtypes.ModuleName,
 		authtypes.ModuleName,
 		banktypes.ModuleName,
