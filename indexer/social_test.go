@@ -6,6 +6,8 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
 	hgparams "github.com/hashgram/hashgram/app/params"
 	"github.com/hashgram/hashgram/pkg/p2ppb"
 )
@@ -87,25 +89,25 @@ func TestVerifyEventRefusesForgeries(t *testing.T) {
 		t.Fatalf("valid event refused: %v", err)
 	}
 
-	tampered := *ev
+	tampered := proto.Clone(ev).(*p2ppb.SocialEvent)
 	tampered.Payload = []byte("y")
-	if s.VerifyEvent(&tampered) == nil {
+	if s.VerifyEvent(tampered) == nil {
 		t.Fatal("tampered payload accepted")
 	}
-	fork := *ev
+	fork := proto.Clone(ev).(*p2ppb.SocialEvent)
 	fork.NetworkId = "hashgram-mainnet"
-	if s.VerifyEvent(&fork) == nil {
+	if s.VerifyEvent(fork) == nil {
 		t.Fatal("foreign-network event accepted")
 	}
 	relayPub, relayPriv, _ := ed25519.GenerateKey(nil)
-	resigned := *ev
+	resigned := proto.Clone(ev).(*p2ppb.SocialEvent)
 	resigned.Signature = ed25519.Sign(relayPriv, digest[:])
-	if s.VerifyEvent(&resigned) == nil {
+	if s.VerifyEvent(resigned) == nil {
 		t.Fatal("relay signature accepted for the author's device key")
 	}
 	resigned.DevicePubkey = relayPub
 	// With the relay's own key the id no longer matches the content.
-	if s.VerifyEvent(&resigned) == nil {
+	if s.VerifyEvent(resigned) == nil {
 		t.Fatal("relay re-keyed event accepted")
 	}
 }
