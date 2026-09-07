@@ -230,10 +230,19 @@ if want secrets fast; then
     warn "gitleaks not installed: go install github.com/zricethezav/gitleaks/v8@latest"
   else
     # Scan the working tree, not only git history: a secret staged but not yet
-    # committed should be caught before it becomes permanent.
-    if gitleaks dir . --no-banner --redact \
+    # committed should be caught before it becomes permanent. Only files git
+    # would commit are scanned (tracked plus untracked-and-not-ignored), so a
+    # 30 GB Rust target directory or a devnet data directory does not turn a
+    # five-second check into an hour. Ignored directories are covered by the
+    # acceptance suites' own disk scans, not by this stage.
+    SCAN_DIR="$(mktemp -d /tmp/ci-gitleaks-tree.XXXXXX)"
+    git ls-files -z --cached --others --exclude-standard \
+      | tar --null -T - -cf - 2>/dev/null | tar -C "$SCAN_DIR" -xf -
+    cp -f .gitleaks.toml "$SCAN_DIR/" 2>/dev/null || true
+    if gitleaks dir "$SCAN_DIR" --no-banner --redact \
          --report-format json --report-path /tmp/ci-gitleaks.json \
          >/tmp/ci-gitleaks.log 2>&1; then
+      rm -rf "$SCAN_DIR"
       ok "no secrets found in the working tree"
     else
       COUNT="$(python3 -c '
@@ -252,6 +261,7 @@ try:
 except Exception as exc:
     print(f"could not read the report: {exc}")
 PY
+      rm -rf "$SCAN_DIR"
     fi
   fi
 fi

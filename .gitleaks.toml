@@ -1,0 +1,22 @@
+# gitleaks configuration for Hashgram.
+#
+# The default rule set applies unchanged. The only allowance is for
+# dependency lockfiles, which carry package checksums next to package names
+# and therefore trip the generic high-entropy rule (the crate `libcrux-secrets`
+# followed by a sha256 checksum reads as an API key to a regex). Lockfiles are
+# generated from public registries and never hold credentials.
+#
+# Nothing else is allowlisted: a real key in a test fixture, a script or a
+# document must fail the scan.
+
+title = "hashgram"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Dependency lockfiles: registry checksums, not secrets"
+paths = [
+  '''(^|/)Cargo\.lock$''',
+  '''(^|/)go\.sum$''',
+]

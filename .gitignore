@@ -70,3 +70,13 @@ phase2-data/
 priv_validator_key.json
 priv_validator_state.json
 target/
+
+# Binaries built in the repo root by `go build ./cmd/<name>` land here by accident.
+/hashgramd
+/hashgramctl
+/hashgram-keygen
+/hashgram-test-client
+/hashgram-indexer
+/hashgram-safety
+/hashgram-node
+/hashgram-client
