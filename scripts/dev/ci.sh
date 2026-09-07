@@ -389,6 +389,15 @@ if want policy fast; then
     fail_stage policy "dashboard or alert problem:"
     grep -E 'FAIL' /tmp/ci-dash.log | sed 's/^/        /' | head -20
   fi
+
+  # Documentation drift is silent, and the failure mode is a reader following
+  # an instruction that does not work and then distrusting everything else.
+  if scripts/dev/check-docs.sh >/tmp/ci-docs.log 2>&1; then
+    ok "documentation matches the code"
+  else
+    fail_stage policy "documentation does not match the code:"
+    grep -E 'FAIL' /tmp/ci-docs.log | sed 's/^/        /' | head -20
+  fi
 fi
 
 # ---------------------------------------------------------------------------

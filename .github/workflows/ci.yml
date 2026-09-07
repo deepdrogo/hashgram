@@ -116,6 +116,14 @@ jobs:
       - name: Dashboards and alert rules
         run: scripts/dev/check-dashboards.sh
 
+      - name: Documentation matches the code
+        # Checks that every referenced file exists, every internal link
+        # resolves, every documented command is real, and every tokenomics
+        # figure agrees with app/params. Needs the binary for the command list.
+        run: |
+          make build
+          scripts/dev/check-docs.sh
+
   # ---------------------------------------------------------------------
   secrets:
     name: Secret scan

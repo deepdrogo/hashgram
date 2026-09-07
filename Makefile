@@ -97,11 +97,13 @@ test:
 check-policy:
 	@scripts/dev/check-logging.sh
 	@scripts/dev/check-dashboards.sh
+	@scripts/dev/check-docs.sh
 
 .PHONY: check-policy-live
 check-policy-live:
 	@scripts/dev/check-logging.sh
 	@scripts/dev/check-dashboards.sh --live
+	@scripts/dev/check-docs.sh
 
 # The whole CI pipeline, exactly as it runs in GitHub Actions.
 .PHONY: ci
