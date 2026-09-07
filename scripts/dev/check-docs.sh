@@ -160,6 +160,52 @@ done
 
 # ---------------------------------------------------------------------------
 
+head1 "MAKE TARGETS RESOLVE"
+
+# Every make target the documentation tells someone to run must exist and must
+# not warn. A duplicate target is especially bad: make silently uses the last
+# definition, so `make release` can run something other than what the reader
+# just read about. This caught exactly that, a dead release target pointing at
+# a script that was never written.
+if command -v make >/dev/null 2>&1; then
+  MAKE_WARNINGS="$(make -n build 2>&1 >/dev/null | grep -i 'warning' || true)"
+  if [ -z "$MAKE_WARNINGS" ]; then
+    ok "the Makefile has no duplicate or overridden targets"
+  else
+    bad "the Makefile warns, which usually means a duplicated target:"
+    printf '        %s\n' "$MAKE_WARNINGS"
+  fi
+
+  # From code spans and fenced blocks only. Matching bare prose picked up
+  # English, turning "make before" and "make it" into target names.
+  python3 - $DOCS > /tmp/docs-make-targets.txt <<'MAKETARGETS'
+import re, sys
+
+targets = set()
+for path in sys.argv[1:]:
+    text = open(path).read()
+    spans = re.findall(r'`([^`\n]+)`', text)
+    blocks = re.findall(r'```(?!text)[a-z]*\n(.*?)```', text, re.S)
+    for chunk in spans + blocks:
+        for m in re.finditer(r'(?:^|[\n;&|]\s*)make\s+([a-z][a-z0-9-]*)', chunk):
+            targets.add(m.group(1))
+for name in sorted(targets):
+    print(name)
+MAKETARGETS
+
+  for target in $(cat /tmp/docs-make-targets.txt); do
+    if make -n "$target" >/dev/null 2>&1; then
+      ok "make $target"
+    else
+      bad "make $target is documented but does not resolve"
+    fi
+  done
+else
+  warn "make is not installed; skipping target checks"
+fi
+
+# ---------------------------------------------------------------------------
+
 head1 "NUMBERS MATCH THE CODE"
 
 # The tokenomics figures appear in several documents. A number that disagrees

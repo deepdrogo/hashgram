@@ -238,12 +238,8 @@ four-validator-stop:
 	@bash scripts/testnet/four-validator.sh stop
 
 # ---------------------------------------------------------------------------
-# Release
+# Version
 # ---------------------------------------------------------------------------
-
-.PHONY: release
-release:
-	@bash scripts/release/build-release.sh
 
 .PHONY: version
 version:

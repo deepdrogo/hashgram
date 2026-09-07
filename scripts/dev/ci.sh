@@ -36,7 +36,17 @@ GOBIN_DIR="$REPO_ROOT/build"
 GENERATED_RE='\.pb\.go|\.pb\.gw\.go|/proto/third_party/'
 
 WANT="${1:-all}"
-want() { [ "$WANT" = "all" ] || [ "$WANT" = "$1" ] || { [ "$WANT" = "fast" ] && [ "$2" = "fast" ]; }; }
+# want <stage> [fast]
+#
+# The second argument marks a stage as fast enough to run in `ci.sh fast`.
+# Defaulted because stages that are never fast pass only one argument, and
+# under `set -u` a bare $2 aborted the script the first time WANT was "fast" —
+# which happened to be after gitleaks, so the failure looked like a gitleaks
+# problem rather than a bug in this function.
+want() {
+  [ "$WANT" = "all" ] || [ "$WANT" = "$1" ] ||
+    { [ "$WANT" = "fast" ] && [ "${2:-}" = "fast" ]; }
+}
 
 # ---------------------------------------------------------------------------
 
