@@ -402,6 +402,42 @@ fi
 
 # ---------------------------------------------------------------------------
 
+if want rust fast; then
+  stage "rust: fmt, clippy, test"
+  if ! command -v cargo >/dev/null 2>&1; then
+    warn "cargo not installed; skipping the Rust workspace"
+  else
+    if (cd node && cargo fmt --all -- --check) >/tmp/ci-rustfmt.log 2>&1; then
+      ok "rustfmt clean"
+    else
+      fail_stage rust "rustfmt found unformatted files:"
+      grep -E '^Diff in' /tmp/ci-rustfmt.log | sed 's/^/        /' | head -20
+      warn "fix with: cd node && cargo fmt --all"
+    fi
+
+    # The workspace denies panicking constructs in non-test code, so clippy
+    # failing here is a real defect rather than a style opinion: an unwrap on
+    # a malformed frame in a network daemon is a remote denial of service.
+    if (cd node && cargo clippy --all-targets --all-features -- -D warnings) \
+         >/tmp/ci-clippy.log 2>&1; then
+      ok "clippy clean with the workspace deny list"
+    else
+      fail_stage rust "clippy findings:"
+      grep -E '^(error|warning)' /tmp/ci-clippy.log | sed 's/^/        /' | head -25
+    fi
+
+    if (cd node && cargo test --all) >/tmp/ci-rusttest.log 2>&1; then
+      COUNT="$(grep -ohE '[0-9]+ passed' /tmp/ci-rusttest.log \
+        | awk '{s+=$1} END {print s+0}')"
+      ok "all Rust tests pass (${COUNT} tests)"
+    else
+      fail_stage rust "Rust tests failed:"
+      grep -E '^(test .* FAILED|panicked|assertion)' /tmp/ci-rusttest.log \
+        | sed 's/^/        /' | head -25
+    fi
+  fi
+fi
+
 if want test; then
   stage "go test -race"
   if go test -race -timeout 20m ./... >/tmp/ci-test.log 2>&1; then

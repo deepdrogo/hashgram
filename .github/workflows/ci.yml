@@ -177,6 +177,51 @@ jobs:
         run: scripts/dev/ci.sh vuln
 
   # ---------------------------------------------------------------------
+  rust:
+    name: Rust node
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup component add rustfmt clippy
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            node/target
+          key: cargo-${{ hashFiles('node/Cargo.lock', 'node/**/Cargo.toml') }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Confirm the signing vectors are current
+        # The Rust crate must produce byte-identical signing preimages to the
+        # Go implementation. Regenerating here and checking for a diff catches
+        # the case where the Go framing changed and the committed vectors did
+        # not, which would leave the parity test passing against stale data.
+        run: |
+          go run ./tools/signing-vectors > /tmp/vectors.json
+          if ! diff -q /tmp/vectors.json node/testdata/signing-vectors.json; then
+            echo "The committed signing vectors do not match the Go implementation."
+            echo "Regenerate with:"
+            echo "  go run ./tools/signing-vectors > node/testdata/signing-vectors.json"
+            diff /tmp/vectors.json node/testdata/signing-vectors.json | head -40
+            exit 1
+          fi
+          echo "signing vectors are current"
+
+      - name: fmt, clippy and test
+        run: scripts/dev/ci.sh rust
+
+  # ---------------------------------------------------------------------
   reproducible-release:
     name: Reproducible release build
     runs-on: ubuntu-24.04

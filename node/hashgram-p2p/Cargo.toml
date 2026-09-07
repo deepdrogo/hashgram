@@ -1,0 +1,21 @@
+[package]
+name = "hashgram-p2p"
+description = "Hashgram libp2p transport, discovery and peer scoring"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hashgram-net = { path = "../hashgram-net" }
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+tracing.workspace = true
+
+
+[lints]
+workspace = true

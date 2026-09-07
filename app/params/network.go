@@ -269,7 +269,7 @@ func (n NetworkIdentity) SigningDomain(p SigningPurpose) string {
 // SigningPreimage builds the exact byte string that must be signed for a
 // purpose. The layout is:
 //
-//	magic(4) || len(domain) as uint32 BE || domain || len(payload) as uint32 BE || payload
+//	magic(4) || len(domain) as uint64 BE || domain || len(payload) as uint64 BE || payload
 //
 // Length prefixes are mandatory: without them, (domain="ab", payload="c") and
 // (domain="a", payload="bc") would hash identically and a signature for one

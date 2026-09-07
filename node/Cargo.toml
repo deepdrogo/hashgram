@@ -1,0 +1,75 @@
+[workspace]
+resolver = "2"
+members = [
+    "hashgram-net",
+    "hashgram-p2p",
+    "hashgram-node",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "Apache-2.0"
+repository = "https://github.com/hashgram/hashgram"
+
+[workspace.dependencies]
+# P2P
+libp2p = { version = "0.56", default-features = false }
+
+# Async runtime
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "fs", "sync"] }
+futures = "0.3"
+
+# Cryptography. Nothing here is home-rolled: SHA-256 and BLAKE3 from the
+# RustCrypto and official implementations, secp256k1 and ed25519 from the
+# crates the Cosmos ecosystem already relies on.
+sha2 = "0.10"
+blake3 = "1.8"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
+
+# Encoding
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+bech32 = "0.11"
+
+# Errors, logging, config
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+clap = { version = "4", features = ["derive", "env"] }
+toml = "0.9"
+
+# Metrics
+prometheus-client = "0.23"
+
+[workspace.lints.rust]
+# Deny rather than warn. An unsafe block in a network-facing daemon should be
+# a deliberate, reviewed decision with a written justification, not something
+# that appears in a diff and passes CI.
+unsafe_code = "deny"
+missing_docs = "warn"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+# Panicking paths are denied in library code because this daemon parses
+# attacker-controlled bytes. An unwrap on a malformed frame is a remote denial
+# of service, so the compiler is asked to reject the pattern rather than
+# relying on review to catch it.
+unwrap_used = "deny"
+expect_used = "warn"
+panic = "deny"
+indexing_slicing = "warn"
+integer_division = "warn"
+todo = "deny"
+unimplemented = "deny"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

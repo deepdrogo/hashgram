@@ -106,6 +106,31 @@ check-policy-live:
 	@scripts/dev/check-docs.sh
 
 # The whole CI pipeline, exactly as it runs in GitHub Actions.
+# ---------------------------------------------------------------------------
+# Rust workspace (Phase 2)
+# ---------------------------------------------------------------------------
+
+.PHONY: rust
+rust:
+	@cd node && cargo build --all
+
+.PHONY: rust-test
+rust-test:
+	@cd node && cargo test --all
+
+.PHONY: rust-lint
+rust-lint:
+	@cd node && cargo fmt --all -- --check
+	@cd node && cargo clippy --all-targets --all-features -- -D warnings
+
+# Regenerates the cross-language signing vectors from the Go implementation.
+# The Rust crate must reproduce these byte for byte; a signature is only
+# verifiable if both sides build the same preimage.
+.PHONY: signing-vectors
+signing-vectors:
+	@$(GO) run ./tools/signing-vectors > node/testdata/signing-vectors.json
+	@echo ">>> node/testdata/signing-vectors.json regenerated"
+
 .PHONY: ci
 ci:
 	@scripts/dev/ci.sh

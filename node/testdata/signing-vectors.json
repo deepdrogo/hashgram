@@ -1,0 +1,654 @@
+{
+  "devnet": {
+    "network_name": "Hashgram Devnet (DEVNET ONLY)",
+    "network_id": "hashgram-devnet",
+    "chain_id": "hashgram-devnet-1",
+    "network_magic": "HGD1",
+    "network_magic_hex": "48474431",
+    "protocol_major_version": 1,
+    "genesis_hash": "9348af00681eecefb8d6329d5ba101c13bc3c8943f2c610295026f6503654287",
+    "vectors": [
+      {
+        "purpose": "social-event",
+        "domain": "hashgram/v1/hashgram-devnet/social-event",
+        "payload_hex": "",
+        "preimage_hex": "484744310000000000000028686173686772616d2f76312f686173686772616d2d6465766e65742f736f6369616c2d6576656e740000000000000000",
+        "digest_hex": "7994f69850efd8dc624a82e0d247cf71de96e72175ca8c819ec438ea8169b2c1"
+      },
+      {
+        "purpose": "social-event",
+        "domain": "hashgram/v1/hashgram-devnet/social-event",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "484744310000000000000028686173686772616d2f76312f686173686772616d2d6465766e65742f736f6369616c2d6576656e7400000000000000077061796c6f6164",
+        "digest_hex": "808836a29f2ca0c8db8ec1eee8275052452aad337b88a4f6dfa67be9ca502cbe"
+      },
+      {
+        "purpose": "social-event",
+        "domain": "hashgram/v1/hashgram-devnet/social-event",
+        "payload_hex": "6162",
+        "preimage_hex": "484744310000000000000028686173686772616d2f76312f686173686772616d2d6465766e65742f736f6369616c2d6576656e7400000000000000026162",
+        "digest_hex": "21d118393e79255a5ac23121bcf1fc62fecfa4a42a95ecaf3158c99744964f77"
+      },
+      {
+        "purpose": "social-event",
+        "domain": "hashgram/v1/hashgram-devnet/social-event",
+        "payload_hex": "616263",
+        "preimage_hex": "484744310000000000000028686173686772616d2f76312f686173686772616d2d6465766e65742f736f6369616c2d6576656e740000000000000003616263",
+        "digest_hex": "1f48a363a91270bcbf3072577f4cb170ba5e6480c1a2b9ad6ebd5f87b270df13"
+      },
+      {
+        "purpose": "social-event",
+        "domain": "hashgram/v1/hashgram-devnet/social-event",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "484744310000000000000028686173686772616d2f76312f686173686772616d2d6465766e65742f736f6369616c2d6576656e74000000000000000400ff7f80",
+        "digest_hex": "6d8660cbdfda5994d50a0908ed4b3483b55d1fbb97327813e7a3c4b240b7d2f2"
+      },
+      {
+        "purpose": "device-cert",
+        "domain": "hashgram/v1/hashgram-devnet/device-cert",
+        "payload_hex": "",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6465766963652d636572740000000000000000",
+        "digest_hex": "909e513bb479e7dab16864fa72c2b676942a519055e12ef393fb8ca37872af58"
+      },
+      {
+        "purpose": "device-cert",
+        "domain": "hashgram/v1/hashgram-devnet/device-cert",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6465766963652d6365727400000000000000077061796c6f6164",
+        "digest_hex": "55c01fa33912106bb829e02443c15f4db162180ec0ec47089fb5e2b539cf2f05"
+      },
+      {
+        "purpose": "device-cert",
+        "domain": "hashgram/v1/hashgram-devnet/device-cert",
+        "payload_hex": "6162",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6465766963652d6365727400000000000000026162",
+        "digest_hex": "0d416278ca02e329e401d3a7c1fd575f384ec3214814379843fdef8b73e0ac92"
+      },
+      {
+        "purpose": "device-cert",
+        "domain": "hashgram/v1/hashgram-devnet/device-cert",
+        "payload_hex": "616263",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6465766963652d636572740000000000000003616263",
+        "digest_hex": "43ec2b8ad46a3190d8361fa58009160851e1a2eae7bb8904e39766368e73f243"
+      },
+      {
+        "purpose": "device-cert",
+        "domain": "hashgram/v1/hashgram-devnet/device-cert",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6465766963652d63657274000000000000000400ff7f80",
+        "digest_hex": "f308e0be073e27a80048fcbb2db410bae200438c1cf5960456e851facfb9aec3"
+      },
+      {
+        "purpose": "service-receipt",
+        "domain": "hashgram/v1/hashgram-devnet/service-receipt",
+        "payload_hex": "",
+        "preimage_hex": "48474431000000000000002b686173686772616d2f76312f686173686772616d2d6465766e65742f736572766963652d726563656970740000000000000000",
+        "digest_hex": "b6c144008b74c6b068e4c79577882cffd35c74a17ffa2b4b21b7685edc153541"
+      },
+      {
+        "purpose": "service-receipt",
+        "domain": "hashgram/v1/hashgram-devnet/service-receipt",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474431000000000000002b686173686772616d2f76312f686173686772616d2d6465766e65742f736572766963652d7265636569707400000000000000077061796c6f6164",
+        "digest_hex": "a230338265fb4076c55debd94a001a8c3290edcbc20b3bca83dd208ce6304414"
+      },
+      {
+        "purpose": "service-receipt",
+        "domain": "hashgram/v1/hashgram-devnet/service-receipt",
+        "payload_hex": "6162",
+        "preimage_hex": "48474431000000000000002b686173686772616d2f76312f686173686772616d2d6465766e65742f736572766963652d7265636569707400000000000000026162",
+        "digest_hex": "ad6e00bd582494f29049b2770e119a007c98be84b7b0b5487bc818dd8ce3f99e"
+      },
+      {
+        "purpose": "service-receipt",
+        "domain": "hashgram/v1/hashgram-devnet/service-receipt",
+        "payload_hex": "616263",
+        "preimage_hex": "48474431000000000000002b686173686772616d2f76312f686173686772616d2d6465766e65742f736572766963652d726563656970740000000000000003616263",
+        "digest_hex": "1a3e5c94cff3ab5d00619508ab37b243b22c838453cce4689267482a071b475b"
+      },
+      {
+        "purpose": "service-receipt",
+        "domain": "hashgram/v1/hashgram-devnet/service-receipt",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474431000000000000002b686173686772616d2f76312f686173686772616d2d6465766e65742f736572766963652d72656365697074000000000000000400ff7f80",
+        "digest_hex": "6f8b23388e08ea845c15250dea8a3d644e6443725a30b6e593eb8c5a486e87ae"
+      },
+      {
+        "purpose": "storage-challenge",
+        "domain": "hashgram/v1/hashgram-devnet/storage-challenge",
+        "payload_hex": "",
+        "preimage_hex": "48474431000000000000002d686173686772616d2f76312f686173686772616d2d6465766e65742f73746f726167652d6368616c6c656e67650000000000000000",
+        "digest_hex": "b73b2e30872ac6310b924a0458a604b8920ca84907810edec8a12b77d434e307"
+      },
+      {
+        "purpose": "storage-challenge",
+        "domain": "hashgram/v1/hashgram-devnet/storage-challenge",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474431000000000000002d686173686772616d2f76312f686173686772616d2d6465766e65742f73746f726167652d6368616c6c656e676500000000000000077061796c6f6164",
+        "digest_hex": "574dc859a6fec763713d8b981ab4aa07610979009475060b30d4e25417c5d7a7"
+      },
+      {
+        "purpose": "storage-challenge",
+        "domain": "hashgram/v1/hashgram-devnet/storage-challenge",
+        "payload_hex": "6162",
+        "preimage_hex": "48474431000000000000002d686173686772616d2f76312f686173686772616d2d6465766e65742f73746f726167652d6368616c6c656e676500000000000000026162",
+        "digest_hex": "a3bec927dd96be633a4f850b5c2e22d47992bf7fa36f1def7eb48abfa10a5885"
+      },
+      {
+        "purpose": "storage-challenge",
+        "domain": "hashgram/v1/hashgram-devnet/storage-challenge",
+        "payload_hex": "616263",
+        "preimage_hex": "48474431000000000000002d686173686772616d2f76312f686173686772616d2d6465766e65742f73746f726167652d6368616c6c656e67650000000000000003616263",
+        "digest_hex": "429d91c6cff50813f7c675dbe124388f14b7c78415c90c68829889b3003141c7"
+      },
+      {
+        "purpose": "storage-challenge",
+        "domain": "hashgram/v1/hashgram-devnet/storage-challenge",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474431000000000000002d686173686772616d2f76312f686173686772616d2d6465766e65742f73746f726167652d6368616c6c656e6765000000000000000400ff7f80",
+        "digest_hex": "cdaa315bad0bd7581c90b2a28726f157e4b1e58e830ac2acb4c149876b257fc7"
+      },
+      {
+        "purpose": "eligibility-attestation",
+        "domain": "hashgram/v1/hashgram-devnet/eligibility-attestation",
+        "payload_hex": "",
+        "preimage_hex": "484744310000000000000033686173686772616d2f76312f686173686772616d2d6465766e65742f656c69676962696c6974792d6174746573746174696f6e0000000000000000",
+        "digest_hex": "bb43fad2eb7287c67aa57629aab0cec99f1cc315d372e5614be80fe394583b3d"
+      },
+      {
+        "purpose": "eligibility-attestation",
+        "domain": "hashgram/v1/hashgram-devnet/eligibility-attestation",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "484744310000000000000033686173686772616d2f76312f686173686772616d2d6465766e65742f656c69676962696c6974792d6174746573746174696f6e00000000000000077061796c6f6164",
+        "digest_hex": "e76ce9aa7b9bac239d553f52494b1d0ae3f0fe744f0b9923e67bc6cb3e380b42"
+      },
+      {
+        "purpose": "eligibility-attestation",
+        "domain": "hashgram/v1/hashgram-devnet/eligibility-attestation",
+        "payload_hex": "6162",
+        "preimage_hex": "484744310000000000000033686173686772616d2f76312f686173686772616d2d6465766e65742f656c69676962696c6974792d6174746573746174696f6e00000000000000026162",
+        "digest_hex": "ccd6220c2c32c9dffca1670f0e2a2633b942aa077e6037975628739056e4c6aa"
+      },
+      {
+        "purpose": "eligibility-attestation",
+        "domain": "hashgram/v1/hashgram-devnet/eligibility-attestation",
+        "payload_hex": "616263",
+        "preimage_hex": "484744310000000000000033686173686772616d2f76312f686173686772616d2d6465766e65742f656c69676962696c6974792d6174746573746174696f6e0000000000000003616263",
+        "digest_hex": "892508a84017b952fddc014fc1ad38bdedb53d02edcd850bdc78b901695c4a19"
+      },
+      {
+        "purpose": "eligibility-attestation",
+        "domain": "hashgram/v1/hashgram-devnet/eligibility-attestation",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "484744310000000000000033686173686772616d2f76312f686173686772616d2d6465766e65742f656c69676962696c6974792d6174746573746174696f6e000000000000000400ff7f80",
+        "digest_hex": "9f11650e22e8fb8041c001c4718d6bd6a95b1cd63b6c252d046102932ae0c5b3"
+      },
+      {
+        "purpose": "content-attestation",
+        "domain": "hashgram/v1/hashgram-devnet/content-attestation",
+        "payload_hex": "",
+        "preimage_hex": "48474431000000000000002f686173686772616d2f76312f686173686772616d2d6465766e65742f636f6e74656e742d6174746573746174696f6e0000000000000000",
+        "digest_hex": "7a96576d39c6bfd3602d61172169406fd8e5f0c486ff567e3978edfad0036292"
+      },
+      {
+        "purpose": "content-attestation",
+        "domain": "hashgram/v1/hashgram-devnet/content-attestation",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474431000000000000002f686173686772616d2f76312f686173686772616d2d6465766e65742f636f6e74656e742d6174746573746174696f6e00000000000000077061796c6f6164",
+        "digest_hex": "ff17928ab432c34986c533043968cd240e5ca6157c61e9ae54dbbbcb8a974035"
+      },
+      {
+        "purpose": "content-attestation",
+        "domain": "hashgram/v1/hashgram-devnet/content-attestation",
+        "payload_hex": "6162",
+        "preimage_hex": "48474431000000000000002f686173686772616d2f76312f686173686772616d2d6465766e65742f636f6e74656e742d6174746573746174696f6e00000000000000026162",
+        "digest_hex": "07d560490a1ba81a98db7a71605877613e0f32f5ecc61f57e803e0cf6bee89c5"
+      },
+      {
+        "purpose": "content-attestation",
+        "domain": "hashgram/v1/hashgram-devnet/content-attestation",
+        "payload_hex": "616263",
+        "preimage_hex": "48474431000000000000002f686173686772616d2f76312f686173686772616d2d6465766e65742f636f6e74656e742d6174746573746174696f6e0000000000000003616263",
+        "digest_hex": "8db95f9f6360e2605629bff309da1ca4797a6ea18d6c8dcccbf945f306e78565"
+      },
+      {
+        "purpose": "content-attestation",
+        "domain": "hashgram/v1/hashgram-devnet/content-attestation",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474431000000000000002f686173686772616d2f76312f686173686772616d2d6465766e65742f636f6e74656e742d6174746573746174696f6e000000000000000400ff7f80",
+        "digest_hex": "7c7a598a3cc4216ebeb37961905c5c99b0e4047eececbc5cff06cc9387014a11"
+      },
+      {
+        "purpose": "bootstrap-record",
+        "domain": "hashgram/v1/hashgram-devnet/bootstrap-record",
+        "payload_hex": "",
+        "preimage_hex": "48474431000000000000002c686173686772616d2f76312f686173686772616d2d6465766e65742f626f6f7473747261702d7265636f72640000000000000000",
+        "digest_hex": "8cb6ab744b62d50e90e4ac72d2a2d8758b2a7e9cbe03a365ad83e48dbd8b2bb5"
+      },
+      {
+        "purpose": "bootstrap-record",
+        "domain": "hashgram/v1/hashgram-devnet/bootstrap-record",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474431000000000000002c686173686772616d2f76312f686173686772616d2d6465766e65742f626f6f7473747261702d7265636f726400000000000000077061796c6f6164",
+        "digest_hex": "d150c273934b46e5bc744b174e6a9a4194c0122e7a3b67cc690e8fb3411ee208"
+      },
+      {
+        "purpose": "bootstrap-record",
+        "domain": "hashgram/v1/hashgram-devnet/bootstrap-record",
+        "payload_hex": "6162",
+        "preimage_hex": "48474431000000000000002c686173686772616d2f76312f686173686772616d2d6465766e65742f626f6f7473747261702d7265636f726400000000000000026162",
+        "digest_hex": "a1daf97b1952e2a9ff428f1b883f33f13201fb677327eec0315f25bea1516c70"
+      },
+      {
+        "purpose": "bootstrap-record",
+        "domain": "hashgram/v1/hashgram-devnet/bootstrap-record",
+        "payload_hex": "616263",
+        "preimage_hex": "48474431000000000000002c686173686772616d2f76312f686173686772616d2d6465766e65742f626f6f7473747261702d7265636f72640000000000000003616263",
+        "digest_hex": "b35d92d0d0cd24b8af2d04622120d932245779da92de5437f2d63c33fa9af949"
+      },
+      {
+        "purpose": "bootstrap-record",
+        "domain": "hashgram/v1/hashgram-devnet/bootstrap-record",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474431000000000000002c686173686772616d2f76312f686173686772616d2d6465766e65742f626f6f7473747261702d7265636f7264000000000000000400ff7f80",
+        "digest_hex": "4d7ea271276978f2f949cbc3c32fc64f6dac9a10fe0e8f7cd849471b7e6e8008"
+      },
+      {
+        "purpose": "peer-handshake",
+        "domain": "hashgram/v1/hashgram-devnet/peer-handshake",
+        "payload_hex": "",
+        "preimage_hex": "48474431000000000000002a686173686772616d2f76312f686173686772616d2d6465766e65742f706565722d68616e647368616b650000000000000000",
+        "digest_hex": "cdacf3a46cdaa15a5c4ec381e70cc43a7313d8824025ca77e294eafc88059cb6"
+      },
+      {
+        "purpose": "peer-handshake",
+        "domain": "hashgram/v1/hashgram-devnet/peer-handshake",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474431000000000000002a686173686772616d2f76312f686173686772616d2d6465766e65742f706565722d68616e647368616b6500000000000000077061796c6f6164",
+        "digest_hex": "4ce78fdfcd21636795363eef128d452fc5713eaa5479b4ba591de36ff52dafa6"
+      },
+      {
+        "purpose": "peer-handshake",
+        "domain": "hashgram/v1/hashgram-devnet/peer-handshake",
+        "payload_hex": "6162",
+        "preimage_hex": "48474431000000000000002a686173686772616d2f76312f686173686772616d2d6465766e65742f706565722d68616e647368616b6500000000000000026162",
+        "digest_hex": "a2a01bdc74df1e285c230d9eadc5bca47d35d5873e8c15e9de612fb244e4284a"
+      },
+      {
+        "purpose": "peer-handshake",
+        "domain": "hashgram/v1/hashgram-devnet/peer-handshake",
+        "payload_hex": "616263",
+        "preimage_hex": "48474431000000000000002a686173686772616d2f76312f686173686772616d2d6465766e65742f706565722d68616e647368616b650000000000000003616263",
+        "digest_hex": "5fd6bc9fd1e1ee5f3a740c8b7ae966a6b836ca30a7535bda9a719043d03b2a95"
+      },
+      {
+        "purpose": "peer-handshake",
+        "domain": "hashgram/v1/hashgram-devnet/peer-handshake",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474431000000000000002a686173686772616d2f76312f686173686772616d2d6465766e65742f706565722d68616e647368616b65000000000000000400ff7f80",
+        "digest_hex": "34a919f85349a2f8fda701a62e6d4c5e92ee81eadd2664dd7bbbd8c3aa59ae3f"
+      },
+      {
+        "purpose": "node-announce",
+        "domain": "hashgram/v1/hashgram-devnet/node-announce",
+        "payload_hex": "",
+        "preimage_hex": "484744310000000000000029686173686772616d2f76312f686173686772616d2d6465766e65742f6e6f64652d616e6e6f756e63650000000000000000",
+        "digest_hex": "d854e1d269af03e1677bebab94fed01cead6749ce868721dd2a45887dc07a989"
+      },
+      {
+        "purpose": "node-announce",
+        "domain": "hashgram/v1/hashgram-devnet/node-announce",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "484744310000000000000029686173686772616d2f76312f686173686772616d2d6465766e65742f6e6f64652d616e6e6f756e636500000000000000077061796c6f6164",
+        "digest_hex": "94cf524c62862a925dc69657f8c2a88d30790e3bbde74964684e2a3680394515"
+      },
+      {
+        "purpose": "node-announce",
+        "domain": "hashgram/v1/hashgram-devnet/node-announce",
+        "payload_hex": "6162",
+        "preimage_hex": "484744310000000000000029686173686772616d2f76312f686173686772616d2d6465766e65742f6e6f64652d616e6e6f756e636500000000000000026162",
+        "digest_hex": "802ee05d12c29d874d9b40cf2d39622838996bb4cf8ac96755bb3a26ee637beb"
+      },
+      {
+        "purpose": "node-announce",
+        "domain": "hashgram/v1/hashgram-devnet/node-announce",
+        "payload_hex": "616263",
+        "preimage_hex": "484744310000000000000029686173686772616d2f76312f686173686772616d2d6465766e65742f6e6f64652d616e6e6f756e63650000000000000003616263",
+        "digest_hex": "47245067559b1502fa32442baad8f27d46bdf608cfefc153365f7ab3cd4d9582"
+      },
+      {
+        "purpose": "node-announce",
+        "domain": "hashgram/v1/hashgram-devnet/node-announce",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "484744310000000000000029686173686772616d2f76312f686173686772616d2d6465766e65742f6e6f64652d616e6e6f756e6365000000000000000400ff7f80",
+        "digest_hex": "fe2a795f14fc8550c6275ac7c74513babec2cce87403c3519b399566f9473881"
+      }
+    ]
+  },
+  "mainnet": {
+    "network_name": "Hashgram Mainnet",
+    "network_id": "hashgram-mainnet",
+    "chain_id": "hashgram-1",
+    "network_magic": "HGM1",
+    "network_magic_hex": "48474d31",
+    "protocol_major_version": 1,
+    "genesis_hash": "9348af00681eecefb8d6329d5ba101c13bc3c8943f2c610295026f6503654287",
+    "vectors": [
+      {
+        "purpose": "social-event",
+        "domain": "hashgram/v1/hashgram-mainnet/social-event",
+        "payload_hex": "",
+        "preimage_hex": "48474d310000000000000029686173686772616d2f76312f686173686772616d2d6d61696e6e65742f736f6369616c2d6576656e740000000000000000",
+        "digest_hex": "93e798496f61eb9f0bee0184e874be5abca6d4bced65d59ec8db5d7d6dd217ac"
+      },
+      {
+        "purpose": "social-event",
+        "domain": "hashgram/v1/hashgram-mainnet/social-event",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d310000000000000029686173686772616d2f76312f686173686772616d2d6d61696e6e65742f736f6369616c2d6576656e7400000000000000077061796c6f6164",
+        "digest_hex": "10bfd20c5bd2edeb87efb983fd6eb9acf3d4aee1c2c103f5f439839b6bc5d5a2"
+      },
+      {
+        "purpose": "social-event",
+        "domain": "hashgram/v1/hashgram-mainnet/social-event",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d310000000000000029686173686772616d2f76312f686173686772616d2d6d61696e6e65742f736f6369616c2d6576656e7400000000000000026162",
+        "digest_hex": "84dac984a96c83f13cb48110d265cd53483f2dd63a72c7163bed6064ab1534a8"
+      },
+      {
+        "purpose": "social-event",
+        "domain": "hashgram/v1/hashgram-mainnet/social-event",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d310000000000000029686173686772616d2f76312f686173686772616d2d6d61696e6e65742f736f6369616c2d6576656e740000000000000003616263",
+        "digest_hex": "0600029162cda9a06f8e8bc8f02ffdee2a82d337711ae16003ba4d67f9c0d123"
+      },
+      {
+        "purpose": "social-event",
+        "domain": "hashgram/v1/hashgram-mainnet/social-event",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d310000000000000029686173686772616d2f76312f686173686772616d2d6d61696e6e65742f736f6369616c2d6576656e74000000000000000400ff7f80",
+        "digest_hex": "4ba7007d44f5214b929f5842e39e42cdd6212c06054c289b280b11c9f6b6f87f"
+      },
+      {
+        "purpose": "device-cert",
+        "domain": "hashgram/v1/hashgram-mainnet/device-cert",
+        "payload_hex": "",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6465766963652d636572740000000000000000",
+        "digest_hex": "7aad59d8f61717e962d62e58ffffeeccae2f4a6ed71c432c304356775fe9def6"
+      },
+      {
+        "purpose": "device-cert",
+        "domain": "hashgram/v1/hashgram-mainnet/device-cert",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6465766963652d6365727400000000000000077061796c6f6164",
+        "digest_hex": "8237ce3749b5b6ffed29b9a97ff0d61ef3d77b86fed48f3449eed5e7a1462838"
+      },
+      {
+        "purpose": "device-cert",
+        "domain": "hashgram/v1/hashgram-mainnet/device-cert",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6465766963652d6365727400000000000000026162",
+        "digest_hex": "acb047423c2c49d50aee71b6fe10ecdef73a2e9d3fcc488a6efbae568da37bcc"
+      },
+      {
+        "purpose": "device-cert",
+        "domain": "hashgram/v1/hashgram-mainnet/device-cert",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6465766963652d636572740000000000000003616263",
+        "digest_hex": "0fc0d083e59deecc620923e2bf5893f57cb62ff68dae92ad876a312858c826ae"
+      },
+      {
+        "purpose": "device-cert",
+        "domain": "hashgram/v1/hashgram-mainnet/device-cert",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6465766963652d63657274000000000000000400ff7f80",
+        "digest_hex": "ee0d58921a7fee653b392bdcdc13e131a252d73fe4d220533569a029aea322e9"
+      },
+      {
+        "purpose": "service-receipt",
+        "domain": "hashgram/v1/hashgram-mainnet/service-receipt",
+        "payload_hex": "",
+        "preimage_hex": "48474d31000000000000002c686173686772616d2f76312f686173686772616d2d6d61696e6e65742f736572766963652d726563656970740000000000000000",
+        "digest_hex": "2bb1b8249155793f980737a4a5c1fc0d43a98ccfd37469b22f12fc9657507ea5"
+      },
+      {
+        "purpose": "service-receipt",
+        "domain": "hashgram/v1/hashgram-mainnet/service-receipt",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d31000000000000002c686173686772616d2f76312f686173686772616d2d6d61696e6e65742f736572766963652d7265636569707400000000000000077061796c6f6164",
+        "digest_hex": "a0d2b1d46bb2e1328fddb750dbdcacf1868d456798874d96c61305cbeef6ceac"
+      },
+      {
+        "purpose": "service-receipt",
+        "domain": "hashgram/v1/hashgram-mainnet/service-receipt",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d31000000000000002c686173686772616d2f76312f686173686772616d2d6d61696e6e65742f736572766963652d7265636569707400000000000000026162",
+        "digest_hex": "a34099ac2fe2039688c1be25d8d9d1617fff5616cfdab2473ee66f53aa40839a"
+      },
+      {
+        "purpose": "service-receipt",
+        "domain": "hashgram/v1/hashgram-mainnet/service-receipt",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d31000000000000002c686173686772616d2f76312f686173686772616d2d6d61696e6e65742f736572766963652d726563656970740000000000000003616263",
+        "digest_hex": "ddddd1ebfd8390aad7cd0be9c94cf0b3a1ba6d0f72e8efb719d238f043490b50"
+      },
+      {
+        "purpose": "service-receipt",
+        "domain": "hashgram/v1/hashgram-mainnet/service-receipt",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d31000000000000002c686173686772616d2f76312f686173686772616d2d6d61696e6e65742f736572766963652d72656365697074000000000000000400ff7f80",
+        "digest_hex": "bf8530880f129f8f15269dd7081aa90e885d357f7e1309afdc3ffbfc95a63f63"
+      },
+      {
+        "purpose": "storage-challenge",
+        "domain": "hashgram/v1/hashgram-mainnet/storage-challenge",
+        "payload_hex": "",
+        "preimage_hex": "48474d31000000000000002e686173686772616d2f76312f686173686772616d2d6d61696e6e65742f73746f726167652d6368616c6c656e67650000000000000000",
+        "digest_hex": "88f235a9055a89d7c8ce2b4981c5736607b16ed5dbf855994a72b3a6a71ce5aa"
+      },
+      {
+        "purpose": "storage-challenge",
+        "domain": "hashgram/v1/hashgram-mainnet/storage-challenge",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d31000000000000002e686173686772616d2f76312f686173686772616d2d6d61696e6e65742f73746f726167652d6368616c6c656e676500000000000000077061796c6f6164",
+        "digest_hex": "62fab2d9c32aa83988b2872e8ce0b865dfd0566c8b1c2f97597326bbde6e9701"
+      },
+      {
+        "purpose": "storage-challenge",
+        "domain": "hashgram/v1/hashgram-mainnet/storage-challenge",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d31000000000000002e686173686772616d2f76312f686173686772616d2d6d61696e6e65742f73746f726167652d6368616c6c656e676500000000000000026162",
+        "digest_hex": "9d6ea4e0317f58649ff02edfdfa841be98811f9e8c27cd57ef253d3657569013"
+      },
+      {
+        "purpose": "storage-challenge",
+        "domain": "hashgram/v1/hashgram-mainnet/storage-challenge",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d31000000000000002e686173686772616d2f76312f686173686772616d2d6d61696e6e65742f73746f726167652d6368616c6c656e67650000000000000003616263",
+        "digest_hex": "da3a166b7372403fc356115fa952265c0f111ab4f67afe02d28ca730b26713ab"
+      },
+      {
+        "purpose": "storage-challenge",
+        "domain": "hashgram/v1/hashgram-mainnet/storage-challenge",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d31000000000000002e686173686772616d2f76312f686173686772616d2d6d61696e6e65742f73746f726167652d6368616c6c656e6765000000000000000400ff7f80",
+        "digest_hex": "1b8a8a97dc0736227777ff2a9038222fef7ce3b792c4d324c1be90b2627bd0a4"
+      },
+      {
+        "purpose": "eligibility-attestation",
+        "domain": "hashgram/v1/hashgram-mainnet/eligibility-attestation",
+        "payload_hex": "",
+        "preimage_hex": "48474d310000000000000034686173686772616d2f76312f686173686772616d2d6d61696e6e65742f656c69676962696c6974792d6174746573746174696f6e0000000000000000",
+        "digest_hex": "9e914133ea419be45850b265ed6991df4d568315adfa694f662b42a2a70f6efc"
+      },
+      {
+        "purpose": "eligibility-attestation",
+        "domain": "hashgram/v1/hashgram-mainnet/eligibility-attestation",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d310000000000000034686173686772616d2f76312f686173686772616d2d6d61696e6e65742f656c69676962696c6974792d6174746573746174696f6e00000000000000077061796c6f6164",
+        "digest_hex": "50d7b01eadcbd92dd09e7e9e2c1cfb9e49f7f2567c9684e83884fc52080b4228"
+      },
+      {
+        "purpose": "eligibility-attestation",
+        "domain": "hashgram/v1/hashgram-mainnet/eligibility-attestation",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d310000000000000034686173686772616d2f76312f686173686772616d2d6d61696e6e65742f656c69676962696c6974792d6174746573746174696f6e00000000000000026162",
+        "digest_hex": "403e2ed3abc9e0cbeef3f8697318c64f534b4029c1170dcaadefcd5fc1f20131"
+      },
+      {
+        "purpose": "eligibility-attestation",
+        "domain": "hashgram/v1/hashgram-mainnet/eligibility-attestation",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d310000000000000034686173686772616d2f76312f686173686772616d2d6d61696e6e65742f656c69676962696c6974792d6174746573746174696f6e0000000000000003616263",
+        "digest_hex": "39e18b33eccce45a5aaabbc55aa91f81c04301d5476913a6be35c83b2daee518"
+      },
+      {
+        "purpose": "eligibility-attestation",
+        "domain": "hashgram/v1/hashgram-mainnet/eligibility-attestation",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d310000000000000034686173686772616d2f76312f686173686772616d2d6d61696e6e65742f656c69676962696c6974792d6174746573746174696f6e000000000000000400ff7f80",
+        "digest_hex": "018282094d499321d16199e816625435f961644b070dd8df13e472af8b6a7f45"
+      },
+      {
+        "purpose": "content-attestation",
+        "domain": "hashgram/v1/hashgram-mainnet/content-attestation",
+        "payload_hex": "",
+        "preimage_hex": "48474d310000000000000030686173686772616d2f76312f686173686772616d2d6d61696e6e65742f636f6e74656e742d6174746573746174696f6e0000000000000000",
+        "digest_hex": "96005837a1801fb816cb31361bce7356f3dff9ba2db7e9211efba1049aa0c482"
+      },
+      {
+        "purpose": "content-attestation",
+        "domain": "hashgram/v1/hashgram-mainnet/content-attestation",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d310000000000000030686173686772616d2f76312f686173686772616d2d6d61696e6e65742f636f6e74656e742d6174746573746174696f6e00000000000000077061796c6f6164",
+        "digest_hex": "39da1b0b7ed4aea9db53b867f2b8e418a08ddf218612b6a752c41b131cf45ceb"
+      },
+      {
+        "purpose": "content-attestation",
+        "domain": "hashgram/v1/hashgram-mainnet/content-attestation",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d310000000000000030686173686772616d2f76312f686173686772616d2d6d61696e6e65742f636f6e74656e742d6174746573746174696f6e00000000000000026162",
+        "digest_hex": "b74cf3978729eeaee1e819c020cf1057d737409cc5721b24f3c21367129f2c3d"
+      },
+      {
+        "purpose": "content-attestation",
+        "domain": "hashgram/v1/hashgram-mainnet/content-attestation",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d310000000000000030686173686772616d2f76312f686173686772616d2d6d61696e6e65742f636f6e74656e742d6174746573746174696f6e0000000000000003616263",
+        "digest_hex": "1ea48614380658331bddd68e2413ffd875e2e243d7f3c9fbf564e28a46c480b1"
+      },
+      {
+        "purpose": "content-attestation",
+        "domain": "hashgram/v1/hashgram-mainnet/content-attestation",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d310000000000000030686173686772616d2f76312f686173686772616d2d6d61696e6e65742f636f6e74656e742d6174746573746174696f6e000000000000000400ff7f80",
+        "digest_hex": "273723b32de6bd01eea69775e468fb06c67cf305c56d4283118a1873907e4c4e"
+      },
+      {
+        "purpose": "bootstrap-record",
+        "domain": "hashgram/v1/hashgram-mainnet/bootstrap-record",
+        "payload_hex": "",
+        "preimage_hex": "48474d31000000000000002d686173686772616d2f76312f686173686772616d2d6d61696e6e65742f626f6f7473747261702d7265636f72640000000000000000",
+        "digest_hex": "74ede1d87977f77e712cfed89359c103e2217c21334116e32cb4c33d78cdc4ff"
+      },
+      {
+        "purpose": "bootstrap-record",
+        "domain": "hashgram/v1/hashgram-mainnet/bootstrap-record",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d31000000000000002d686173686772616d2f76312f686173686772616d2d6d61696e6e65742f626f6f7473747261702d7265636f726400000000000000077061796c6f6164",
+        "digest_hex": "9619b4b8d7eb75c1938469bc1c307860271644bcf6025f415db0e134cc3cba29"
+      },
+      {
+        "purpose": "bootstrap-record",
+        "domain": "hashgram/v1/hashgram-mainnet/bootstrap-record",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d31000000000000002d686173686772616d2f76312f686173686772616d2d6d61696e6e65742f626f6f7473747261702d7265636f726400000000000000026162",
+        "digest_hex": "2bd85402602e891908224df33c9e458420248baf0c28ea623a9748d24d65612f"
+      },
+      {
+        "purpose": "bootstrap-record",
+        "domain": "hashgram/v1/hashgram-mainnet/bootstrap-record",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d31000000000000002d686173686772616d2f76312f686173686772616d2d6d61696e6e65742f626f6f7473747261702d7265636f72640000000000000003616263",
+        "digest_hex": "6597f960ecd8aa1905db32dfd0aaf206a935984111a0dd44bcecb1dae49967d6"
+      },
+      {
+        "purpose": "bootstrap-record",
+        "domain": "hashgram/v1/hashgram-mainnet/bootstrap-record",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d31000000000000002d686173686772616d2f76312f686173686772616d2d6d61696e6e65742f626f6f7473747261702d7265636f7264000000000000000400ff7f80",
+        "digest_hex": "81db03ba53d2627e0e8b7183082659373c52c582d5b408994aa8ece433a93046"
+      },
+      {
+        "purpose": "peer-handshake",
+        "domain": "hashgram/v1/hashgram-mainnet/peer-handshake",
+        "payload_hex": "",
+        "preimage_hex": "48474d31000000000000002b686173686772616d2f76312f686173686772616d2d6d61696e6e65742f706565722d68616e647368616b650000000000000000",
+        "digest_hex": "223c29c9507f8d5e4bb97b66271379d7ced70a2f0e30ca5ecd0009e472a574a1"
+      },
+      {
+        "purpose": "peer-handshake",
+        "domain": "hashgram/v1/hashgram-mainnet/peer-handshake",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d31000000000000002b686173686772616d2f76312f686173686772616d2d6d61696e6e65742f706565722d68616e647368616b6500000000000000077061796c6f6164",
+        "digest_hex": "9bc28621ac46a08c198e57874b2209e29dea8e9da01e64b0422923adea4967e5"
+      },
+      {
+        "purpose": "peer-handshake",
+        "domain": "hashgram/v1/hashgram-mainnet/peer-handshake",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d31000000000000002b686173686772616d2f76312f686173686772616d2d6d61696e6e65742f706565722d68616e647368616b6500000000000000026162",
+        "digest_hex": "c280785a6a7f2e093a597d95adfd9d250db0eb4d556f6ff510f52446d78d22de"
+      },
+      {
+        "purpose": "peer-handshake",
+        "domain": "hashgram/v1/hashgram-mainnet/peer-handshake",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d31000000000000002b686173686772616d2f76312f686173686772616d2d6d61696e6e65742f706565722d68616e647368616b650000000000000003616263",
+        "digest_hex": "0c52bd57a58b549a0cfbc6345a437181b76fabcc4c6fdc95ec51232375903cb2"
+      },
+      {
+        "purpose": "peer-handshake",
+        "domain": "hashgram/v1/hashgram-mainnet/peer-handshake",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d31000000000000002b686173686772616d2f76312f686173686772616d2d6d61696e6e65742f706565722d68616e647368616b65000000000000000400ff7f80",
+        "digest_hex": "eb661bda764f93e3e9b34e4ec00e9e6e5c58d88900c7482e1024f156dc5600c8"
+      },
+      {
+        "purpose": "node-announce",
+        "domain": "hashgram/v1/hashgram-mainnet/node-announce",
+        "payload_hex": "",
+        "preimage_hex": "48474d31000000000000002a686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6e6f64652d616e6e6f756e63650000000000000000",
+        "digest_hex": "573de4cd3c75507c3351773b271eb9fbe4f6417625d16326153ca0cfc36d085d"
+      },
+      {
+        "purpose": "node-announce",
+        "domain": "hashgram/v1/hashgram-mainnet/node-announce",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d31000000000000002a686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6e6f64652d616e6e6f756e636500000000000000077061796c6f6164",
+        "digest_hex": "6b92247d6adea4486021eea93bb97f7584d22c976852391841b2a819caf8c36e"
+      },
+      {
+        "purpose": "node-announce",
+        "domain": "hashgram/v1/hashgram-mainnet/node-announce",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d31000000000000002a686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6e6f64652d616e6e6f756e636500000000000000026162",
+        "digest_hex": "70d023a925483d6c4c28abdee728559c0256f2f0d2eaa46246a37d8558537f34"
+      },
+      {
+        "purpose": "node-announce",
+        "domain": "hashgram/v1/hashgram-mainnet/node-announce",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d31000000000000002a686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6e6f64652d616e6e6f756e63650000000000000003616263",
+        "digest_hex": "bcdd58e1ce5356c5f43462e3e93497510a79a055ad5903b351cd4d4bc1dbc771"
+      },
+      {
+        "purpose": "node-announce",
+        "domain": "hashgram/v1/hashgram-mainnet/node-announce",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d31000000000000002a686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6e6f64652d616e6e6f756e6365000000000000000400ff7f80",
+        "digest_hex": "95388868a93c5049aad72aca3cb15ae63ca96fc5d529bcb05805b890ec0f713e"
+      }
+    ]
+  }
+}

@@ -77,3 +77,6 @@ coverage.html
 # Release artefacts. Reproducible from source with scripts/dev/release.sh, so
 # there is no reason to carry binaries in git.
 /dist/
+
+# Rust build output. Reproducible from source.
+node/target/
