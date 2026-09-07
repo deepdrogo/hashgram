@@ -100,7 +100,7 @@ async fn three_nodes_verify_each_other_and_exchange_requests() {
     }
     wait_for(&mut c.events, |e| matches!(e, Event::PeerVerified { .. })).await;
 
-    // B asks A for peers; A's application answers.
+    // B sends an application-level request; A's application answers.
     let b_handle = b.handle.clone();
     let a_peer = a.handle.peer_id();
     let req = tokio::spawn(async move {
@@ -109,7 +109,8 @@ async fn three_nodes_verify_each_other_and_exchange_requests() {
                 a_peer,
                 vec![],
                 pb::Request {
-                    body: Some(pb::request::Body::PeerExchange(pb::PeerExchange {
+                    body: Some(pb::request::Body::AnnounceQuery(pb::AnnounceQuery {
+                        roles: vec![],
                         limit: 5,
                     })),
                 },
@@ -125,22 +126,49 @@ async fn three_nodes_verify_each_other_and_exchange_requests() {
         assert_eq!(peer, b.handle.peer_id());
         assert!(matches!(
             request.body,
-            Some(pb::request::Body::PeerExchange(_))
+            Some(pb::request::Body::AnnounceQuery(_))
         ));
         a.handle
             .respond(
                 channel,
                 pb::Response {
-                    body: Some(pb::response::Body::PeerExchange(pb::PeerExchangeResult {
-                        addrs: vec![c.addr.to_string()],
-                    })),
+                    body: Some(pb::response::Body::AnnounceQuery(
+                        pb::AnnounceQueryResult::default(),
+                    )),
                 },
             )
             .await;
     }
     let resp = req.await.unwrap().unwrap();
+    assert!(matches!(
+        resp.body,
+        Some(pb::response::Body::AnnounceQuery(_))
+    ));
+
+    // Peer exchange is answered by the swarm itself, from verified peers
+    // only: B learns C's address from A without A's application involved.
+    let resp = b
+        .handle
+        .request(
+            a.handle.peer_id(),
+            vec![],
+            pb::Request {
+                body: Some(pb::request::Body::PeerExchange(pb::PeerExchange {
+                    limit: 5,
+                })),
+            },
+        )
+        .await
+        .unwrap();
     match resp.body {
-        Some(pb::response::Body::PeerExchange(r)) => assert_eq!(r.addrs, vec![c.addr.to_string()]),
+        Some(pb::response::Body::PeerExchange(r)) => {
+            let c_id = c.handle.peer_id().to_string();
+            assert!(
+                r.addrs.iter().any(|a| a.ends_with(&c_id)),
+                "peer exchange did not offer C: {:?}",
+                r.addrs
+            );
+        }
         other => panic!("unexpected response {other:?}"),
     }
 
@@ -207,13 +235,12 @@ async fn a_fork_with_a_different_genesis_is_rejected() {
 
 #[tokio::test]
 async fn an_unauthenticated_request_is_refused() {
-    // Two honest nodes, but B never dials A through the swarm's own
-    // handshake path: it sends a request while unverified. The gate refuses.
+    // B dials A and immediately queues an application request. The swarm
+    // handshakes first, then flushes the queue, so the request reaches A's
+    // application only after A has verified B.
     let mut a = node(GENESIS, &["bootstrap"], &[]).await;
     let b = node(GENESIS, &[], &[]).await;
 
-    // B dials and immediately queues a request. The swarm handshakes first,
-    // then flushes, so the request succeeds — proving the queue path.
     let b_handle = b.handle.clone();
     let a_addr = a.addr.clone();
     let a_peer = a.handle.peer_id();
@@ -223,9 +250,9 @@ async fn an_unauthenticated_request_is_refused() {
                 a_peer,
                 vec![a_addr],
                 pb::Request {
-                    body: Some(pb::request::Body::PeerExchange(pb::PeerExchange {
-                        limit: 1,
-                    })),
+                    body: Some(pb::request::Body::AnnounceQuery(
+                        pb::AnnounceQuery::default(),
+                    )),
                 },
             )
             .await
@@ -238,9 +265,9 @@ async fn an_unauthenticated_request_is_refused() {
             .respond(
                 channel,
                 pb::Response {
-                    body: Some(pb::response::Body::PeerExchange(pb::PeerExchangeResult {
-                        addrs: vec![],
-                    })),
+                    body: Some(pb::response::Body::AnnounceQuery(
+                        pb::AnnounceQueryResult::default(),
+                    )),
                 },
             )
             .await;

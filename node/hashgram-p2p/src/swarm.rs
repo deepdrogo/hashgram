@@ -852,6 +852,7 @@ impl Runner {
         reply: oneshot::Sender<Result<pb::Response, RequestError>>,
     ) {
         if self.verified.contains_key(&peer) {
+            debug!(%peer, kind = ?request_kind(&request), "sending request");
             self.metrics
                 .requests_out
                 .get_or_create(&KindLabel {
@@ -1147,6 +1148,7 @@ impl Runner {
         channel: ResponseChannel<pb::Response>,
     ) {
         let kind = request_kind(&request);
+        debug!(%peer, ?kind, "inbound request");
         self.metrics
             .requests_in
             .get_or_create(&KindLabel { kind })
