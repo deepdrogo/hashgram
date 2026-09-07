@@ -74,19 +74,55 @@ pub enum ConfigError {
         /// What was configured.
         value: String,
     },
+
+    /// A role this build does not know.
+    #[error("role {value:?} is unknown; valid roles: relay, store, media, bootstrap, call, indexer, safety")]
+    UnknownRole {
+        /// What was configured.
+        value: String,
+    },
 }
+
+/// Roles the P2P node understands. `validator` is a chain-node role and is
+/// deliberately absent: the P2P daemon never holds a consensus key.
+pub const KNOWN_ROLES: [&str; 7] = [
+    "relay",
+    "store",
+    "media",
+    "bootstrap",
+    "call",
+    "indexer",
+    "safety",
+];
 
 /// A Hashgram node's configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeConfig {
     /// `mainnet` or `devnet`.
+    ///
+    /// May be left empty in the file, in which case the daemon fills it from
+    /// `/etc/hashgram/network.json`, the pin `hashgramctl join-mainnet`
+    /// writes. Validation refuses an empty value either way.
+    #[serde(default)]
     pub network: String,
 
     /// The pinned genesis hash, 64 lowercase hex characters.
     ///
-    /// Copied from `/etc/hashgram/network.json`, which `hashgramctl
-    /// join-mainnet` writes after verifying it.
+    /// Same source as `network`. Present here so a node can be configured
+    /// from one file in tests; in production the pin file is authoritative
+    /// and a disagreement between the two is a startup failure.
+    #[serde(default)]
     pub genesis_hash: String,
+
+    /// Roles this node serves: any of `relay`, `store`, `media`,
+    /// `bootstrap`, `call`, `indexer`, `safety`. Filled from
+    /// `/etc/hashgram/roles.json` when empty.
+    #[serde(default)]
+    pub roles: Vec<String>,
+
+    /// Where the node keeps its key, stores and indexes.
+    #[serde(default = "default_data_dir")]
+    pub data_dir: String,
 
     /// Address to listen on.
     #[serde(default = "default_listen_addr")]
@@ -108,6 +144,36 @@ pub struct NodeConfig {
     /// fix, and this field is how an operator uses them.
     #[serde(default)]
     pub bootstrap_peers: Vec<String>,
+
+    /// Paths to signed bootstrap record files (`BootstrapRecord` protobuf).
+    /// Records from signers not in `trusted_bootstrap_signers` are ignored.
+    #[serde(default)]
+    pub bootstrap_records: Vec<String>,
+
+    /// Hex ed25519 public keys allowed to sign bootstrap records.
+    #[serde(default)]
+    pub trusted_bootstrap_signers: Vec<String>,
+
+    /// Optional DNS names carrying `_dnsaddr` TXT records with multiaddrs.
+    /// Convenience only: a node with an empty list and a populated
+    /// peerstore never touches DNS.
+    #[serde(default)]
+    pub dnsaddr: Vec<String>,
+
+    /// External multiaddrs to announce, for nodes behind a known NAT or on a
+    /// host with a fixed public address. Empty means "learn from autonat".
+    #[serde(default)]
+    pub announce_addrs: Vec<String>,
+
+    /// Keep dialling bootstrap candidates until this many peers are
+    /// verified.
+    #[serde(default = "default_min_peers")]
+    pub min_peers: usize,
+
+    /// Serve circuit relay for peers behind NAT. Costs bandwidth; the
+    /// default follows the `relay` role.
+    #[serde(default)]
+    pub serve_relay: Option<bool>,
 
     /// Maximum connections from one peer.
     #[serde(default = "default_max_per_peer")]
@@ -140,6 +206,90 @@ pub struct NodeConfig {
     /// detail; exposing it hands an attacker a reconnaissance feed.
     #[serde(default = "default_metrics_addr")]
     pub metrics_addr: String,
+
+    /// Where to bind the local JSON API used by `hashgramctl`, the indexer,
+    /// the safety engine and same-host clients. Localhost by default for the
+    /// same reason as metrics.
+    #[serde(default = "default_api_addr")]
+    pub api_addr: String,
+
+    /// CometBFT RPC of the co-located chain node, for identity and provider
+    /// lookups.
+    #[serde(default = "default_chain_rpc")]
+    pub chain_rpc: String,
+
+    /// Cosmos SDK REST (gRPC-gateway) of the co-located chain node.
+    #[serde(default = "default_chain_api")]
+    pub chain_api: String,
+
+    /// Storage the `store`/`media` roles may use, in bytes. Zero means
+    /// "unlimited", which is never what an operator wants on a shared disk,
+    /// so `hashgramctl configure-role --declared-storage` always sets it.
+    #[serde(default)]
+    pub storage_quota_bytes: u64,
+
+    /// Hex ed25519 public keys of content-safety attestors this node
+    /// honours. A block from an unlisted attestor is recorded but not
+    /// enforced.
+    #[serde(default)]
+    pub trusted_attestors: Vec<String>,
+
+    /// Address that receives useful-service rewards. Distinct from any key
+    /// on this machine.
+    #[serde(default)]
+    pub reward_address: String,
+
+    /// TURN URIs this node announces when serving the `call` role, e.g.
+    /// `turn:203.0.113.5:3478?transport=udp`.
+    #[serde(default)]
+    pub turn_uris: Vec<String>,
+
+    /// The coturn realm.
+    #[serde(default)]
+    pub turn_realm: String,
+
+    /// Path to a file holding coturn's `static-auth-secret`, readable by the
+    /// node's service account and nobody else. When set, the node issues
+    /// time-limited TURN credentials to authenticated devices.
+    #[serde(default)]
+    pub turn_secret_file: String,
+
+    /// WebSocket URL of a co-located SFU (LiveKit), announced under the
+    /// `call` role when set.
+    #[serde(default)]
+    pub sfu_url: String,
+
+    /// How long to keep social events, in days. Events are also bounded by
+    /// `max_events`, whichever is reached first.
+    #[serde(default = "default_event_retention_days")]
+    pub event_retention_days: u32,
+
+    /// Most social events kept on this node.
+    #[serde(default = "default_max_events")]
+    pub max_events: u64,
+}
+
+fn default_event_retention_days() -> u32 {
+    90
+}
+fn default_max_events() -> u64 {
+    2_000_000
+}
+
+fn default_data_dir() -> String {
+    "/var/lib/hashgram/node".to_owned()
+}
+fn default_min_peers() -> usize {
+    4
+}
+fn default_api_addr() -> String {
+    "127.0.0.1:26672".to_owned()
+}
+fn default_chain_rpc() -> String {
+    "http://127.0.0.1:26657".to_owned()
+}
+fn default_chain_api() -> String {
+    "http://127.0.0.1:1317".to_owned()
 }
 
 fn default_listen_addr() -> IpAddr {
@@ -212,7 +362,34 @@ impl NodeConfig {
             }
         }
 
+        for role in &self.roles {
+            if !KNOWN_ROLES.contains(&role.as_str()) {
+                return Err(ConfigError::UnknownRole {
+                    value: role.clone(),
+                });
+            }
+        }
+
         Ok(identity)
+    }
+
+    /// Whether this node serves a role.
+    #[must_use]
+    pub fn has_role(&self, role: &str) -> bool {
+        self.roles.iter().any(|r| r == role)
+    }
+
+    /// Whether to serve circuit relay: the explicit setting, else the role.
+    #[must_use]
+    pub fn serves_relay(&self) -> bool {
+        self.serve_relay
+            .unwrap_or_else(|| self.has_role("relay") || self.has_role("bootstrap"))
+    }
+
+    /// Whether this node stores envelopes, key packages and blobs.
+    #[must_use]
+    pub fn stores(&self) -> bool {
+        self.has_role("store") || self.has_role("media")
     }
 
     /// Whether the metrics endpoint is bound to a loopback address.
@@ -264,20 +441,10 @@ mod tests {
     const GENESIS: &str = "9348af00681eecefb8d6329d5ba101c13bc3c8943f2c610295026f6503654287";
 
     fn valid() -> NodeConfig {
-        NodeConfig {
-            network: "mainnet".to_owned(),
-            genesis_hash: GENESIS.to_owned(),
-            listen_addr: default_listen_addr(),
-            listen_port: 26670,
-            transport: Transport::Both,
-            bootstrap_peers: vec![],
-            max_connections_per_peer: 2,
-            max_connections_per_subnet: 4,
-            max_inbound_connections: 128,
-            max_outbound_connections: 32,
-            peerstore_path: default_peerstore_path(),
-            metrics_addr: default_metrics_addr(),
-        }
+        let mut cfg: NodeConfig = toml::from_str("").expect("all fields default");
+        cfg.network = "mainnet".to_owned();
+        cfg.genesis_hash = GENESIS.to_owned();
+        cfg
     }
 
     #[test]
@@ -435,14 +602,36 @@ mod tests {
     }
 
     #[test]
-    fn a_config_missing_the_genesis_hash_does_not_parse_at_all() {
-        // Not defaulted to empty and then caught by validate: absent from
-        // the file is a parse error, so the message names the field.
+    fn a_config_missing_the_genesis_hash_fails_validation() {
+        // Absent from the file is permitted, because the daemon fills the
+        // pin from network.json; but validation must still refuse an empty
+        // one, otherwise a node with no pin file at all would start.
         let toml = r#"network = "mainnet""#;
-        assert!(
-            toml::from_str::<NodeConfig>(toml).is_err(),
-            "a config with no genesis_hash parsed"
-        );
+        let cfg: NodeConfig = toml::from_str(toml).expect("parses with defaults");
+        assert!(matches!(
+            cfg.validate(),
+            Err(ConfigError::GenesisHash { .. })
+        ));
+    }
+
+    #[test]
+    fn an_unknown_role_is_refused() {
+        let mut cfg = valid();
+        cfg.roles = vec!["validator".to_owned()];
+        assert!(matches!(
+            cfg.validate(),
+            Err(ConfigError::UnknownRole { .. })
+        ));
+    }
+
+    #[test]
+    fn relay_service_follows_the_role_unless_overridden() {
+        let mut cfg = valid();
+        assert!(!cfg.serves_relay());
+        cfg.roles = vec!["relay".to_owned()];
+        assert!(cfg.serves_relay());
+        cfg.serve_relay = Some(false);
+        assert!(!cfg.serves_relay());
     }
 
     #[test]

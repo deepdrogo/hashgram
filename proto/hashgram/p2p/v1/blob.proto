@@ -1,0 +1,102 @@
+syntax = "proto3";
+package hashgram.p2p.v1;
+
+// Content-addressed blob storage.
+//
+// A blob is split into fixed-size chunks, each identified by its BLAKE3
+// hash. The manifest lists them, and the content identifier (CID) is the
+// BLAKE3 hash of the canonical manifest. Anyone holding the CID can verify
+// every byte they receive, from any provider, so providers need not be
+// trusted and can be found through the DHT rather than through a fixed
+// address.
+//
+// Private blobs are encrypted by the client before chunking. The manifest of
+// an encrypted blob describes ciphertext; the key travels inside the E2EE
+// message that references the blob, never through a node.
+
+message BlobManifest {
+  // Manifest format version. 1.
+  uint32 version = 1;
+  // Total blob size in bytes.
+  uint64 size = 2;
+  // Chunk size in bytes. Every chunk but the last is exactly this long.
+  uint32 chunk_size = 3;
+  // BLAKE3 hash of each chunk, in order.
+  repeated bytes chunks = 4;
+  // Declared MIME type. For encrypted blobs, the MIME of the ciphertext
+  // container, "application/octet-stream".
+  string mime = 5;
+  // Whether the chunks are client-side encrypted.
+  bool encrypted = 6;
+}
+
+message BlobGetManifest {
+  bytes cid = 1;
+}
+
+message BlobManifestResult {
+  bool found = 1;
+  BlobManifest manifest = 2;
+}
+
+message BlobGetChunk {
+  bytes cid = 1;
+  uint32 index = 2;
+}
+
+message BlobChunk {
+  bool found = 1;
+  bytes data = 2;
+}
+
+// Ask a provider whether it holds a blob, and how much of it.
+message BlobHas {
+  bytes cid = 1;
+}
+
+message BlobHasResult {
+  bool has_manifest = 1;
+  uint32 chunks_present = 2;
+  uint32 chunks_total = 3;
+}
+
+// Upload: the manifest first, then chunks. Either may be refused for quota.
+message BlobPutManifest {
+  bytes cid = 1;
+  BlobManifest manifest = 2;
+  // Who is uploading, so quota is per identity. Raw ed25519 device key.
+  bytes uploader_pubkey = 3;
+  uint64 timestamp = 4;
+  // Signature over cid, uploader_pubkey and timestamp under the
+  // "blob-upload" purpose.
+  bytes signature = 5;
+}
+
+message BlobPutManifestResult {
+  bool accepted = 1;
+  string reason = 2;
+  // Which chunks this provider still needs, so an interrupted upload
+  // resumes rather than restarts.
+  repeated uint32 missing_chunks = 3;
+}
+
+message BlobPutChunk {
+  bytes cid = 1;
+  uint32 index = 2;
+  bytes data = 3;
+}
+
+message BlobPutChunkResult {
+  bool accepted = 1;
+  string reason = 2;
+}
+
+// Replication health, as a node reports it for a blob it holds.
+message BlobHealth {
+  bytes cid = 1;
+  uint32 target_replicas = 2;
+  uint32 known_replicas = 3;
+  // "HEALTHY", "DEGRADED", "LOST".
+  string status = 4;
+  repeated string providers = 5;
+}

@@ -55,6 +55,10 @@ var purposes = []params.SigningPurpose{
 	params.PurposeBootstrapRecord,
 	params.PurposePeerHandshake,
 	params.PurposeNodeAnnounce,
+	params.PurposeMailboxFetch,
+	params.PurposeMailboxAck,
+	params.PurposeKeyPackage,
+	params.PurposeBlobUpload,
 }
 
 // payloads exercise the cases that have historically broken framing:

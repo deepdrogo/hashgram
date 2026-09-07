@@ -20,19 +20,19 @@
 //!
 //! | Behaviour | Why |
 //! | --- | --- |
-//! | Gossipsub | Social events and envelope announcements, partitioned by topic |
-//! | Kademlia | Provider discovery for blobs, and peer discovery |
+//! | Request-response (`/hashgram/rpc/1`) | Handshake, mailbox, blob, queries |
+//! | Gossipsub | Social events, announcements, attestations, mailbox notifies |
+//! | Kademlia | Provider discovery for blobs and mailboxes, peer discovery |
 //! | Identify | Learn a peer's addresses and protocols |
 //! | Autonat | Learn whether we are publicly reachable before advertising |
-//! | Relay | Reach peers behind NAT that autonat says are unreachable |
+//! | Relay, DCUtR | Reach peers behind NAT, then hole-punch |
 //! | Ping | Liveness, and a latency signal for peer scoring |
 //!
-//! # Status
+//! # The handshake gate
 //!
-//! Peer scoring, connection limits, the persistent peerstore and the
-//! handshake are implemented and tested here. Wiring them into a running
-//! swarm, and the messaging and storage protocols that ride on top, is the
-//! remainder of Phase 2.
+//! Every connection begins with the Hashgram handshake, which verifies all
+//! five parts of the network identity including the genesis hash. Nothing
+//! else is served to a peer that has not passed it. See [`swarm`].
 
 #![forbid(unsafe_code)]
 // The workspace denies panicking constructs because this daemon parses
@@ -52,10 +52,94 @@
     )
 )]
 
+mod behaviour;
+mod codec;
 mod config;
 mod limits;
+pub mod metrics;
+pub mod peerstore;
 mod score;
+pub mod swarm;
 
-pub use config::{ConfigError, NodeConfig, Transport};
+pub use codec::RPC_PROTOCOL;
+pub use config::{ConfigError, NodeConfig, Transport, KNOWN_ROLES};
 pub use limits::{ConnectionLimits, LimitDecision};
 pub use score::{PeerScore, ScoreEvent, Scoreboard, BAN_THRESHOLD, GRAYLIST_THRESHOLD};
+pub use swarm::{start, Command, Event, NodeHandle, PeerSummary, RequestError, StartError, Stats};
+
+/// Re-exported so callers do not need a direct libp2p dependency for the
+/// handful of types that cross the handle boundary.
+pub use libp2p::gossipsub::{MessageAcceptance, MessageId};
+pub use libp2p::identity as libp2p_identity;
+pub use libp2p::identity::Keypair;
+pub use libp2p::request_response::ResponseChannel;
+pub use libp2p::{Multiaddr, PeerId};
+
+/// Gossip topic names. One place, so the publisher and every subscriber
+/// agree, and so a topic can be recognised by its family for metrics.
+pub mod topics {
+    /// Number of social shards. Authors are spread across them by address
+    /// hash so no single topic carries every post on the network.
+    pub const SOCIAL_SHARDS: u32 = 64;
+
+    fn prefix(network_id: &str) -> String {
+        format!("hashgram/{network_id}")
+    }
+
+    /// The shard an author's events are published on.
+    #[must_use]
+    pub fn social_shard(network_id: &str, author: &str) -> String {
+        let h = blake3::hash(author.as_bytes());
+        let n = u32::from_be_bytes([
+            h.as_bytes()[0],
+            h.as_bytes()[1],
+            h.as_bytes()[2],
+            h.as_bytes()[3],
+        ]) % SOCIAL_SHARDS;
+        format!("{}/social/shard/{n}", prefix(network_id))
+    }
+
+    /// All social shard topics, for a node that indexes everything.
+    #[must_use]
+    pub fn all_social_shards(network_id: &str) -> Vec<String> {
+        (0..SOCIAL_SHARDS)
+            .map(|n| format!("{}/social/shard/{n}", prefix(network_id)))
+            .collect()
+    }
+
+    /// A channel's topic.
+    #[must_use]
+    pub fn channel(network_id: &str, channel_id_hex: &str) -> String {
+        format!("{}/channel/{channel_id_hex}", prefix(network_id))
+    }
+
+    /// A hashtag's topic, by hash so the tag itself is not in the topic.
+    #[must_use]
+    pub fn tag(network_id: &str, tag: &str) -> String {
+        let h = blake3::hash(tag.to_lowercase().as_bytes());
+        format!(
+            "{}/tag/{}",
+            prefix(network_id),
+            hex::encode(&h.as_bytes()[..8])
+        )
+    }
+
+    /// Mailbox notification shard for a mailbox id.
+    #[must_use]
+    pub fn mailbox_shard(network_id: &str, mailbox: &[u8]) -> String {
+        let n = mailbox.first().copied().unwrap_or(0) as u32 % 16;
+        format!("{}/mailbox/{n}", prefix(network_id))
+    }
+
+    /// Node announcements.
+    #[must_use]
+    pub fn announce(network_id: &str) -> String {
+        format!("{}/announce", prefix(network_id))
+    }
+
+    /// Content safety attestations.
+    #[must_use]
+    pub fn safety(network_id: &str) -> String {
+        format!("{}/safety", prefix(network_id))
+    }
+}

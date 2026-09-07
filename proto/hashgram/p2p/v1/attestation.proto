@@ -1,0 +1,59 @@
+syntax = "proto3";
+package hashgram.p2p.v1;
+
+// Content safety attestations.
+//
+// A safety provider states a verdict about PUBLIC content and signs it.
+// Compliant nodes and indexers honour the verdicts of attestors they are
+// configured to trust. Nothing here can name private content: the attestor
+// never sees an E2EE envelope, and an attestation about one would be
+// unenforceable because no node can tell which envelope it refers to.
+
+enum Verdict {
+  VERDICT_UNSPECIFIED = 0;
+  CONTENT_ALLOW = 1;
+  CONTENT_RESTRICT = 2;
+  CONTENT_QUARANTINE = 3;
+  CONTENT_BLOCK = 4;
+  CONTENT_UNBLOCK = 5;
+}
+
+message ContentAttestation {
+  string network_id = 1;
+  uint32 version = 2;
+  // What is being attested: a blob CID, a social event id, or a media
+  // content hash. Exactly one is set.
+  bytes cid = 3;
+  bytes event_id = 4;
+  bytes content_hash = 5;
+  Verdict verdict = 6;
+  // The policy under which the verdict was reached, e.g. "hashgram-public-v1".
+  string policy = 7;
+  // Machine-readable reason: "csam-hash-match", "spam", "manual-review".
+  // Never free text that could carry the content itself.
+  string reason_code = 8;
+  uint64 timestamp = 9;
+  // Raw ed25519 public key of the attestor.
+  bytes attestor_pubkey = 10;
+  bytes signature = 11;
+}
+
+// Fetch attestations a node knows about for some content.
+message AttestationQuery {
+  repeated bytes cids = 1;
+  repeated bytes event_ids = 2;
+}
+
+message AttestationQueryResult {
+  repeated ContentAttestation attestations = 1;
+}
+
+// Publish an attestation through a node (attestor-facing, local API).
+message AttestationPublish {
+  ContentAttestation attestation = 1;
+}
+
+message AttestationPublishResult {
+  bool accepted = 1;
+  string reason = 2;
+}

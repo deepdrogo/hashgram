@@ -21,6 +21,10 @@ func SigningPurposes() []hgparams.SigningPurpose {
 		hgparams.PurposeBootstrapRecord,
 		hgparams.PurposePeerHandshake,
 		hgparams.PurposeNodeAnnounce,
+		hgparams.PurposeMailboxFetch,
+		hgparams.PurposeMailboxAck,
+		hgparams.PurposeKeyPackage,
+		hgparams.PurposeBlobUpload,
 	}
 }
 

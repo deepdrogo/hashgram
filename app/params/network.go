@@ -252,6 +252,16 @@ const (
 	PurposeBootstrapRecord  SigningPurpose = "bootstrap-record"
 	PurposePeerHandshake    SigningPurpose = "peer-handshake"
 	PurposeNodeAnnounce     SigningPurpose = "node-announce"
+
+	// Phase 2 off-chain purposes. Each is a distinct authority a device key
+	// exercises against a node: reading its own mailbox, deleting from it,
+	// publishing an MLS key package, and uploading a blob under its quota.
+	// Sharing one purpose between them would let a captured mailbox-fetch
+	// signature be replayed as an upload authorisation.
+	PurposeMailboxFetch SigningPurpose = "mailbox-fetch"
+	PurposeMailboxAck   SigningPurpose = "mailbox-ack"
+	PurposeKeyPackage   SigningPurpose = "key-package"
+	PurposeBlobUpload   SigningPurpose = "blob-upload"
 )
 
 // SigningDomain returns the domain-separation prefix string for a purpose on

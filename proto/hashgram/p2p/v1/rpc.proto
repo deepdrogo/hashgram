@@ -1,0 +1,95 @@
+syntax = "proto3";
+package hashgram.p2p.v1;
+
+import "hashgram/p2p/v1/announce.proto";
+import "hashgram/p2p/v1/attestation.proto";
+import "hashgram/p2p/v1/blob.proto";
+import "hashgram/p2p/v1/envelope.proto";
+import "hashgram/p2p/v1/handshake.proto";
+import "hashgram/p2p/v1/social.proto";
+
+// The single Hashgram request-response protocol, "/hashgram/rpc/1".
+//
+// One protocol with a typed body rather than one libp2p protocol per message
+// family, because every body shares the same rules: a peer that has not
+// completed the handshake gets nothing but a handshake, every frame is
+// length-prefixed and bounded, and every decode failure is a scoring event.
+// One codec is one place to enforce all of that, and one fuzz target.
+
+message Request {
+  oneof body {
+    Handshake handshake = 1;
+
+    MailboxPut mailbox_put = 10;
+    MailboxFetch mailbox_fetch = 11;
+    MailboxAck mailbox_ack = 12;
+    KeyPackagePublish key_package_publish = 13;
+    KeyPackageFetch key_package_fetch = 14;
+
+    EventFetch event_fetch = 20;
+    EventPublish event_publish = 21;
+
+    BlobGetManifest blob_get_manifest = 30;
+    BlobGetChunk blob_get_chunk = 31;
+    BlobHas blob_has = 32;
+    BlobPutManifest blob_put_manifest = 33;
+    BlobPutChunk blob_put_chunk = 34;
+
+    AnnounceQuery announce_query = 40;
+    PeerExchange peer_exchange = 41;
+
+    AttestationQuery attestation_query = 50;
+  }
+}
+
+// A refusal. Distinct from a transport error so the requester can tell "the
+// peer said no" from "the peer went away".
+message Error {
+  // "unauthenticated": handshake not completed.
+  // "unsupported":     this node does not serve that role.
+  // "rate_limited", "quota", "not_found", "invalid", "internal".
+  string code = 1;
+  string message = 2;
+}
+
+message Response {
+  oneof body {
+    Error error = 1;
+    HandshakeAck handshake = 2;
+
+    MailboxPutResult mailbox_put = 10;
+    MailboxFetchResult mailbox_fetch = 11;
+    MailboxAckResult mailbox_ack = 12;
+    KeyPackagePublishResult key_package_publish = 13;
+    KeyPackageFetchResult key_package_fetch = 14;
+
+    EventFetchResult event_fetch = 20;
+    EventPublishResult event_publish = 21;
+
+    BlobManifestResult blob_get_manifest = 30;
+    BlobChunk blob_get_chunk = 31;
+    BlobHasResult blob_has = 32;
+    BlobPutManifestResult blob_put_manifest = 33;
+    BlobPutChunkResult blob_put_chunk = 34;
+
+    AnnounceQueryResult announce_query = 40;
+    PeerExchangeResult peer_exchange = 41;
+
+    AttestationQueryResult attestation_query = 50;
+  }
+}
+
+// Gossip topics carry one of these. The topic name already says which
+// family, but a typed wrapper means a message on the wrong topic is a
+// decode-level rejection rather than a confusing application error.
+message Gossip {
+  oneof body {
+    SocialEvent social_event = 1;
+    EventAnnounce event_announce = 2;
+    NodeAnnounce node_announce = 3;
+    ContentAttestation attestation = 4;
+    // A mailbox has new mail: store nodes tell each other so a device
+    // polling any of them learns to fetch. Carries no content.
+    bytes mailbox_notify = 5;
+  }
+}

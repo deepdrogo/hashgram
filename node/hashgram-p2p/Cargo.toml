@@ -9,6 +9,31 @@ repository.workspace = true
 
 [dependencies]
 hashgram-net = { path = "../hashgram-net" }
+hashgram-proto = { path = "../hashgram-proto" }
+libp2p = { workspace = true, features = [
+    "tokio",
+    "quic",
+    "tcp",
+    "dns",
+    "noise",
+    "yamux",
+    "gossipsub",
+    "kad",
+    "identify",
+    "request-response",
+    "ping",
+    "autonat",
+    "relay",
+    "dcutr",
+    "macros",
+    "metrics",
+] }
+tokio.workspace = true
+async-trait = "0.1"
+futures.workspace = true
+prost.workspace = true
+blake3.workspace = true
+prometheus-client.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
@@ -16,6 +41,9 @@ thiserror.workspace = true
 toml.workspace = true
 tracing.workspace = true
 
+[dev-dependencies]
+tracing-subscriber.workspace = true
+libp2p = { workspace = true, features = ["tokio", "tcp", "noise", "yamux", "macros"] }
 
 [lints]
 workspace = true

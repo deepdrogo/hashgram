@@ -1,0 +1,28 @@
+[package]
+name = "hashgram-proto"
+description = "Hashgram off-chain wire types, canonical signing and frame bounds"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hashgram-net = { path = "../hashgram-net" }
+prost.workspace = true
+blake3.workspace = true
+ed25519-dalek.workspace = true
+getrandom.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+
+[build-dependencies]
+prost-build.workspace = true
+protox.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
+
+[lints]
+workspace = true

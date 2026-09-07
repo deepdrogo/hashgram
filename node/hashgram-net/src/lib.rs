@@ -44,10 +44,12 @@
     )
 )]
 
+pub mod canonical;
 mod handshake;
 mod identity;
 mod purpose;
 
+pub use canonical::{Buf as CanonicalBuf, CanonicalError, Fixed as CanonicalFixed};
 pub use handshake::{Handshake, HandshakeError, HandshakeResult};
 pub use identity::{
     compute_genesis_hash, NetworkIdentity, GENESIS_HASH_LEN, MAGIC_LEN, NETWORK_MAGIC_DEVNET,

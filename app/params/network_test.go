@@ -269,6 +269,10 @@ func TestSigningDomainSeparatesPurposes(t *testing.T) {
 		params.PurposeBootstrapRecord,
 		params.PurposePeerHandshake,
 		params.PurposeNodeAnnounce,
+		params.PurposeMailboxFetch,
+		params.PurposeMailboxAck,
+		params.PurposeKeyPackage,
+		params.PurposeBlobUpload,
 	}
 	for _, p := range purposes {
 		d := id.SigningDigest(p, payload)

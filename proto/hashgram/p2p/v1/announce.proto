@@ -1,0 +1,87 @@
+syntax = "proto3";
+package hashgram.p2p.v1;
+
+// Signed node announcements and bootstrap records.
+//
+// A node tells the network what it offers by signing an announcement with
+// its P2P identity key. Peers keep announcements in a local, expiring table
+// and answer "who offers TURN?" or "who stores blobs?" from it. An
+// announcement is a claim about availability, not a proof of service: what a
+// node is paid for is settled on chain against evidence, not against this.
+
+message TurnInfo {
+  // URIs in RFC 7065 form, e.g. "turn:203.0.113.5:3478?transport=udp".
+  repeated string uris = 1;
+  // The realm coturn is configured with.
+  string realm = 2;
+  // Whether time-limited credentials are issued through this node's API.
+  bool issues_credentials = 3;
+}
+
+message SfuInfo {
+  // WebSocket URL of the SFU signalling endpoint.
+  string url = 1;
+  // "livekit".
+  string kind = 2;
+}
+
+message NodeAnnounce {
+  string network_id = 1;
+  uint32 version = 2;
+  // Raw libp2p identity public key (protobuf-encoded as libp2p does).
+  bytes node_pubkey = 3;
+  // Roles as wire strings: "relay", "store", "media", "bootstrap", "call",
+  // "turn", "sfu", "indexer".
+  repeated string roles = 4;
+  // Multiaddrs this node is reachable at, including /p2p/<id>.
+  repeated string addrs = 5;
+  // Operator address on chain, so a client can check the provider is
+  // registered and bonded before relying on it.
+  string operator_address = 6;
+  // Declared storage capacity in bytes. Advertising, not entitlement.
+  uint64 declared_storage_bytes = 7;
+  uint64 timestamp = 8;
+  // Unix seconds after which peers drop this announcement.
+  uint64 expires_at = 9;
+  TurnInfo turn = 10;
+  SfuInfo sfu = 11;
+  // Signature by node_pubkey over the canonical encoding of every field
+  // above under the "node-announce" purpose.
+  bytes signature = 12;
+}
+
+// A signed list of bootstrap addresses.
+//
+// Released alongside binaries and optionally served over DNS. Because it is
+// signed, a hostile DNS answer or a tampered download cannot redirect a
+// fresh node to an attacker's peers; the signer's public key ships with the
+// software and can be cross-checked against the chain's network module.
+message BootstrapRecord {
+  string network_id = 1;
+  repeated string addrs = 2;
+  uint64 issued_at = 3;
+  uint64 expires_at = 4;
+  // Raw ed25519 public key of the record signer.
+  bytes signer_pubkey = 5;
+  bytes signature = 6;
+}
+
+// Ask a peer for the announcements it knows about, optionally filtered.
+message AnnounceQuery {
+  repeated string roles = 1;
+  uint32 limit = 2;
+}
+
+message AnnounceQueryResult {
+  repeated NodeAnnounce announcements = 1;
+}
+
+// Ask a peer for other peers it knows (peer exchange).
+message PeerExchange {
+  uint32 limit = 1;
+}
+
+message PeerExchangeResult {
+  // Multiaddrs including /p2p/<id>.
+  repeated string addrs = 1;
+}

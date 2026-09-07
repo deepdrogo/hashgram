@@ -40,12 +40,20 @@ pub enum SigningPurpose {
     PeerHandshake,
     /// A node announcing the services it offers.
     NodeAnnounce,
+    /// A device proving it owns a mailbox in order to read it.
+    MailboxFetch,
+    /// A device acknowledging envelopes so a store node may delete them.
+    MailboxAck,
+    /// A device publishing an MLS key package.
+    KeyPackage,
+    /// A device authorising a blob upload under its quota.
+    BlobUpload,
 }
 
 /// Every purpose, in a fixed order.
 ///
 /// Fixed so that iterating for tests or for operator output is reproducible.
-pub const ALL_PURPOSES: [SigningPurpose; 9] = [
+pub const ALL_PURPOSES: [SigningPurpose; 13] = [
     SigningPurpose::SocialEvent,
     SigningPurpose::DeviceCert,
     SigningPurpose::ServiceReceipt,
@@ -55,6 +63,10 @@ pub const ALL_PURPOSES: [SigningPurpose; 9] = [
     SigningPurpose::BootstrapRecord,
     SigningPurpose::PeerHandshake,
     SigningPurpose::NodeAnnounce,
+    SigningPurpose::MailboxFetch,
+    SigningPurpose::MailboxAck,
+    SigningPurpose::KeyPackage,
+    SigningPurpose::BlobUpload,
 ];
 
 impl SigningPurpose {
@@ -74,6 +86,10 @@ impl SigningPurpose {
             Self::BootstrapRecord => "bootstrap-record",
             Self::PeerHandshake => "peer-handshake",
             Self::NodeAnnounce => "node-announce",
+            Self::MailboxFetch => "mailbox-fetch",
+            Self::MailboxAck => "mailbox-ack",
+            Self::KeyPackage => "key-package",
+            Self::BlobUpload => "blob-upload",
         }
     }
 }

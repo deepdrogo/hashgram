@@ -1,0 +1,133 @@
+syntax = "proto3";
+package hashgram.p2p.v1;
+
+// Private messaging envelopes and the mailbox protocol.
+//
+// An envelope is ciphertext with a delivery label. A store node holds
+// envelopes for recipients that are offline and hands them over when the
+// recipient returns. The node never holds a key that opens one: the content
+// is an MLS (RFC 9420) message and the group secrets live only on members'
+// devices.
+//
+// What a store node learns from an envelope: the mailbox it is for (a hash of
+// a device key), when it was posted, when it expires, and its size. It does
+// not learn the sender, the group, or the content.
+
+// What kind of MLS message the ciphertext is. Needed so the receiving device
+// knows which OpenMLS entry point to hand it to; it says nothing about the
+// content.
+enum EnvelopeKind {
+  ENVELOPE_KIND_UNSPECIFIED = 0;
+  // An MLS Welcome, inviting the recipient device into a group.
+  ENVELOPE_KIND_MLS_WELCOME = 1;
+  // An MLS PrivateMessage carrying application data or a commit.
+  ENVELOPE_KIND_MLS_MESSAGE = 2;
+  // A group info / external join hint. Reserved.
+  ENVELOPE_KIND_MLS_GROUP_INFO = 3;
+}
+
+message Envelope {
+  // Network this envelope belongs to. A store node refuses envelopes for a
+  // network other than its own, so a fork cannot use Mainnet mailboxes.
+  string network_id = 1;
+  // Envelope format version. 1.
+  uint32 version = 2;
+  // BLAKE3 of the canonical encoding of every other field. Used for
+  // deduplication and acknowledgement.
+  bytes id = 3;
+  // The mailbox: BLAKE3 of the recipient device's public key. A device
+  // fetches its own mailbox by proving it holds the key.
+  bytes mailbox = 4;
+  EnvelopeKind kind = 5;
+  // The MLS message bytes, opaque to the node.
+  bytes ciphertext = 6;
+  // Unix seconds when the sender created it.
+  uint64 created_at = 7;
+  // Unix seconds after which a store node drops it unread. Bounded by the
+  // node's retention policy; a longer request is clamped, not honoured.
+  uint64 expires_at = 8;
+}
+
+// Store an envelope for later delivery.
+message MailboxPut {
+  Envelope envelope = 1;
+}
+
+message MailboxPutResult {
+  bool stored = 1;
+  // Why not, when not: quota, expiry too far, wrong network, oversized.
+  string reason = 2;
+  // What the node actually kept as the expiry, after clamping.
+  uint64 expires_at = 3;
+}
+
+// Fetch envelopes from a mailbox.
+//
+// Signed by the device key whose hash is the mailbox, so only the owning
+// device can read its queue. The timestamp bounds replay: a fetch signed more
+// than a few minutes ago is refused.
+message MailboxFetch {
+  bytes mailbox = 1;
+  // Raw ed25519 device public key. The node checks BLAKE3(key) == mailbox.
+  bytes device_pubkey = 2;
+  // Resume point from a previous MailboxFetchResult. Empty for the start.
+  bytes cursor = 3;
+  // Maximum envelopes to return. Clamped by the node.
+  uint32 limit = 4;
+  // Unix seconds at signing.
+  uint64 timestamp = 5;
+  // Signature over the canonical encoding of mailbox, cursor, limit and
+  // timestamp under the "mailbox-fetch" purpose.
+  bytes signature = 6;
+}
+
+message MailboxFetchResult {
+  repeated Envelope envelopes = 1;
+  // Pass back as MailboxFetch.cursor to continue. Empty when drained.
+  bytes cursor = 2;
+  // How many remain after this page, as a hint for the client's progress UI.
+  uint64 remaining = 3;
+}
+
+// Acknowledge envelopes so the node can delete them.
+message MailboxAck {
+  bytes mailbox = 1;
+  bytes device_pubkey = 2;
+  repeated bytes envelope_ids = 3;
+  uint64 timestamp = 4;
+  bytes signature = 5;
+}
+
+message MailboxAckResult {
+  uint32 deleted = 1;
+}
+
+// An MLS KeyPackage published by a device so others can add it to groups.
+//
+// Signed by the device key so a store node cannot substitute its own. The
+// key package itself is also self-authenticating under MLS; the outer
+// signature is what lets the node refuse a forgery before storing it.
+message KeyPackagePublish {
+  string network_id = 1;
+  bytes device_pubkey = 2;
+  // Serialised MLS KeyPackage.
+  bytes key_package = 3;
+  uint64 created_at = 4;
+  uint64 expires_at = 5;
+  bytes signature = 6;
+}
+
+message KeyPackagePublishResult {
+  bool stored = 1;
+  string reason = 2;
+}
+
+// Fetch a key package for a device.
+message KeyPackageFetch {
+  bytes device_pubkey = 1;
+}
+
+message KeyPackageFetchResult {
+  bool found = 1;
+  KeyPackagePublish key_package = 2;
+}

@@ -1,0 +1,189 @@
+syntax = "proto3";
+package hashgram.p2p.v1;
+
+// Public social events.
+//
+// Everything public on Hashgram — profiles, posts, follows, reactions,
+// reels, stories, channels — is a signed event. The event is the canonical
+// record; every feed, timeline and search index is a derived view that can
+// be rebuilt from the events. A relay cannot forge one because it cannot sign
+// as the author's device, and a device's authority comes from the chain's
+// identity registry, which a relay cannot edit either.
+
+// Media referenced by an event. The bytes live in blob storage, never in
+// the event and never on chain.
+message MediaReference {
+  // Content identifier: BLAKE3 of the canonical blob manifest.
+  bytes cid = 1;
+  // MIME type as the author declares it. Clients sniff and do not trust it.
+  string mime = 2;
+  // Total size in bytes.
+  uint64 size = 3;
+  // "image", "video", "audio", "file".
+  string kind = 4;
+  uint32 width = 5;
+  uint32 height = 6;
+  uint32 duration_ms = 7;
+  // Optional poster or thumbnail blob.
+  bytes thumbnail_cid = 8;
+  // A BLAKE3 keyed hash of the plaintext, present only for public media, so
+  // a safety attestation can name content independently of its chunking.
+  bytes content_hash = 9;
+}
+
+// The event envelope. Field order is the canonical signing order.
+message SocialEvent {
+  string network_id = 1;
+  // Event format version. 1.
+  uint32 version = 2;
+  // BLAKE3 of the signing preimage. Derived, not chosen.
+  bytes id = 3;
+  // One of the EVENT_* families below, as its wire string.
+  string type = 4;
+  // Author's Hashgram address, hash1...
+  string author = 5;
+  // Raw ed25519 public key of the signing device. Must be an authorised,
+  // unrevoked device of the author on chain at the time of validation.
+  bytes device_pubkey = 6;
+  // Unix seconds as the author's device claims. Nodes refuse events too far
+  // in the future.
+  uint64 timestamp = 7;
+  // Per-author monotonically increasing counter. Two events with the same
+  // (author, sequence) and different ids are evidence of a misbehaving
+  // device and both are kept as evidence.
+  uint64 sequence = 8;
+  // Id of the author's previous event, forming a per-author hash chain.
+  // Empty for sequence 0.
+  bytes previous_event = 9;
+  // Canonical encoding of the typed payload below.
+  bytes payload = 10;
+  repeated MediaReference media = 11;
+  // ed25519 signature by device_pubkey over the domain-separated digest of
+  // every field above under the "social-event" purpose.
+  bytes signature = 12;
+}
+
+// --- Typed payloads --------------------------------------------------------
+
+message ProfileUpdate {
+  string display_name = 1;
+  string bio = 2;
+  bytes avatar_cid = 3;
+  bytes banner_cid = 4;
+  string website = 5;
+  // Creator metadata, free-form small key/values a client may show.
+  map<string, string> attributes = 6;
+}
+
+message Follow {
+  string target = 1;
+}
+
+message Unfollow {
+  string target = 1;
+}
+
+message PostCreate {
+  string text = 1;
+  repeated string hashtags = 2;
+  repeated string mentions = 3;
+  // Channel this post belongs to, if any (id of a CHANNEL_CREATE event).
+  bytes channel = 4;
+  // Post this is a reply to, if any.
+  bytes reply_to = 5;
+  // Content warning / age metadata the author sets. Clients and safety
+  // policies may add to it; they cannot remove it.
+  bool sensitive = 6;
+  string language = 7;
+}
+
+message PostEdit {
+  bytes post = 1;
+  string text = 2;
+  repeated string hashtags = 3;
+}
+
+message PostDelete {
+  bytes post = 1;
+}
+
+message CommentCreate {
+  bytes post = 1;
+  string text = 2;
+  // For threaded replies to comments.
+  bytes parent_comment = 3;
+}
+
+message Reaction {
+  bytes target = 1;
+  // A single emoji or a short reaction code. Empty removes the reaction.
+  string reaction = 2;
+}
+
+message Repost {
+  bytes post = 1;
+  string comment = 2;
+}
+
+message ChannelCreate {
+  string name = 1;
+  string description = 2;
+  bytes avatar_cid = 3;
+  // Whether anyone may post, or only the creator.
+  bool open_posting = 4;
+}
+
+// A reel is a first-class short video.
+message ReelCreate {
+  string caption = 1;
+  repeated string hashtags = 2;
+  repeated string mentions = 3;
+  // Index into SocialEvent.media of the video.
+  uint32 video_index = 4;
+  // Sound / music credit, free-form.
+  string audio_credit = 5;
+  bool sensitive = 6;
+  // Minimum age the author declares, 0 for none.
+  uint32 min_age = 7;
+  string language = 8;
+  bool allow_comments = 9;
+  bool allow_remix = 10;
+}
+
+message StoryCreate {
+  string caption = 1;
+  // Unix seconds after which clients stop showing it. Bounded to 48 hours.
+  uint64 expires_at = 2;
+  bool sensitive = 3;
+}
+
+// Gossip announcement that a node holds an event, for peers to fetch by id.
+// The full event is also gossiped when small; this covers the large case.
+message EventAnnounce {
+  bytes id = 1;
+  string author = 2;
+  string type = 3;
+}
+
+// Fetch events by id or by author range.
+message EventFetch {
+  repeated bytes ids = 1;
+  string author = 2;
+  uint64 from_sequence = 3;
+  uint32 limit = 4;
+}
+
+message EventFetchResult {
+  repeated SocialEvent events = 1;
+}
+
+// Publish an event through a node (client-facing). The node validates it
+// fully before gossiping.
+message EventPublish {
+  SocialEvent event = 1;
+}
+
+message EventPublishResult {
+  bool accepted = 1;
+  string reason = 2;
+}

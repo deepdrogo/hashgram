@@ -322,6 +322,146 @@
         "payload_hex": "00ff7f80",
         "preimage_hex": "484744310000000000000029686173686772616d2f76312f686173686772616d2d6465766e65742f6e6f64652d616e6e6f756e6365000000000000000400ff7f80",
         "digest_hex": "fe2a795f14fc8550c6275ac7c74513babec2cce87403c3519b399566f9473881"
+      },
+      {
+        "purpose": "mailbox-fetch",
+        "domain": "hashgram/v1/hashgram-devnet/mailbox-fetch",
+        "payload_hex": "",
+        "preimage_hex": "484744310000000000000029686173686772616d2f76312f686173686772616d2d6465766e65742f6d61696c626f782d66657463680000000000000000",
+        "digest_hex": "c19c38c3dba404f87bab992ecc3a1ebd18a24037c6152bac41a800d2250ef52c"
+      },
+      {
+        "purpose": "mailbox-fetch",
+        "domain": "hashgram/v1/hashgram-devnet/mailbox-fetch",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "484744310000000000000029686173686772616d2f76312f686173686772616d2d6465766e65742f6d61696c626f782d666574636800000000000000077061796c6f6164",
+        "digest_hex": "0e48a769e82b39d325f4609aeb3b4df0247dd8518a0bb6c62525e688086eb2e6"
+      },
+      {
+        "purpose": "mailbox-fetch",
+        "domain": "hashgram/v1/hashgram-devnet/mailbox-fetch",
+        "payload_hex": "6162",
+        "preimage_hex": "484744310000000000000029686173686772616d2f76312f686173686772616d2d6465766e65742f6d61696c626f782d666574636800000000000000026162",
+        "digest_hex": "7531efa8b0d366ad6ea628640976ad334ddaecbe1d84996a29cf02c2645e7a80"
+      },
+      {
+        "purpose": "mailbox-fetch",
+        "domain": "hashgram/v1/hashgram-devnet/mailbox-fetch",
+        "payload_hex": "616263",
+        "preimage_hex": "484744310000000000000029686173686772616d2f76312f686173686772616d2d6465766e65742f6d61696c626f782d66657463680000000000000003616263",
+        "digest_hex": "1a42ce7f0d68093744c152485344368056917da51512dc0eae35e470d2057b63"
+      },
+      {
+        "purpose": "mailbox-fetch",
+        "domain": "hashgram/v1/hashgram-devnet/mailbox-fetch",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "484744310000000000000029686173686772616d2f76312f686173686772616d2d6465766e65742f6d61696c626f782d6665746368000000000000000400ff7f80",
+        "digest_hex": "82fc53f01b6bead5560c7ada814c717ce3fac4cc91ca26d910034acb4078146f"
+      },
+      {
+        "purpose": "mailbox-ack",
+        "domain": "hashgram/v1/hashgram-devnet/mailbox-ack",
+        "payload_hex": "",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6d61696c626f782d61636b0000000000000000",
+        "digest_hex": "352b35a5d5e75ba0ad17abe5c3649e547c025643cb172438e40f0f9435ae7ffb"
+      },
+      {
+        "purpose": "mailbox-ack",
+        "domain": "hashgram/v1/hashgram-devnet/mailbox-ack",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6d61696c626f782d61636b00000000000000077061796c6f6164",
+        "digest_hex": "a882167eea76389043c2dd1bcd82fb8408460b03b8e1ab3318ca752b10ab65f3"
+      },
+      {
+        "purpose": "mailbox-ack",
+        "domain": "hashgram/v1/hashgram-devnet/mailbox-ack",
+        "payload_hex": "6162",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6d61696c626f782d61636b00000000000000026162",
+        "digest_hex": "1d04b3675a4f7e2ca338ca890f09d5ad029dcd4df974748fac95f0e0470d35a5"
+      },
+      {
+        "purpose": "mailbox-ack",
+        "domain": "hashgram/v1/hashgram-devnet/mailbox-ack",
+        "payload_hex": "616263",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6d61696c626f782d61636b0000000000000003616263",
+        "digest_hex": "befbd878549ac0f47f890b0e2a0e6c1343ce2428896d3b00ea947064fd77655b"
+      },
+      {
+        "purpose": "mailbox-ack",
+        "domain": "hashgram/v1/hashgram-devnet/mailbox-ack",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6d61696c626f782d61636b000000000000000400ff7f80",
+        "digest_hex": "4a2fac75162bfbbf61056ea716b65ca6256aa50997ed790be3f6e83c4e021891"
+      },
+      {
+        "purpose": "key-package",
+        "domain": "hashgram/v1/hashgram-devnet/key-package",
+        "payload_hex": "",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6b65792d7061636b6167650000000000000000",
+        "digest_hex": "7294b5e49608fd958641af097a48a5f0cdf4bd2e0e48144695f5173ce6390c7f"
+      },
+      {
+        "purpose": "key-package",
+        "domain": "hashgram/v1/hashgram-devnet/key-package",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6b65792d7061636b61676500000000000000077061796c6f6164",
+        "digest_hex": "40849b5a78ee6a61883ef09a880c35c8be8e12d932f771a9b56e2a18de36fa03"
+      },
+      {
+        "purpose": "key-package",
+        "domain": "hashgram/v1/hashgram-devnet/key-package",
+        "payload_hex": "6162",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6b65792d7061636b61676500000000000000026162",
+        "digest_hex": "bf2e23e075768865becddf5fee1ed8a3a4f1d45e876eb124eb44c4864d6de2ea"
+      },
+      {
+        "purpose": "key-package",
+        "domain": "hashgram/v1/hashgram-devnet/key-package",
+        "payload_hex": "616263",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6b65792d7061636b6167650000000000000003616263",
+        "digest_hex": "5a6db881576eb974878c526f728df095385d7c1ebd335083d7f2d89835dbdbc9"
+      },
+      {
+        "purpose": "key-package",
+        "domain": "hashgram/v1/hashgram-devnet/key-package",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f6b65792d7061636b616765000000000000000400ff7f80",
+        "digest_hex": "d202bbf972fd945196eea6ec677a5683020d0e2e29b1c20d30a95ef76eb56c0b"
+      },
+      {
+        "purpose": "blob-upload",
+        "domain": "hashgram/v1/hashgram-devnet/blob-upload",
+        "payload_hex": "",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f626c6f622d75706c6f61640000000000000000",
+        "digest_hex": "2ed5ae154f9e324e4ee890b8de8aa5a8c9ef878480b47d7c42051a522f5d2a55"
+      },
+      {
+        "purpose": "blob-upload",
+        "domain": "hashgram/v1/hashgram-devnet/blob-upload",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f626c6f622d75706c6f616400000000000000077061796c6f6164",
+        "digest_hex": "b32bf0e40a9f0ee88bcfe07f878218b87b651b212fa48a6bde561505af2c7053"
+      },
+      {
+        "purpose": "blob-upload",
+        "domain": "hashgram/v1/hashgram-devnet/blob-upload",
+        "payload_hex": "6162",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f626c6f622d75706c6f616400000000000000026162",
+        "digest_hex": "49b73f1257c879ef99cf9a8be7b7a3e52a989396a5ffe12ad0cba7372a1882fa"
+      },
+      {
+        "purpose": "blob-upload",
+        "domain": "hashgram/v1/hashgram-devnet/blob-upload",
+        "payload_hex": "616263",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f626c6f622d75706c6f61640000000000000003616263",
+        "digest_hex": "60baaeb5ce1476be7d465e08220a5842a7408bece241096f301cc90bd29982ca"
+      },
+      {
+        "purpose": "blob-upload",
+        "domain": "hashgram/v1/hashgram-devnet/blob-upload",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "484744310000000000000027686173686772616d2f76312f686173686772616d2d6465766e65742f626c6f622d75706c6f6164000000000000000400ff7f80",
+        "digest_hex": "d8f31204c08fadd4011e98558e449e28d47ed3aa6d02327448fa9a35f6f802b1"
       }
     ]
   },
@@ -648,6 +788,146 @@
         "payload_hex": "00ff7f80",
         "preimage_hex": "48474d31000000000000002a686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6e6f64652d616e6e6f756e6365000000000000000400ff7f80",
         "digest_hex": "95388868a93c5049aad72aca3cb15ae63ca96fc5d529bcb05805b890ec0f713e"
+      },
+      {
+        "purpose": "mailbox-fetch",
+        "domain": "hashgram/v1/hashgram-mainnet/mailbox-fetch",
+        "payload_hex": "",
+        "preimage_hex": "48474d31000000000000002a686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6d61696c626f782d66657463680000000000000000",
+        "digest_hex": "8f8e0ae00b9505b3aefd8c4c414550aca18b63039d76cc2e778fc537a2ebca6f"
+      },
+      {
+        "purpose": "mailbox-fetch",
+        "domain": "hashgram/v1/hashgram-mainnet/mailbox-fetch",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d31000000000000002a686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6d61696c626f782d666574636800000000000000077061796c6f6164",
+        "digest_hex": "98f93ee86643a56d52ff168d72fb7a95e2a9ea80b2fbc317088e056c0813aab7"
+      },
+      {
+        "purpose": "mailbox-fetch",
+        "domain": "hashgram/v1/hashgram-mainnet/mailbox-fetch",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d31000000000000002a686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6d61696c626f782d666574636800000000000000026162",
+        "digest_hex": "62027eef3110c6989ba36b9697e094d982f5c573d5e249a7fd5b2189e3a445a9"
+      },
+      {
+        "purpose": "mailbox-fetch",
+        "domain": "hashgram/v1/hashgram-mainnet/mailbox-fetch",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d31000000000000002a686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6d61696c626f782d66657463680000000000000003616263",
+        "digest_hex": "fbc5e68df0e088cb9d6905d2ec5e0a5f53648e0169981808b8f18720166eb849"
+      },
+      {
+        "purpose": "mailbox-fetch",
+        "domain": "hashgram/v1/hashgram-mainnet/mailbox-fetch",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d31000000000000002a686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6d61696c626f782d6665746368000000000000000400ff7f80",
+        "digest_hex": "52462df30b844c6c49b7d30302c97f1badcd3db932b7d356f168b39c14d5fad3"
+      },
+      {
+        "purpose": "mailbox-ack",
+        "domain": "hashgram/v1/hashgram-mainnet/mailbox-ack",
+        "payload_hex": "",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6d61696c626f782d61636b0000000000000000",
+        "digest_hex": "251a7e39a6d81ea136c39abbb0984b40176847cbf836e4071721d3c5c373fab7"
+      },
+      {
+        "purpose": "mailbox-ack",
+        "domain": "hashgram/v1/hashgram-mainnet/mailbox-ack",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6d61696c626f782d61636b00000000000000077061796c6f6164",
+        "digest_hex": "97514b8722aa1f1f52338808efb2c2873aaac0125864e5853f82fceaa23ca2cb"
+      },
+      {
+        "purpose": "mailbox-ack",
+        "domain": "hashgram/v1/hashgram-mainnet/mailbox-ack",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6d61696c626f782d61636b00000000000000026162",
+        "digest_hex": "adc880e20c7d9a25d7dbced66956149e6a6d0f60fba622c6ad57a6424ca434a6"
+      },
+      {
+        "purpose": "mailbox-ack",
+        "domain": "hashgram/v1/hashgram-mainnet/mailbox-ack",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6d61696c626f782d61636b0000000000000003616263",
+        "digest_hex": "5ef47da66019d851522d5dd0b2f91f3d44721f12250538cfdbd1003b080c84e9"
+      },
+      {
+        "purpose": "mailbox-ack",
+        "domain": "hashgram/v1/hashgram-mainnet/mailbox-ack",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6d61696c626f782d61636b000000000000000400ff7f80",
+        "digest_hex": "d3331b89f33b503814119e8fcbb1153526c21b748b1b055f931645a7ef8d4d5c"
+      },
+      {
+        "purpose": "key-package",
+        "domain": "hashgram/v1/hashgram-mainnet/key-package",
+        "payload_hex": "",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6b65792d7061636b6167650000000000000000",
+        "digest_hex": "66f65cac6dd498354d11deb378202e0bd340dd27dfddef236f413e0aa76779d2"
+      },
+      {
+        "purpose": "key-package",
+        "domain": "hashgram/v1/hashgram-mainnet/key-package",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6b65792d7061636b61676500000000000000077061796c6f6164",
+        "digest_hex": "3a26264f2c97ee8b7a5cb24beae6410fc99ad7251944270f0f8853c3c339430c"
+      },
+      {
+        "purpose": "key-package",
+        "domain": "hashgram/v1/hashgram-mainnet/key-package",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6b65792d7061636b61676500000000000000026162",
+        "digest_hex": "309f77d31b6edb1a74dbd01002a1a34586021a644712968c8b80fcff11f0eaf7"
+      },
+      {
+        "purpose": "key-package",
+        "domain": "hashgram/v1/hashgram-mainnet/key-package",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6b65792d7061636b6167650000000000000003616263",
+        "digest_hex": "4cf288f4a6cdf88024aaed45c49d264d20bffba2a6ac84469558df8660827a31"
+      },
+      {
+        "purpose": "key-package",
+        "domain": "hashgram/v1/hashgram-mainnet/key-package",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f6b65792d7061636b616765000000000000000400ff7f80",
+        "digest_hex": "8e76eada33ba7e0c06c3e1d6abe9d57ee013efcad539e83cbabac796041c8ed2"
+      },
+      {
+        "purpose": "blob-upload",
+        "domain": "hashgram/v1/hashgram-mainnet/blob-upload",
+        "payload_hex": "",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f626c6f622d75706c6f61640000000000000000",
+        "digest_hex": "322ab2a5aa503ede5de498100447170d7b21ca38a4f6756095cd1229522b7735"
+      },
+      {
+        "purpose": "blob-upload",
+        "domain": "hashgram/v1/hashgram-mainnet/blob-upload",
+        "payload_hex": "7061796c6f6164",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f626c6f622d75706c6f616400000000000000077061796c6f6164",
+        "digest_hex": "511f99388f936fc91752717d4e0c27df5e91a42324109c0bd2b6260bcf0c7bd5"
+      },
+      {
+        "purpose": "blob-upload",
+        "domain": "hashgram/v1/hashgram-mainnet/blob-upload",
+        "payload_hex": "6162",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f626c6f622d75706c6f616400000000000000026162",
+        "digest_hex": "9495ff6103c7eceb1c65ec0c3ef630b3dd6c669ce7e6bb82feb3c6a1942c9758"
+      },
+      {
+        "purpose": "blob-upload",
+        "domain": "hashgram/v1/hashgram-mainnet/blob-upload",
+        "payload_hex": "616263",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f626c6f622d75706c6f61640000000000000003616263",
+        "digest_hex": "d7681ec393c9886a45474c9600a583cd60eecccb477eb495b4fc19fa355e4847"
+      },
+      {
+        "purpose": "blob-upload",
+        "domain": "hashgram/v1/hashgram-mainnet/blob-upload",
+        "payload_hex": "00ff7f80",
+        "preimage_hex": "48474d310000000000000028686173686772616d2f76312f686173686772616d2d6d61696e6e65742f626c6f622d75706c6f6164000000000000000400ff7f80",
+        "digest_hex": "14d1bfa2d6b28c09e7eca7648e33e72e0d13c9a1af6bb741cd125be2dda54ca1"
       }
     ]
   }

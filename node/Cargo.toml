@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "hashgram-net",
+    "hashgram-proto",
     "hashgram-p2p",
     "hashgram-node",
 ]
@@ -34,6 +35,18 @@ hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 bech32 = "0.11"
+prost = "0.14"
+prost-build = "0.14"
+protox = "0.9"
+getrandom = "0.3"
+rand = "0.9"
+
+# Embedded storage for the node: pure Rust, ACID, single file per store.
+redb = "4"
+
+# Local operator API.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "query"] }
+tower-http = { version = "0.6", features = ["limit", "timeout"] }
 
 # Errors, logging, config
 thiserror = "2"

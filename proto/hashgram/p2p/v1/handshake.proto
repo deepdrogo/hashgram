@@ -1,0 +1,45 @@
+syntax = "proto3";
+package hashgram.p2p.v1;
+
+// The Hashgram peer handshake.
+//
+// Runs on every new libp2p connection before any application protocol is
+// served. CometBFT's own handshake compares chain ids only; this one compares
+// all five identity parts, including the genesis hash, so a fork that copied
+// the chain id is refused at the transport layer rather than tolerated until
+// consensus rejects its blocks.
+//
+// Deliberately carries no addresses, no service list and no free-form
+// version string. Everything in it is compared against a local constant, so
+// there is nothing a hostile peer can put here that changes behaviour beyond
+// causing its own rejection. Service announcements are a separate, signed
+// message exchanged only after this succeeds.
+message Handshake {
+  // Four-byte network magic, "HGM1" for Mainnet.
+  bytes network_magic = 1;
+  // Application-level network id, "hashgram-mainnet".
+  string network_id = 2;
+  // CometBFT chain id, "hashgram-1".
+  string chain_id = 3;
+  // Lowercase hex SHA-256 of the genesis file.
+  string genesis_hash = 4;
+  // Wire-compatibility generation.
+  uint32 protocol_major_version = 5;
+  // Roles this node serves, informational. Verified separately through a
+  // signed NodeAnnounce; a peer claiming "store" here is not yet believed.
+  repeated string roles = 6;
+}
+
+// The answer to a Handshake.
+//
+// A rejecting peer says why, so an operator on a fork learns which part
+// disagreed rather than seeing "connection closed".
+message HandshakeAck {
+  bool accepted = 1;
+  // Empty when accepted. A human-readable reason otherwise.
+  string reason = 2;
+  // The responder's own identity, so the initiator can verify it too. Set
+  // even on rejection: telling a fork what network it reached costs nothing
+  // and helps its operator.
+  Handshake identity = 3;
+}
