@@ -111,6 +111,33 @@ fn base64_encode(input: &[u8]) -> String {
     out
 }
 
+/// Verifies a credential request (device signature over the mailbox-fetch
+/// preimage with an empty cursor and limit 0) and issues a credential.
+pub fn issue_for_request(
+    shared: &crate::app::Shared,
+    secret: &[u8],
+    req: &pb::TurnCredentialRequest,
+) -> Result<TurnCredential, String> {
+    let f = pb::MailboxFetch {
+        mailbox: hashgram_proto::signing::mailbox_for(&req.device_pubkey).to_vec(),
+        device_pubkey: req.device_pubkey.clone(),
+        cursor: vec![],
+        limit: 0,
+        timestamp: req.timestamp,
+        signature: req.signature.clone(),
+    };
+    hashgram_proto::validate::mailbox_fetch(&f, crate::store::now()).map_err(|e| e.to_string())?;
+    hashgram_proto::signing::verify_mailbox_fetch(&shared.identity, &f)
+        .map_err(|e| e.to_string())?;
+    let label = hex::encode(&hashgram_proto::signing::mailbox_for(&req.device_pubkey)[..8]);
+    Ok(issue(
+        secret,
+        &label,
+        &shared.config.turn_uris,
+        crate::store::now(),
+    ))
+}
+
 /// Reads the coturn secret file, trimming whitespace.
 pub fn load_secret(path: &str) -> anyhow::Result<Vec<u8>> {
     let raw = std::fs::read_to_string(path)?;

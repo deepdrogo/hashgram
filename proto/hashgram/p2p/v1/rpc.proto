@@ -43,6 +43,8 @@ message Request {
     AttestationQuery attestation_query = 50;
 
     ReceiptDeliver receipt_deliver = 60;
+
+    TurnCredentialRequest turn_credentials = 70;
   }
 }
 
@@ -82,6 +84,8 @@ message Response {
     AttestationQueryResult attestation_query = 50;
 
     ReceiptDeliverResult receipt_deliver = 60;
+
+    TurnCredentialResult turn_credentials = 70;
   }
 }
 

@@ -104,6 +104,27 @@ pub struct ChatView {
     pub attachments: Vec<(String, String, u64)>,
     /// Group name for GROUP_INFO.
     pub group_name: String,
+    /// Call signal for CALL messages.
+    pub call: Option<CallView>,
+}
+
+/// A call signal for display or for handing to a WebRTC stack.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CallView {
+    /// offer, answer, ice, hangup, busy, ring.
+    pub kind: String,
+    /// Call id, hex.
+    pub call_id: String,
+    /// SDP.
+    pub sdp: String,
+    /// ICE candidate.
+    pub candidate: String,
+    /// sdpMid.
+    pub sdp_mid: String,
+    /// sdpMLineIndex.
+    pub sdp_mline_index: u32,
+    /// Video requested.
+    pub video: bool,
 }
 
 impl From<chat::ChatMessage> for ChatView {
@@ -123,6 +144,15 @@ impl From<chat::ChatMessage> for ChatView {
                 .map(|a| (hex::encode(&a.cid), a.mime.clone(), a.size))
                 .collect(),
             group_name: m.group_info.map(|g| g.name).unwrap_or_default(),
+            call: m.call.map(|c| CallView {
+                kind: c.kind,
+                call_id: hex::encode(&c.call_id),
+                sdp: c.sdp,
+                candidate: c.candidate,
+                sdp_mid: c.sdp_mid,
+                sdp_mline_index: c.sdp_mline_index,
+                video: c.video,
+            }),
         }
     }
 }
@@ -460,6 +490,34 @@ impl Messaging {
                 id: id.clone(),
                 timestamp_ms: now_ms(),
                 text: text.to_owned(),
+                ..Default::default()
+            },
+        )
+        .await?;
+        Ok(id)
+    }
+
+    /// Sends a call signal (offer, answer, ICE candidate, hangup) to a
+    /// conversation. Signalling rides the same E2EE channel as text, so
+    /// only members learn that a call is happening.
+    pub async fn send_call_signal(
+        &mut self,
+        link: &Link,
+        network: &NetworkIdentity,
+        group_id: &[u8],
+        signal: chat::CallSignal,
+    ) -> Result<Vec<u8>, SdkError> {
+        let id = random_id();
+        self.send(
+            link,
+            network,
+            group_id,
+            chat::ChatMessage {
+                version: WIRE_VERSION,
+                kind: chat::ChatKind::Call as i32,
+                id: id.clone(),
+                timestamp_ms: now_ms(),
+                call: Some(signal),
                 ..Default::default()
             },
         )

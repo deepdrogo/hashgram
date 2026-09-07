@@ -1,0 +1,49 @@
+# coturn for a Hashgram call node. Written by scripts/install/coturn.sh.
+#
+# Credentials are time-limited HMACs issued by hashgram-node to devices that
+# prove they hold their key (RFC 8489 long-term credentials with a shared
+# secret, coturn's "use-auth-secret"). The secret is in a root-owned file
+# readable by the node's service account and nobody else; nothing about a
+# user's identity is configured here.
+
+listening-port=3478
+tls-listening-port=5349
+listening-ip=0.0.0.0
+external-ip=__EXTERNAL_IP__
+
+realm=__REALM__
+use-auth-secret
+static-auth-secret=__SECRET__
+
+# Relay range. Opened in ufw by the installer; keep in sync with
+# docs/OPERATIONS.md if changed.
+min-port=49152
+max-port=65535
+
+fingerprint
+lt-cred-mech
+no-multicast-peers
+no-cli
+no-tlsv1
+no-tlsv1_1
+
+# Deny relaying to private and loopback ranges: a public TURN server must
+# not be a door into the host's own network.
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=127.0.0.0-127.255.255.255
+denied-peer-ip=169.254.0.0-169.254.255.255
+denied-peer-ip=::1
+denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+
+# Per-user quotas.
+user-quota=12
+total-quota=1200
+max-bps=3000000
+stale-nonce=600
+
+log-file=/var/log/turnserver/turnserver.log
+simple-log
+no-stdout-log

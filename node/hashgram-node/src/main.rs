@@ -411,6 +411,7 @@ async fn run(home: PathBuf, config: PathBuf, insecure_no_chain: bool) -> anyhow:
         started: std::time::Instant::now(),
         services,
         rewards,
+        turn_secret: turn_secret.clone(),
     });
 
     // Maintenance: sweeps and replication.

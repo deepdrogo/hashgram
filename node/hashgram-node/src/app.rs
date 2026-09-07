@@ -40,6 +40,8 @@ pub struct Shared {
     pub services: Services,
     /// Useful-service agent, when an operator key is configured.
     pub rewards: Option<Arc<crate::rewards::RewardsAgent>>,
+    /// coturn shared secret, when this node issues TURN credentials.
+    pub turn_secret: Option<Vec<u8>>,
 }
 
 /// Role-gated services.
@@ -262,6 +264,41 @@ async fn handle_request(shared: &Arc<Shared>, peer: PeerId, request: pb::Request
                 )),
             },
         },
+
+        B::TurnCredentials(req) => {
+            let Some(secret) = &shared.turn_secret else {
+                return err("unsupported", "this node does not issue TURN credentials");
+            };
+            match crate::calls::issue_for_request(shared, secret, &req) {
+                Ok(c) => pb::Response {
+                    body: Some(pb::response::Body::TurnCredentials(
+                        pb::TurnCredentialResult {
+                            issued: true,
+                            reason: String::new(),
+                            username: c.username,
+                            password: c.password,
+                            expires_at: c.expires_at,
+                            uris: c.uris,
+                        },
+                    )),
+                },
+                Err(why) => {
+                    shared
+                        .handle
+                        .score(peer, ScoreEvent::InvalidSignature)
+                        .await;
+                    pb::Response {
+                        body: Some(pb::response::Body::TurnCredentials(
+                            pb::TurnCredentialResult {
+                                issued: false,
+                                reason: why,
+                                ..Default::default()
+                            },
+                        )),
+                    }
+                }
+            }
+        }
 
         B::ReceiptDeliver(d) => {
             let Some(agent) = &shared.rewards else {

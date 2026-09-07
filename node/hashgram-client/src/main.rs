@@ -154,6 +154,33 @@ enum Cmd {
         #[command(subcommand)]
         cmd: NetCmd,
     },
+    /// Calls: discovery, TURN credentials, signalling.
+    Call {
+        #[command(subcommand)]
+        cmd: CallCmd,
+    },
+}
+
+#[derive(Subcommand)]
+enum CallCmd {
+    /// List call nodes (TURN/SFU) announced on the network.
+    Discover,
+    /// Obtain time-limited TURN credentials from a call node.
+    Turn,
+    /// Send a call signal into a conversation (hex group id).
+    Signal {
+        group: String,
+        /// offer|answer|ice|hangup|ring|busy
+        kind: String,
+        #[arg(long, default_value = "")]
+        sdp: String,
+        #[arg(long, default_value = "")]
+        candidate: String,
+        #[arg(long)]
+        call_id: Option<String>,
+        #[arg(long)]
+        video: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -654,7 +681,88 @@ async fn run() -> anyhow::Result<()> {
         }
         Cmd::Blob { cmd } => blob_cmd(&ctx, cmd).await,
         Cmd::Net { cmd } => net(&ctx, cmd).await,
+        Cmd::Call { cmd } => call(&ctx, cmd).await,
     }
+}
+
+async fn call(ctx: &Ctx, cmd: CallCmd) -> anyhow::Result<()> {
+    let link = ctx.link().await?;
+    let result: anyhow::Result<()> = async {
+        match cmd {
+            CallCmd::Discover => {
+                let nodes = hashgram_sdk::calls::discover(&link).await?;
+                ctx.out(&nodes, || {
+                    if nodes.is_empty() {
+                        return "no call nodes announced".to_owned();
+                    }
+                    nodes
+                        .iter()
+                        .map(|n| {
+                            format!(
+                                "TURN {:?} realm={} creds={} sfu={:?} operator={}",
+                                n.turn_uris, n.realm, n.issues_credentials, n.sfu_url, n.operator
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                });
+                Ok(())
+            }
+            CallCmd::Turn => {
+                let acct = ctx.account()?;
+                let ice = hashgram_sdk::calls::turn_credentials(
+                    &link,
+                    &ctx.network,
+                    &acct.device()?,
+                    None,
+                )
+                .await?;
+                ctx.out(&ice, || {
+                    format!(
+                        "urls       {:?}\nusername   {}\ncredential {}\nexpires_at {}",
+                        ice.urls, ice.username, ice.credential, ice.expires_at
+                    )
+                });
+                Ok(())
+            }
+            CallCmd::Signal {
+                group,
+                kind,
+                sdp,
+                candidate,
+                call_id,
+                video,
+            } => {
+                let mut acct = ctx.account()?;
+                let mut messaging = Messaging::open(&acct)?;
+                let call_id = match call_id {
+                    Some(c) => hex::decode(c)?,
+                    None => {
+                        let s = hashgram_sdk::proto::Ed25519Signer::generate()?;
+                        s.public_key()[..16].to_vec()
+                    }
+                };
+                let sig = hashgram_sdk::chat::CallSignal {
+                    kind: kind.clone(),
+                    call_id: call_id.clone(),
+                    sdp,
+                    candidate,
+                    video,
+                    ..Default::default()
+                };
+                messaging
+                    .send_call_signal(&link, &ctx.network, &hex::decode(group)?, sig)
+                    .await?;
+                messaging.persist(&mut acct)?;
+                acct.save()?;
+                println!("call signal {kind} sent (call {})", hex::encode(call_id));
+                Ok(())
+            }
+        }
+    }
+    .await;
+    link.shutdown().await;
+    result
 }
 
 fn parse_hash(amount: &str) -> anyhow::Result<u128> {
@@ -1060,7 +1168,7 @@ async fn message(ctx: &Ctx, cmd: MessageCmd) -> anyhow::Result<()> {
                         println!("{}", serde_json::to_string(r).unwrap_or_default());
                     } else {
                         println!(
-                            "[{}] {} ({}): {} {}",
+                            "[{}] {} ({}): {} {}{}",
                             &r.group_id[..12],
                             r.sender,
                             r.message.kind,
@@ -1069,7 +1177,17 @@ async fn message(ctx: &Ctx, cmd: MessageCmd) -> anyhow::Result<()> {
                                 String::new()
                             } else {
                                 format!("{:?}", r.message.attachments)
-                            }
+                            },
+                            r.message
+                                .call
+                                .as_ref()
+                                .map(|c| format!(
+                                    "call {} {} sdp={}b",
+                                    c.kind,
+                                    c.call_id,
+                                    c.sdp.len()
+                                ))
+                                .unwrap_or_default()
                         );
                     }
                 }

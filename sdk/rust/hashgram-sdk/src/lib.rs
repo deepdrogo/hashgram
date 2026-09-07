@@ -39,6 +39,7 @@
 
 pub mod account;
 pub mod blob;
+pub mod calls;
 pub mod link;
 pub mod messaging;
 pub mod social;

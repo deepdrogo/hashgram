@@ -894,8 +894,16 @@ struct AttestationRecent {
     trusted: bool,
 }
 
-async fn safety_recent(State(s): S, Query(q): Query<RecentQuery>) -> Result<Json<Vec<AttestationRecent>>, (StatusCode, Json<ApiError>)> {
-    let safety = s.shared.services.safety.as_ref().ok_or_else(|| unsupported("safety"))?;
+async fn safety_recent(
+    State(s): S,
+    Query(q): Query<RecentQuery>,
+) -> Result<Json<Vec<AttestationRecent>>, (StatusCode, Json<ApiError>)> {
+    let safety = s
+        .shared
+        .services
+        .safety
+        .as_ref()
+        .ok_or_else(|| unsupported("safety"))?;
     let list = safety.recent(q.limit.unwrap_or(1000));
     Ok(Json(
         list.into_iter()

@@ -87,3 +87,23 @@ message PeerExchangeResult {
   // Multiaddrs including /p2p/<id>.
   repeated string addrs = 1;
 }
+
+// Ask a call node for time-limited TURN credentials. Signed by the device
+// key (the "mailbox-fetch" purpose is reused: it proves the same thing —
+// the device holds its key right now — without a new signing domain).
+message TurnCredentialRequest {
+  bytes device_pubkey = 1;
+  uint64 timestamp = 2;
+  bytes signature = 3;
+}
+
+message TurnCredentialResult {
+  bool issued = 1;
+  string reason = 2;
+  // coturn use-auth-secret username: "<expiry>:<label>".
+  string username = 3;
+  // base64 HMAC-SHA1 password.
+  string password = 4;
+  uint64 expires_at = 5;
+  repeated string uris = 6;
+}

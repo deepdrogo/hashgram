@@ -190,6 +190,47 @@ or the running chain-id does not match the pinned one.`,
 				}
 			}
 
+			// The P2P node, when this machine has a P2P role: it must be up,
+			// verified by at least one peer once the network has other
+			// nodes, and — for the call role — announcing TURN.
+			hasP2P := false
+			for _, r := range []hgconfig.Role{hgconfig.RoleRelay, hgconfig.RoleStore, hgconfig.RoleMedia, hgconfig.RoleBootstrap, hgconfig.RoleCall} {
+				if roles.Has(r) {
+					hasP2P = true
+				}
+			}
+			if hasP2P {
+				node := hgrpc.NewNodeAPI(flagNodeAPI)
+				st, err := node.Status(ctx)
+				switch {
+				case err != nil:
+					problems = append(problems, "hashgram-node API is unreachable: "+err.Error())
+				case st.Swarm == nil || len(st.Swarm.ListenAddrs) == 0:
+					problems = append(problems, "hashgram-node is not listening")
+				default:
+					if st.Swarm.Verified == 0 && st.Swarm.Known > 0 {
+						problems = append(problems, "hashgram-node knows peers but none is currently verified")
+					}
+					if roles.Has(hgconfig.RoleCall) {
+						var ann []map[string]any
+						if node.Get(ctx, "/v1/announcements?role=call", &ann) == nil {
+							self := false
+							for _, a := range ann {
+								if a["turn"] != nil {
+									self = true
+								}
+							}
+							if !self {
+								problems = append(problems, "call role configured but no TURN announcement is known; run scripts/install/coturn.sh and check turn_uris in node.toml")
+							}
+						}
+						if state := hgsys.Inspect(ctx, hgsys.UnitCall); !state.Exists || !state.Running() {
+							problems = append(problems, "coturn is not running")
+						}
+					}
+				}
+			}
+
 			o.set("problems", problems)
 			o.set("healthy", len(problems) == 0)
 
