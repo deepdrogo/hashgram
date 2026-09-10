@@ -1,11 +1,12 @@
 # hashgram.io — one prompt: live explorer, network dashboard, documentation
 
-Copy everything below the line into an AI coding agent opened on **this
-repository** (`/home/hashgram`) on the genesis VPS (a synced node,
-PostgreSQL and the indexer are already running here). One domain, one repo,
-one deployment: the read API lives at `hashgram.io/api/v1/…` (served by the
-Go indexer in `indexer/`), the website lives at `hashgram.io` (a new
-`web/` directory), and Caddy fronts both.
+Copy everything below the line into an AI coding agent opened on a clone of
+this repository on a **fresh, separate VPS** — the "explorer VPS". That
+machine runs its **own full node** of the chain (not a validator), its own
+indexer and PostgreSQL, the API at `hashgram.io/api/v1/…`, the website at
+`hashgram.io`, and Caddy in front. It follows the network like any other
+node, through the seed list built into the binaries, so it keeps working
+when the genesis server is one node among a thousand — or gone.
 
 ---
 
@@ -18,15 +19,27 @@ storage/relay/media nodes, a 1 % founder revenue share, on-chain usernames
 and identity, and a peer-to-peer social/messaging layer.
 
 The site is a **block explorer, a network dashboard and the documentation**,
-in English, with everything updating live from the node. Two parts, one
-delivery:
+in English, with everything updating live from **this machine's own node**.
+Four parts, one delivery:
 
+- **Part 0 — the explorer VPS**: a full node + indexer on this host, joined
+  to Mainnet with no manual peer configuration.
 - **Part A — the read API** (`indexer/`, Go): extend the existing indexer so
   it can serve every number the site shows, plus a live event stream.
 - **Part B — the website** (`web/`, Next.js/TypeScript): black-and-white,
   ultra-modern, live.
 - **Part C — publishing**: Caddy on this host serves `hashgram.io` with
   `/api/*` → the indexer and everything else → the site.
+
+## Independence is the design goal
+
+The website must never depend on the genesis server. This VPS reads only
+from its own node (`127.0.0.1`), which learns peers from the seed list
+compiled into `hashgramd` / `hashgram-node` (`app/params/mainnet/`) and then
+from peer exchange and the DHT. If the genesis host disappears, this node
+keeps following the chain for as long as the chain itself is live (≥ ⅔ of
+validator power online), and the site keeps working. Do not hardcode the
+genesis server's IP, node id or peer id anywhere in `web/` or `indexer/`.
 
 Read before writing: `docs/CLIENT_CONNECTIVITY_SPEC.md` (all endpoints and
 the traps), `docs/TOKENOMICS.md`, `docs/SERVICE_REWARDS.md`,
@@ -49,6 +62,37 @@ the node.
 Second rule: the indexer database is a **rebuildable cache**. Every number
 served must be derivable from the chain; `hashgram-indexer rebuild` must
 reproduce it. Store nothing that is not on chain or in the node API.
+
+---
+
+# Part 0 — the explorer VPS (a full node that follows Mainnet)
+
+Fresh Ubuntu Server 24.04, ≥ 4 vCPU, 8 GB RAM, ≥ 200 GB NVMe (chain +
+PostgreSQL grow), public IPv4. Then, as root, in the repository clone:
+
+```bash
+sudo scripts/install/bootstrap-ubuntu.sh        # users, dirs, ufw, PostgreSQL on loopback, all binaries, units
+# hashgramctl finds the chain home the installer created on its own; no HASHGRAM_HOME needed
+hashgramctl init --moniker hashgram-io           # a full node; its consensus key is never used for signing
+hashgramctl join-mainnet                         # no arguments: genesis, hash and seeds are built in
+hashgramctl network-info                         # pin must be e322bc23…5e4d
+hashgramctl configure-role indexer               # P2P layer follows social events for the feed projections; no rewards role
+hashgramctl start
+hashgramctl chain-status                         # wait until catching_up = false and peers > 0
+systemctl enable --now hashgram-indexer          # indexer.toml is written by the installer, points at 127.0.0.1
+curl -s 127.0.0.1:1318/v1/health                 # {"chain_height":…,"status":"ok"}
+```
+
+Checks that must hold before Part A starts: `ss -ltn` shows 26657, 1317,
+9091, 26672, 1318 and 5432 on `127.0.0.1` only; `hashgramctl mainnet-preflight`
+passes (this is a non-validator node; the validator-specific checks report
+not-applicable, everything else must pass); `journalctl -u hashgram-node`
+shows "using the Mainnet list built into this binary" followed by
+connections. **Never** copy `priv_validator_key.json` or `node_key.json` from
+any other machine.
+
+Install Node.js 22 LTS (for `web/`) from NodeSource or `fnm`; `pnpm` via
+corepack. Nothing else is installed system-wide.
 
 ---
 
@@ -162,10 +206,9 @@ format on the server); `Cache-Control` per volatility.
 **Network**
 - `GET /v1/network` — CometBFT `/net_info` (peer count; peers with ip
   truncated to /24), hashgram-node `127.0.0.1:26672/v1/status` and `/v1/peers`
-  (libp2p peer count, roles, our peer id
-  `12D3KooWF53MV7ECXQMifSTDShv952Po83P89fbAYy6RTZ4NioMq`), the built-in seed
-  lists from `app/params/mainnet/*.txt`, `/hashgram/network/v1/info`,
-  `/hashgram/network/v1/fork_isolation`.
+  (libp2p peer count, roles, this node's own peer id — read at runtime, not
+  hardcoded), the built-in seed lists from `app/params/mainnet/*.txt`,
+  `/hashgram/network/v1/info`, `/hashgram/network/v1/fork_isolation`.
 - `GET /v1/network/nodes` — distinct nodes seen in 24 h across both layers.
   Return `{"consensus_peers":n,"p2p_peers":m,"validators":v}` as three
   numbers; never sum them into one.
@@ -329,9 +372,15 @@ i18n-ready, English shipped.
   `hashgram-indexer.service` (Go/Node services need
   `MemoryDenyWriteExecute=false`; `StartLimit*` keys belong in `[Unit]`).
 - A new `install-hashgram-io.sh` in `scripts/install`: builds `web/`, installs
-  Caddy, opens **only** 80/443 in ufw, enables the units, then runs
-  `hashgramctl mainnet-preflight` and fails if it fails.
-- DNS the operator sets: `hashgram.io` A → this host, `www` CNAME → apex.
+  Caddy, opens **only** 80/443 in ufw on top of what `bootstrap-ubuntu.sh`
+  opened (26656, 26670), enables the units, then runs
+  `hashgramctl mainnet-preflight` and fails if it fails. Idempotent.
+- DNS the operator sets: `hashgram.io` A → the explorer VPS, `www` CNAME →
+  apex. The genesis server is not involved.
+- Backups: the chain data and the index are both rebuildable from the network;
+  the only state worth backing up on this host is `web/` content and the Caddy
+  config, and they live in git. Document a full rebuild of the explorer VPS
+  from scratch in `web/README.md` (Part 0 → Part C, expected time).
 - Update `docs/CLIENT_CONNECTIVITY_SPEC.md` §10 and `docs/OPERATIONS.md` with
   the routes and the procedure; run `scripts/dev/check-docs.sh`.
 
@@ -342,13 +391,19 @@ i18n-ready, English shipped.
   faucet. Read-only, and the footer says so.
 - No token price, market cap, exchange links, "buy" buttons.
 - No accounts, cookies beyond theme, analytics, external CDNs, call-home.
-- No exposure of 26657 / 1317 / 9091 / 26672 / 1318 / 3000 to the internet.
+- No exposure of 26657 / 1317 / 9091 / 26672 / 1318 / 3000 / 5432 to the
+  internet.
+- No dependency on the genesis server: no hardcoded IP, node id or peer id of
+  any specific machine in `web/` or `indexer/`; no reading from a remote RPC.
 - No genesis hash computed from RPC `/genesis` (CometBFT re-serialises it;
   read the pin file in `/etc/hashgram`).
 - No single invented "nodes online" number; no fake liveness when SSE is down.
 - No full IP addresses of peers or visitors in storage or logs.
 
 ## Definition of done
+0. This VPS's own node is synced (`catching_up = false`) with > 0 consensus
+   peers and > 0 libp2p peers, joined with a zero-argument `join-mainnet`;
+   `grep -rn 186.241 web/ indexer/` returns nothing.
 1. `https://hashgram.io/` shows a new block within 5 s of production without
    reload; `/api/v1/chain` returns the live head; `/api/v1/live` streams.
 2. `/accounts` lists the useful-service reserve (500,000,000 HASH) as the
@@ -365,7 +420,8 @@ i18n-ready, English shipped.
    Lighthouse performance ≥ 95, accessibility 100, best practices 100, SEO 100.
 7. `hashgram-indexer rebuild` reproduces identical API responses.
 8. `hashgramctl mainnet-preflight` passes; `ss -ltn` shows only 22, 80, 443,
-   26656, 26670, 3478, 5349 on non-loopback addresses.
+   26656, 26670 on non-loopback addresses (no TURN on this host — it is not a
+   call node).
 9. `make test`, `make lint`, `scripts/dev/check-docs.sh`, `pnpm test`,
    `pnpm build` pass; `web/README.md` documents env vars, local development
    against the local indexer, and deployment.
