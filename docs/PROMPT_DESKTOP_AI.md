@@ -195,6 +195,54 @@ nodes served the last chain reads and whether they agreed, own NAT status
 peerstore / DHT / DNS). A "wrong network" peer (handshake genesis mismatch)
 is listed greyed with the reason, never retried silently.
 
+## Accounts: 24 words, and how people find each other — all on chain
+
+There are **no server-side accounts**. Hashgram has no sign-up service, no
+email, no phone number, no password database. An account **is** a key.
+
+- **Creating an account = generating a 24-word mnemonic** (256-bit entropy;
+  `hashgram_chain::Wallet::generate` already does exactly this — use it, do
+  not offer 12 words). The address `hash1…` is derived from it
+  (`m/44'/118'/0'/0/0`). This is the only way to create an account in the
+  app; there is no other "register" path.
+- **Logging in = restoring from the 24 words.** On a new machine the user
+  types the 24 words → the app shows the derived address → user confirms →
+  sets a local passphrase. Day-to-day unlock is the passphrase or Windows
+  Hello; the mnemonic is never asked for again and never stored in plaintext
+  (vault only). "Forgot passphrase" = restore from the 24 words; there is no
+  reset by anyone else, and the UI says so on the create screen.
+- **Identity on chain.** The first device registers with `MsgCreateIdentity`
+  (root key = the wallet key, one device key for this PC). A second PC uses
+  the same 24 words and `MsgAddDevice`; devices are listed and revocable
+  (`MsgRevokeDevice`). Only public keys go on chain. Messaging (MLS) and
+  social events are signed by device keys that resolve on chain
+  (`/hashgram/identity/v1/devices/{address}`,
+  `/hashgram/identity/v1/resolve_device_key`), which is what lets any peer
+  verify who wrote what without a server.
+- **Finding people — by public key first.** Every user is reachable by their
+  address (`hash1…`), shown with a monochrome QR and a `hashgram://` link on
+  the Receive/Profile screens. Search accepts a full address; pasting one
+  opens the profile immediately (no network round-trip beyond loading the
+  profile and devices from chain).
+- **Optional `@username`, on chain, searchable.** From `x/username`:
+  `MsgRegister` (fee 1 HASH, valid 7,884,000 blocks ≈ 1 year, grace 648,000
+  ≈ 30 days, 3–32 chars, lowercase, reserved names refused by the chain —
+  `/hashgram/username/v1/params`), `MsgRenew`, `MsgTransfer`, `MsgRelease`.
+  Search resolves `@name` → address with `/hashgram/username/v1/lookup/{name}`
+  and shows a name next to an address with
+  `/hashgram/username/v1/reverse/{owner}`; availability and confusable
+  warnings via `/hashgram/username/v1/availability/{name}`. Registration is
+  offered as an optional step at onboarding and later in Wallet → Usernames.
+- **Display names are not identity.** A social profile's display name is a
+  signed social event anyone can set to anything. The UI always shows the
+  verified `@username` (or the middle-truncated address when there is none)
+  next to a display name, in the monospace face, on every message, post,
+  comment and call screen — that is the anti-impersonation rule and a test
+  checks it on every component that renders a person.
+- **Search box (Ctrl+K)** therefore resolves, in this order: `hash1…`
+  address → `@username` (chain lookup) → tx hash → `#hashtag` → channel.
+  Never a fuzzy "people you may know" from a server; there is none.
+
 ## Keys and security (unchanged rules, enforced by tests)
 
 - Vault: `hashgram_sdk::Vault` (Argon2id 64 MiB / 3 / 4 lanes) + Windows
@@ -455,6 +503,10 @@ honoured. Keyboard-first: every action reachable; Windows accessibility
 - [ ] Stage 0 protocol merged with tests; docs updated; `check-docs.sh` passes
 - [ ] Fresh Windows 11 VM: install (< 40 MB, signed or SmartScreen note),
       first-run animation, create wallet, three-word check, Windows Hello
+- [ ] Account creation is 24 words only; restore on a second VM with the same
+      words yields the same address and `MsgAddDevice` registers the device
+- [ ] Search finds a user by `hash1…` address and by `@username` from chain;
+      a display name never appears without the verified handle/address
 - [ ] Balance and history "verified by 2 nodes" with no HTTPS endpoint set
 - [ ] Send HASH; confirmation says untaxed; tx tracked to commit
 - [ ] Staking shows 21-day unbonding before confirm; vote on a proposal
