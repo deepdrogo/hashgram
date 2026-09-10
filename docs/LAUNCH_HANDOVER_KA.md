@@ -3,6 +3,8 @@
 მფლობელის მოკლე ბარათი (რა წაიღო, 1%, დესკტოპის პრომპტი):
 [OWNER_LAUNCH_KA.md](OWNER_LAUNCH_KA.md).
 დესკტოპის AI-პრომპტი ერთი კოპირებით: [PROMPT_DESKTOP_AI.md](PROMPT_DESKTOP_AI.md).
+hashgram.io — საჯარო API: [PROMPT_EXPLORER_API.md](PROMPT_EXPLORER_API.md),
+საიტი (explorer + docs, შავ-თეთრი): [PROMPT_HASHGRAM_IO.md](PROMPT_HASHGRAM_IO.md).
 გაშვების სკრიპტები: `scripts/launch/`.
 
 ეს დოკუმენტი არის ზუსტი ბრძანებების თანმიმდევრობა Hashgram Mainnet-ის
