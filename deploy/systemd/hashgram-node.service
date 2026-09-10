@@ -12,6 +12,10 @@ Wants=network-online.target
 # against chain state before it will serve anything.
 After=hashgramd.service
 
+# Crash-loop guard. These keys are only honoured in [Unit].
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
 [Service]
 Type=simple
 User=hashgram-node
@@ -24,8 +28,6 @@ ExecStart=/usr/local/bin/hashgram-node run --home /var/lib/hashgram/node --confi
 
 Restart=on-failure
 RestartSec=5
-StartLimitBurst=5
-StartLimitIntervalSec=300
 KillSignal=SIGTERM
 TimeoutStopSec=60
 
@@ -58,7 +60,10 @@ RestrictSUIDSGID=true
 RestrictRealtime=true
 RestrictNamespaces=true
 LockPersonality=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# AF_NETLINK is required: libp2p's QUIC transport (if-watch) enumerates
+# interfaces over rtnetlink. Without it the QUIC listener fails with an
+# empty error and the node crash-loops (found at Mainnet launch).
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 
 SystemCallArchitectures=native
 SystemCallFilter=@system-service

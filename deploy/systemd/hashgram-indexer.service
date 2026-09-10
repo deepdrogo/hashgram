@@ -10,6 +10,10 @@ Documentation=https://github.com/hashgram/hashgram/blob/main/docs/OPERATIONS.md
 After=network-online.target postgresql.service hashgramd.service
 Wants=network-online.target postgresql.service
 
+# Crash-loop guard. These keys are only honoured in [Unit].
+StartLimitBurst=5
+StartLimitIntervalSec=300
+
 [Service]
 Type=simple
 User=hashgram-index
@@ -22,8 +26,6 @@ ExecStart=/usr/local/bin/hashgram-indexer run --config /etc/hashgram/indexer.tom
 
 Restart=on-failure
 RestartSec=10
-StartLimitBurst=5
-StartLimitIntervalSec=300
 KillSignal=SIGTERM
 TimeoutStopSec=60
 
@@ -62,7 +64,14 @@ SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources @obsolete @mount @debug @cpu-emulation @module @raw-io @reboot @swap
 
-MemoryDenyWriteExecute=true
+# Writable memory should not also be executable. This is OFF for the Go
+# services on purpose: cosmossdk.io/log pulls in bytedance/sonic, whose
+# cloudwego/base64x dependency mprotect()s a W+X page unconditionally in
+# init() on amd64. With MemoryDenyWriteExecute=true the binary panics with
+# "permission denied" before main() runs (found at Mainnet launch; the devnet
+# suite ran the binary directly and never exercised this unit). The Rust
+# hashgram-node keeps the directive on.
+MemoryDenyWriteExecute=false
 
 # --- Resources --------------------------------------------------------------
 
