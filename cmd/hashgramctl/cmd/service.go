@@ -476,7 +476,7 @@ this validator by.`,
 			o.blank()
 			o.raw("Next:")
 			o.raw("  hashgramctl init-mainnet-genesis --founder-address hash1...   (create a network)")
-			o.raw("  hashgramctl join-mainnet --genesis-url ... --genesis-hash ... (join one)")
+			o.raw("  hashgramctl join-mainnet                                      (join Mainnet; nothing else needed)")
 			return o.flush()
 		},
 	}

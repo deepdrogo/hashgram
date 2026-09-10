@@ -491,9 +491,7 @@ cat <<'NEXT'
     Joining an existing network:
 
       hashgramctl init
-      hashgramctl join-mainnet \
-        --genesis-url <url> --genesis-hash <sha256> --peers <id@host:26656> \
-        --p2p-peers /ip4/<host>/udp/26670/quic-v1/p2p/<peer-id>
+      hashgramctl join-mainnet          (genesis, hash and seed nodes are built in)
       hashgramctl configure-role relay,store --declared-storage 500000000000 --reward-address hash1...
       hashgramctl start
 

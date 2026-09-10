@@ -92,21 +92,31 @@ archive — more than one channel, so an operator can cross-check.
 
 ## Joining
 
+Since the 2026-09-10 launch the canonical genesis file, its SHA-256
+(`e322bc2319f6e0173286fa526dab5a8ff8ad0797c7b80dd03e7c9d98621d5e4d`) and a
+first-contact seed list are compiled into the binaries, in `app/params/mainnet/`.
+This is the bitcoind model: the software you chose to run is the out-of-band
+source for the genesis, and a fresh machine needs no arguments:
+
 ```bash
-hashgramctl join-mainnet \
-  --genesis-url https://... \
-  --genesis-hash <sha256 from an independent source> \
-  --peers <nodeid>@<host>:26656
+hashgramctl join-mainnet
 ```
 
-Or from a file you already have:
+You may still bring the genesis from elsewhere; it must hash to the built-in
+value or the command refuses:
 
 ```bash
 hashgramctl join-mainnet \
   --genesis-file ./genesis.json \
-  --genesis-hash <sha256> \
-  --peers <nodeid>@<host>:26656
+  --peers <nodeid>@<host>:26656            # extra persistent peers
+  --p2p-peers /ip4/<host>/udp/26670/quic-v1/p2p/<peer-id>   # added to the built-in list
 ```
+
+Discovery then has five layers, consulted in this order: the node's own
+persisted peerstore/addrbook, the built-in seeds, `/dnsaddr` DNS seeds (none
+published yet), anything passed by hand, and PEX/DHT gossip once the first
+connection is up. A node that has ever been online never reads the built-in
+lists again.
 
 ### Why --genesis-hash is required
 

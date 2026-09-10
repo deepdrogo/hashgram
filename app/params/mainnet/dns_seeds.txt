@@ -1,0 +1,16 @@
+# Hashgram Mainnet DNS seeds for hashgram-node (libp2p /dnsaddr).
+#
+# One DNS name per line. hashgram-node resolves TXT records at
+# _dnsaddr.<name> of the form
+#
+#   dnsaddr=/ip4/<ip>/udp/26670/quic-v1/p2p/<peer-id>
+#
+# and dials the addresses it finds. This is the one bootstrap layer that can
+# be updated without shipping a new binary, which is what Bitcoin's DNS seeds
+# are for. It is convenience, not a dependency: a node with a populated
+# peerstore never touches DNS, and the genesis hash pinned in the binary
+# means a hijacked name can at most withhold peers, never point a node at a
+# different chain.
+#
+# Empty until an operator publishes a name. Names run by different people
+# in different jurisdictions are worth more than several names run by one.

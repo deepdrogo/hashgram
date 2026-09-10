@@ -23,9 +23,11 @@ import (
 //	network_magic          4-byte P2P wire discriminator
 //	protocol_major_version wire-compatibility generation
 //
-// plus the genesis_hash, which cannot exist as a compile-time constant because
-// it is the hash of the genesis file produced at launch. It is pinned into the
-// node configuration and verified on every peer handshake.
+// plus the genesis_hash. Before launch it could not be a compile-time constant
+// because it is the hash of the genesis file produced at launch; since the
+// 2026-09-10 launch it is one (MainnetGenesisHash in mainnet.go, with the file
+// itself embedded). It is pinned into the node configuration and verified on
+// every peer handshake.
 //
 // Anybody may copy this software. Copying it does not produce Hashgram
 // Mainnet: a different genesis file yields a different genesis hash, and the

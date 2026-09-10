@@ -1,0 +1,16 @@
+# Hashgram Mainnet CometBFT seeds (hashgramd, port 26656).
+#
+# One entry per line as <node-id>@<host>:<port>. Blank lines and lines
+# starting with '#' are ignored. Embedded into the binary by app/params and
+# written to config.toml `seeds` by `hashgramctl join-mainnet` when the
+# operator does not pass --peers.
+#
+# Unlike Bitcoin's DNS seeds, a CometBFT seed entry carries the node id, so a
+# hostname alone cannot rotate to a different machine: the id must stay the
+# same. A DNS name here therefore only lets the IP move, not the operator.
+#
+# Same rules as bootstrap_peers.txt: each line is a trust decision made at
+# build time; more independent operators is the fix.
+
+# genesis-full — the genesis validator (launched 2026-09-10)
+2f6629254d6568e48a09aff20ba01a61a26c47f0@186.241.19.230:26656

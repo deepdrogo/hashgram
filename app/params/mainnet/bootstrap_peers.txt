@@ -1,0 +1,21 @@
+# Hashgram Mainnet bootstrap peers for hashgram-node (libp2p).
+#
+# One multiaddr per line, each ending in /p2p/<peer-id>. Blank lines and
+# lines starting with '#' are ignored.
+#
+# This file is the single source of truth for both implementations:
+#   Go    app/params/mainnet.go        (go:embed)
+#   Rust  node/hashgram-net/src/mainnet.rs  (include_str!)
+#
+# It plays the role of Bitcoin's chainparamsseeds.h: the addresses a brand
+# new node tries when it has no peerstore yet. A node that has ever been
+# online uses its persisted peerstore first and never needs this list again.
+#
+# Every entry here is a point of trust chosen at build time (see
+# docs/DECENTRALIZATION.md, "Bootstrap peers ship with the binary"). The fix
+# is more lines from more independent operators, in more jurisdictions.
+# Operators who run a stable public node may open a pull request adding it.
+
+# genesis-full — the genesis validator (launched 2026-09-10)
+/ip4/186.241.19.230/udp/26670/quic-v1/p2p/12D3KooWF53MV7ECXQMifSTDShv952Po83P89fbAYy6RTZ4NioMq
+/ip4/186.241.19.230/tcp/26670/p2p/12D3KooWF53MV7ECXQMifSTDShv952Po83P89fbAYy6RTZ4NioMq

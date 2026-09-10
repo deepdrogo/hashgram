@@ -250,12 +250,8 @@ sudo scripts/install/bootstrap-ubuntu.sh        # იგივე, რაც ა
 export HASHGRAM_HOME=/var/lib/hashgram/chain
 
 hashgramctl init --moniker <სახელი>
-hashgramctl join-mainnet \
-  --genesis-url https://<სადაც_გამოაქვეყნე>/genesis.json \
-  --genesis-hash <hash დამოუკიდებელი წყაროდან, არა ფაილის გვერდიდან> \
-  --peers <node-id>@186.241.19.230:26656 \
-  --p2p-peers /ip4/186.241.19.230/udp/26670/quic-v1/p2p/<peer-id>
-hashgramctl network-info                        # pin უნდა დაემთხვეს
+hashgramctl join-mainnet                        # genesis, hash, seeds — ბინარშია
+hashgramctl network-info                        # pin უნდა იყოს e322bc23...
 
 hashgramctl configure-role relay,store,media,bootstrap \
   --declared-storage 500000000000 --reward-address hash1<ცივი>

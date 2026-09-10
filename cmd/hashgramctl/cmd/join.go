@@ -33,17 +33,25 @@ func cmdJoinMainnet() *cobra.Command {
 		Long: `Join an existing Hashgram network.
 
 This does NOT create a genesis file. It obtains the existing one, verifies it
-against the hash you supply, and pins that identity locally.
+against the pinned hash, and pins that identity locally.
 
-The --genesis-hash argument is not optional convenience. Without it, joining
-means trusting whoever gave you the file and the URL, and a fork with a
-plausible-looking genesis would be indistinguishable from the real network.
-Obtain the hash from a source independent of the genesis file itself.
+For Mainnet no arguments are needed. The canonical genesis file, its SHA-256
+and a list of seed nodes are compiled into this binary, the way bitcoind
+carries its genesis block and fixed seeds:
 
-  hashgramctl join-mainnet \
-    --genesis-url https://example/genesis.json \
-    --genesis-hash <sha256> \
-    --peers <nodeid>@<host>:26656,<nodeid>@<host>:26656
+  hashgramctl join-mainnet
+
+The binary you chose to run is the out-of-band source for the hash. If you
+pass --genesis-hash and it differs from the built-in one, the command
+refuses: either the file you were handed is a fork, or this binary is.
+
+You may still supply the genesis from elsewhere (--genesis-url /
+--genesis-file); it must hash to the built-in value. Peers you pass with
+--peers become persistent_peers; peers you pass with --p2p-peers are added to
+the built-in hashgram-node bootstrap list, not substituted for it.
+
+For a DEVNET (--devnet) nothing is built in, so --genesis-hash and one of
+--genesis-url / --genesis-file are required.
 
 What may safely be copied from another server: the genesis file, the address
 book, and the app.toml and config.toml (with the moniker changed).
@@ -54,30 +62,50 @@ one mistake in Hashgram operations that cannot be undone. See
 docs/OPERATIONS.md.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if genesisHash == "" {
-				return fmt.Errorf(
-					"--genesis-hash is required.\n\n" +
-						"Without it, joining a network means trusting whoever gave you the file.\n" +
-						"Obtain the expected hash from a source independent of the genesis file,\n" +
-						"then verify: sha256sum genesis.json")
-			}
-			if err := hgparams.ValidateGenesisHash(strings.ToLower(genesisHash)); err != nil {
-				return fmt.Errorf("--genesis-hash is malformed: %w", err)
-			}
 			genesisHash = strings.ToLower(genesisHash)
+			if genesisHash != "" {
+				if err := hgparams.ValidateGenesisHash(genesisHash); err != nil {
+					return fmt.Errorf("--genesis-hash is malformed: %w", err)
+				}
+			}
 
-			if genesisURL == "" && genesisFile == "" {
-				return fmt.Errorf("one of --genesis-url or --genesis-file is required")
+			builtin := !devnet
+			switch {
+			case devnet && genesisHash == "":
+				return fmt.Errorf(
+					"--genesis-hash is required for a devnet.\n\n" +
+						"Nothing is built in for development networks. Obtain the expected hash\n" +
+						"from a source independent of the genesis file, then verify:\n" +
+						"  sha256sum genesis.json")
+			case devnet && genesisURL == "" && genesisFile == "":
+				return fmt.Errorf("one of --genesis-url or --genesis-file is required for a devnet")
+			case builtin && genesisHash == "":
+				genesisHash = hgparams.MainnetGenesisHash
+			case builtin && genesisHash != hgparams.MainnetGenesisHash:
+				return fmt.Errorf(
+					"GENESIS HASH DISAGREES WITH THIS BINARY - refusing to join\n\n"+
+						"  built in  %s\n"+
+						"  you gave  %s\n\n"+
+						"This hashgramctl was built for %s, whose genesis hashes to the\n"+
+						"built-in value. A different hash means the network you are being told to\n"+
+						"join is not the one this software was released for. If you really mean a\n"+
+						"development network, pass --devnet.",
+					hgparams.MainnetGenesisHash, genesisHash, hgparams.NetworkNameMainnet)
 			}
 
 			var raw []byte
 			var err error
+			source := "built into this binary"
 			switch {
 			case genesisFile != "":
 				raw, err = os.ReadFile(genesisFile)
-			default:
+				source = genesisFile
+			case genesisURL != "":
 				fmt.Fprintf(cmd.OutOrStdout(), "fetching genesis from %s\n", genesisURL)
 				raw, err = download(genesisURL)
+				source = genesisURL
+			default:
+				raw = hgparams.MainnetGenesis
 			}
 			if err != nil {
 				return err
@@ -152,13 +180,30 @@ docs/OPERATIONS.md.`,
 				return err
 			}
 
+			// Discovery. Persistent peers are what the operator asked for;
+			// seeds and bootstrap peers are the built-in first-contact list,
+			// merged with (never replaced by) anything the operator passed.
+			var seeds, dnsSeeds []string
 			if peers != "" {
-				if err := writePersistentPeers(peers); err != nil {
+				if err := writeCometString("persistent_peers", peers, false); err != nil {
 					return err
 				}
 			}
+			if builtin {
+				seeds = hgparams.MainnetSeeds()
+				if err := writeCometString("seeds", strings.Join(seeds, ","), true); err != nil {
+					return err
+				}
+				p2pPeers = mergeUnique(p2pPeers, hgparams.MainnetBootstrapPeers())
+				dnsSeeds = hgparams.MainnetDNSSeeds()
+			}
 			if len(p2pPeers) > 0 {
 				if err := writeNodeTomlList("bootstrap_peers", p2pPeers); err != nil {
+					return err
+				}
+			}
+			if len(dnsSeeds) > 0 {
+				if err := writeNodeTomlList("dnsaddr", dnsSeeds); err != nil {
 					return err
 				}
 			}
@@ -171,6 +216,7 @@ docs/OPERATIONS.md.`,
 				return err
 			}
 			o.row("Genesis file", target)
+			o.row("Genesis source", source)
 			o.row("Genesis hash", genesisHash)
 			o.row("Network id", expected.NetworkID)
 			o.row("Chain id", expected.ChainID)
@@ -178,8 +224,14 @@ docs/OPERATIONS.md.`,
 			if peers != "" {
 				o.row("Persistent peers", peers)
 			}
+			if len(seeds) > 0 {
+				o.row("CometBFT seeds", strings.Join(seeds, ", "))
+			}
 			if len(p2pPeers) > 0 {
 				o.row("P2P bootstrap peers", strings.Join(p2pPeers, ", "))
+			}
+			if len(dnsSeeds) > 0 {
+				o.row("P2P DNS seeds", strings.Join(dnsSeeds, ", "))
 			}
 			o.blank()
 			o.raw("Next: configure this machine's roles, then start it.")
@@ -197,23 +249,25 @@ docs/OPERATIONS.md.`,
 	cmd.Flags().StringVar(&genesisURL, "genesis-url", "", "URL to fetch genesis.json from")
 	cmd.Flags().StringVar(&genesisFile, "genesis-file", "", "path to an existing genesis.json")
 	cmd.Flags().StringVar(&genesisHash, "genesis-hash", "",
-		"expected lowercase hex sha256 of the genesis file; required")
+		"expected lowercase hex sha256 of the genesis file; built in for Mainnet, required with --devnet")
 	cmd.Flags().StringVar(&peers, "peers", "",
-		"comma-separated persistent peers as nodeid@host:port")
+		"comma-separated persistent peers as nodeid@host:port (built-in seeds are used regardless)")
 	cmd.Flags().StringArrayVar(&p2pPeers, "p2p-peers", nil,
-		"hashgram-node bootstrap multiaddrs with /p2p/<peer-id> (repeatable); written to node.toml")
+		"extra hashgram-node bootstrap multiaddrs with /p2p/<peer-id> (repeatable); merged with the built-in list into node.toml")
 	cmd.Flags().BoolVar(&devnet, "devnet", false, "join a DEVNET rather than Mainnet")
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing genesis and network pin")
 
 	return cmd
 }
 
-// writePersistentPeers sets persistent_peers in config.toml.
+// writeCometString sets a top-level string key (persistent_peers, seeds) in
+// config.toml. With onlyIfEmpty, a value the operator already set is kept:
+// the built-in seed list is a default, not an override.
 //
 // Edited textually rather than through the CometBFT config loader, because
 // rewriting the whole file would discard an operator's own comments and
 // hand-tuned values.
-func writePersistentPeers(peers string) error {
+func writeCometString(key, value string, onlyIfEmpty bool) error {
 	path := paths.CometConfigFile()
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -223,18 +277,43 @@ func writePersistentPeers(peers string) error {
 	lines := strings.Split(string(raw), "\n")
 	replaced := false
 	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "persistent_peers ") ||
-			strings.HasPrefix(strings.TrimSpace(line), "persistent_peers=") {
-			lines[i] = fmt.Sprintf("persistent_peers = %q", peers)
-			replaced = true
-			break
+		t := strings.TrimSpace(line)
+		if !strings.HasPrefix(t, key+" ") && !strings.HasPrefix(t, key+"=") {
+			continue
 		}
+		if onlyIfEmpty {
+			_, cur, _ := strings.Cut(t, "=")
+			if strings.Trim(strings.TrimSpace(cur), `"`) != "" {
+				return nil
+			}
+		}
+		lines[i] = fmt.Sprintf("%s = %q", key, value)
+		replaced = true
+		break
 	}
 	if !replaced {
-		return fmt.Errorf("no persistent_peers setting found in %s", path)
+		return fmt.Errorf("no %s setting found in %s", key, path)
 	}
 
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o644)
+}
+
+// mergeUnique appends the entries of extra that are not already in base,
+// preserving order. Operator-supplied entries stay first.
+func mergeUnique(base, extra []string) []string {
+	seen := make(map[string]bool, len(base)+len(extra))
+	out := make([]string, 0, len(base)+len(extra))
+	for _, lst := range [][]string{base, extra} {
+		for _, v := range lst {
+			v = strings.TrimSpace(v)
+			if v == "" || seen[v] {
+				continue
+			}
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // writeNodeTomlList sets a string-array key in /etc/hashgram/node.toml,

@@ -122,6 +122,16 @@ whoever builds the release. The node adds a persistent peerstore, DHT and peer-e
 the first connection has to come from somewhere, and that somewhere is a
 decision made at build time.
 
+As of the 2026-09-10 launch the lists (`app/params/mainnet/seeds.txt`,
+`bootstrap_peers.txt`, `dns_seeds.txt`, shared by the Go and Rust builds)
+contain exactly one operator: the genesis validator. That is the same shape
+Bitcoin had on its first day and it is the weakest point in this table. The
+pinned genesis hash means a seed can at most withhold peers from a new node,
+never route it onto a different chain; but one host, one jurisdiction, one
+person is still one host. Entries from independent operators are accepted
+by pull request, and the DNS layer exists so that a name published by
+someone else can add peers without a release.
+
 ## 4. What would make it genuinely decentralised
 
 Concrete, not aspirational. In rough order of how much each would change the

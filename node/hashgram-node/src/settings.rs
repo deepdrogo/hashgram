@@ -101,7 +101,7 @@ pub fn load(config_path: &Path, home: Option<&Path>) -> anyhow::Result<Settings>
             if config.genesis_hash.is_empty() {
                 bail!(
                     "{} does not exist and {} has no genesis_hash. This node has no pinned network.\n\
-                     Run `hashgramctl join-mainnet --genesis-hash <sha256> ...` first.",
+                     Run `hashgramctl join-mainnet` first.",
                     pin_path.display(),
                     config_path.display()
                 );
@@ -138,8 +138,38 @@ pub fn load(config_path: &Path, home: Option<&Path>) -> anyhow::Result<Settings>
         }
     }
 
+    apply_builtin_discovery(&mut config);
+
     let identity = config.validate().context("node configuration is invalid")?;
     Ok(Settings { config, identity })
+}
+
+/// Fills in the compiled-in Mainnet first-contact lists when the operator
+/// configured no discovery source at all.
+///
+/// This is the bitcoind behaviour: fixed seeds are consulted only when there
+/// is nothing else. An operator who wrote *any* `bootstrap_peers`,
+/// `bootstrap_records` or `dnsaddr` entry has made a choice, and that choice
+/// is respected verbatim. Devnets get nothing; there is nothing to give.
+/// The swarm already skips an entry naming this node's own peer id, so the
+/// genesis node itself can run with the same list.
+fn apply_builtin_discovery(config: &mut NodeConfig) {
+    if config.network != "mainnet" {
+        return;
+    }
+    let operator_chose = !config.bootstrap_peers.is_empty()
+        || !config.bootstrap_records.is_empty()
+        || !config.dnsaddr.is_empty();
+    if operator_chose {
+        return;
+    }
+    config.bootstrap_peers = hashgram_net::mainnet_bootstrap_peers();
+    config.dnsaddr = hashgram_net::mainnet_dns_seeds();
+    tracing::info!(
+        peers = config.bootstrap_peers.len(),
+        dns = config.dnsaddr.len(),
+        "no bootstrap source configured; using the Mainnet list built into this binary"
+    );
 }
 
 #[cfg(test)]
@@ -194,6 +224,61 @@ mod tests {
         .unwrap();
         let err = load(&d.join("node.toml"), None).unwrap_err().to_string();
         assert!(err.contains("disagree"), "{err}");
+    }
+
+    fn pin_mainnet(d: &Path) {
+        std::fs::write(
+            d.join("network.json"),
+            format!(
+                r#"{{"network_name":"Hashgram Mainnet","network_id":"hashgram-mainnet","chain_id":"hashgram-1","network_magic":"HGM1","protocol_major_version":1,"genesis_hash":"{}"}}"#,
+                hashgram_net::MAINNET_GENESIS_HASH
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn mainnet_with_no_discovery_source_gets_the_builtin_list() {
+        let d = dir("builtin");
+        pin_mainnet(&d);
+        std::fs::write(d.join("node.toml"), "bootstrap_peers = []\n").unwrap();
+        let s = load(&d.join("node.toml"), Some(&d)).unwrap();
+        assert!(s.identity.is_mainnet());
+        assert_eq!(s.config.bootstrap_peers, hashgram_net::mainnet_bootstrap_peers());
+        assert!(!s.config.bootstrap_peers.is_empty());
+    }
+
+    #[test]
+    fn an_operator_supplied_list_is_left_alone() {
+        let d = dir("operator");
+        pin_mainnet(&d);
+        let own = "/ip4/203.0.113.9/udp/26670/quic-v1/p2p/12D3KooWF53MV7ECXQMifSTDShv952Po83P89fbAYy6RTZ4NioMq";
+        std::fs::write(
+            d.join("node.toml"),
+            format!("bootstrap_peers = [\"{own}\"]\n"),
+        )
+        .unwrap();
+        let s = load(&d.join("node.toml"), Some(&d)).unwrap();
+        assert_eq!(s.config.bootstrap_peers, vec![own.to_owned()]);
+    }
+
+    #[test]
+    fn a_dnsaddr_alone_counts_as_a_choice() {
+        let d = dir("dnsaddr");
+        pin_mainnet(&d);
+        std::fs::write(d.join("node.toml"), "dnsaddr = [\"boot.example.org\"]\n").unwrap();
+        let s = load(&d.join("node.toml"), Some(&d)).unwrap();
+        assert!(s.config.bootstrap_peers.is_empty());
+        assert_eq!(s.config.dnsaddr, vec!["boot.example.org".to_owned()]);
+    }
+
+    #[test]
+    fn devnet_gets_no_builtin_peers() {
+        let d = dir("devnet-builtin");
+        pin(&d, GENESIS);
+        std::fs::write(d.join("node.toml"), "listen_port = 26670\n").unwrap();
+        let s = load(&d.join("node.toml"), Some(&d)).unwrap();
+        assert!(s.config.bootstrap_peers.is_empty());
     }
 
     #[test]

@@ -49,19 +49,21 @@ deliberately with `hashgramctl restart` once you have checked the version.
 
 ## Joining a network
 
-You need three things from a source you trust, and the genesis hash must come
-from somewhere **independent** of the genesis file itself. A file and its own
-hash prove nothing together.
+Nothing has to be fetched or typed: the Mainnet genesis, its hash and a seed
+list are built into the binary (`app/params/mainnet/`). The independent
+source for the hash is the software release you verified and installed.
 
 ```bash
-hashgramctl join-mainnet \
-  --genesis-url https://... \
-  --genesis-hash <sha256> \
-  --peers <nodeid>@<host>:26656
+hashgramctl join-mainnet
 
 hashgramctl configure-role relay,store
 hashgramctl start
 ```
+
+`--genesis-file` / `--genesis-url` are accepted but must hash to the built-in
+value; `--peers` adds persistent peers; `--p2p-peers` adds hashgram-node
+bootstrap addresses on top of the built-in ones. A devnet has nothing built
+in and still requires `--devnet --genesis-hash ... --genesis-file ...`.
 
 `--genesis-hash` is required, not optional convenience. Without it, joining a
 network means trusting whoever handed you the file. The command refuses any

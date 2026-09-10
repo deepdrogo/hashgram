@@ -64,7 +64,7 @@ Typical first launch on a fresh Ubuntu server:
 Joining an existing network from a second server:
 
   sudo ./scripts/install/bootstrap-ubuntu.sh
-  hashgramctl join-mainnet --genesis-url <url> --genesis-hash <sha256> --peers <id@host:port>
+  hashgramctl join-mainnet                                (genesis, hash and seeds are built in)
   hashgramctl configure-role relay,store
   hashgramctl start`,
 		SilenceUsage:  true,

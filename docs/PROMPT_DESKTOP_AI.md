@@ -68,10 +68,15 @@ On a correctly configured node these bind **localhost**.
 Genesis VPS public IP today: `186.241.19.230`.
 CometBFT node id: `2f6629254d6568e48a09aff20ba01a61a26c47f0`.
 P2P seed: `2f6629254d6568e48a09aff20ba01a61a26c47f0@186.241.19.230:26656`.
-Chain id after launch: `hashgram-1`.
-Genesis hash: read `/etc/hashgram/network.json` on the server **after**
-`finalize-genesis`. Never hash the RPC `/genesis` response — CometBFT
-re-serialises it and the SHA-256 will not match the file.
+Chain id: `hashgram-1` (launched 2026-09-10).
+Genesis hash: `e322bc2319f6e0173286fa526dab5a8ff8ad0797c7b80dd03e7c9d98621d5e4d`.
+It is a compile-time constant in the repo (`app/params/mainnet.go`,
+`node/hashgram-net/src/mainnet.rs`, with the genesis file itself embedded);
+the desktop must hardcode it too and refuse any node whose reported genesis
+hash differs. Never hash the RPC `/genesis` response — CometBFT re-serialises
+it and the SHA-256 will not match the file.
+Built-in hashgram-node bootstrap peers live in
+`app/params/mainnet/bootstrap_peers.txt`; a client SDK embeds the same list.
 
 The desktop must support all three:
 
