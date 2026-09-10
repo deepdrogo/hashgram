@@ -61,7 +61,7 @@ python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); m=d["body"]["messag
   "$KIT/unsigned.json" "$FOUNDER" "$VALOPER" "$AMOUNT_UHASH" || die "unsigned.json does not contain the expected message"
 
 # Laptop binaries: whatever cross-builds exist next to this script's output dir.
-for f in /root/hashgram-founder-bins/*; do [[ -e "$f" ]] && cp -r "$f" "$KIT/bin/"; done
+for f in /root/hashgram-founder-bins/*/; do [[ -d "$f" ]] && cp -r "$f" "$KIT/bin/"; done
 cp /usr/local/bin/hashgramd "$KIT/bin/hashgramd-linux-amd64"
 
 cat > "$KIT/SIGN_FACTS.txt" <<EOF
