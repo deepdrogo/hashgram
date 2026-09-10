@@ -58,6 +58,47 @@ hash is "wrong network", not a peer.
 
 ---
 
+## hashgram.io — the official window into the network
+
+<div align="center">
+<a href="https://hashgram.io"><img src="brand/og-default.png" alt="hashgram.io — live explorer, network dashboard and documentation" width="720"></a>
+</div>
+
+**[hashgram.io](https://hashgram.io) is the official, live view of everything
+happening on Hashgram** — the place to see the decentralised system as it
+runs, block by block, in real time:
+
+| What you see | Where |
+| --- | --- |
+| Every block as it is produced, every transaction decoded, where each fee went | [Blocks](https://hashgram.io/blocks) · [Transactions](https://hashgram.io/txs) |
+| Which nodes are online — validators, consensus peers and P2P peers, their roles, versions and uptime | [Network](https://hashgram.io/network) · [Validators](https://hashgram.io/validators) |
+| Who holds what: top balances with module and reserve accounts labelled, vesting schedules, delegations | [Accounts](https://hashgram.io/accounts) |
+| How nodes earn: the 500,000,000 HASH reserve, the emission schedule, this epoch's budget, every provider's credit and payouts | [Rewards](https://hashgram.io/rewards) |
+| The Founder's 1 % — accrued, paid, pending — and the vesting of the founder allocation, live | [Founder](https://hashgram.io/founder) |
+| Governance proposals, tallies and timelines | [Governance](https://hashgram.io/governance) |
+| The complete documentation and the read API | [Docs](https://hashgram.io/docs) · [API](https://hashgram.io/api/v1/docs) |
+
+It is built to be **trusted for the same reason the network is**:
+
+- It runs on **its own full node** that joined Mainnet exactly like any other
+  node — through the seed list compiled into the binaries — and reads only
+  from that node. It does not depend on the genesis server or on any
+  particular machine, and keeps working if they disappear.
+- It is **read-only**. No wallet, no keys, no accounts, no analytics, no
+  cookies beyond the theme. It observes the network; it cannot act on it —
+  nothing can, from outside consensus and governance.
+- It **pins the genesis hash**. If its API ever served a different chain,
+  the site disables itself and says so.
+- Its code is a full-stack specification in this repository
+  ([docs/PROMPT_HASHGRAM_IO.md](docs/PROMPT_HASHGRAM_IO.md)); the read API is
+  the Go indexer in [`indexer/`](indexer/), so every number on the site is
+  reproducible from the chain by anyone who runs `hashgram-indexer rebuild`.
+
+Anyone can run their own copy against their own node. hashgram.io is the
+official one; it is not the only possible one, and that is the point.
+
+---
+
 ## What Hashgram is
 
 ```mermaid
