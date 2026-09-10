@@ -444,8 +444,15 @@ TX_BEFORE="$(q0 bank balances "$BOB" | python3 -c 'import json,sys;b=json.load(s
   --keyring-backend test --home "$(home_of 0)" \
   --gas auto --gas-adjustment 1.4 --gas-prices 0.0025"$DENOM" \
   --yes --output json >/dev/null 2>&1
-sleep 8
-TX_AFTER="$(q0 bank balances "$BOB" | python3 -c 'import json,sys;b=json.load(sys.stdin)["balances"];print(b[0]["amount"] if b else 0)' 2>/dev/null)"
+# Poll rather than sleep a fixed time: on a two-core CI runner four validators
+# on one host produce a block every 6-7 s, so a fixed 8 s wait is a coin flip.
+# Ten blocks' worth is the bound; on a real host this returns in one block.
+TX_AFTER="$TX_BEFORE"
+for _ in $(seq 1 30); do
+  TX_AFTER="$(q0 bank balances "$BOB" | python3 -c 'import json,sys;b=json.load(sys.stdin)["balances"];print(b[0]["amount"] if b else 0)' 2>/dev/null)"
+  if [ "${TX_AFTER:-0}" -gt "${TX_BEFORE:-0}" ] 2>/dev/null; then break; fi
+  sleep 2
+done
 if [ "$TX_AFTER" -gt "$TX_BEFORE" ] 2>/dev/null; then
   ok "transactions still process with one validator down"
 else
