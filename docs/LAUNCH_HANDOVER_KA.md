@@ -2,7 +2,7 @@
 
 მფლობელის მოკლე ბარათი (რა წაიღო, 1%, დესკტოპის პრომპტი):
 [OWNER_LAUNCH_KA.md](OWNER_LAUNCH_KA.md).
-დესკტოპის AI-პრომპტი ერთი კოპირებით: [PROMPT_DESKTOP_AI.md](PROMPT_DESKTOP_AI.md).
+Windows-ის სრული აპლიკაციის AI-პრომპტი (wallet, მესენჯერი, feed/reels, calls, Earn, node): [PROMPT_DESKTOP_AI.md](PROMPT_DESKTOP_AI.md).
 hashgram.io (API + explorer + docs, შავ-თეთრი) ერთი პრომპტით:
 [PROMPT_HASHGRAM_IO.md](PROMPT_HASHGRAM_IO.md).
 გაშვების სკრიპტები: `scripts/launch/`.
