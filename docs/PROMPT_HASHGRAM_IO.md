@@ -1,222 +1,371 @@
-# Prompt 2 of 2 — hashgram.io: live explorer and documentation site
+# hashgram.io — one prompt: live explorer, network dashboard, documentation
 
-Copy everything below the line into an AI coding agent in a **new, empty
-repository** for the website. It consumes the public API produced by
-`docs/PROMPT_EXPLORER_API.md` (`https://api.hashgram.io`). Give the agent
-read access to this repository too (or a copy of `docs/`), because the
-documentation section is rendered from these Markdown files.
+Copy everything below the line into an AI coding agent opened on **this
+repository** (`/home/hashgram`) on the genesis VPS (a synced node,
+PostgreSQL and the indexer are already running here). One domain, one repo,
+one deployment: the read API lives at `hashgram.io/api/v1/…` (served by the
+Go indexer in `indexer/`), the website lives at `hashgram.io` (a new
+`web/` directory), and Caddy fronts both.
 
 ---
 
-You are building **hashgram.io**, the official website of Hashgram — a live
-Layer-1 blockchain (Cosmos SDK / CometBFT, chain-id `hashgram-1`, launched
-2026-09-10) with a fixed supply of 1,000,000,000 HASH, useful-service rewards
-for storage/relay/media nodes, a 1 % founder revenue share, on-chain
-usernames and identity, and a peer-to-peer social/messaging layer. The site is
-a **block explorer, a network dashboard, and the documentation**, in English,
-with everything updating live from the chain. It must feel like a product
-built in 2026 by people who care, not like a template.
+You are building **hashgram.io**, the official site of Hashgram — a live
+Layer-1 blockchain (Cosmos SDK v0.53 / CometBFT, chain-id `hashgram-1`,
+launched 2026-09-10, genesis SHA-256
+`e322bc2319f6e0173286fa526dab5a8ff8ad0797c7b80dd03e7c9d98621d5e4d`), with a
+fixed supply of 1,000,000,000 HASH, useful-service rewards for
+storage/relay/media nodes, a 1 % founder revenue share, on-chain usernames
+and identity, and a peer-to-peer social/messaging layer.
+
+The site is a **block explorer, a network dashboard and the documentation**,
+in English, with everything updating live from the node. Two parts, one
+delivery:
+
+- **Part A — the read API** (`indexer/`, Go): extend the existing indexer so
+  it can serve every number the site shows, plus a live event stream.
+- **Part B — the website** (`web/`, Next.js/TypeScript): black-and-white,
+  ultra-modern, live.
+- **Part C — publishing**: Caddy on this host serves `hashgram.io` with
+  `/api/*` → the indexer and everything else → the site.
+
+Read before writing: `docs/CLIENT_CONNECTIVITY_SPEC.md` (all endpoints and
+the traps), `docs/TOKENOMICS.md`, `docs/SERVICE_REWARDS.md`,
+`docs/DECENTRALIZATION.md`, `docs/OPERATIONS.md`, `docs/LOGGING_POLICY.md`,
+`indexer/` (`api.go`, `chain.go`, `schema.go`, `config.go`),
+`cmd/hashgram-indexer/main.go`, `deploy/systemd/hashgram-indexer.service`,
+`indexer.toml` in `/etc/hashgram`.
+
+## The rule that shapes everything
+
+The node's admin interfaces — CometBFT RPC `127.0.0.1:26657`, Cosmos REST
+`127.0.0.1:1317`, gRPC `127.0.0.1:9091`, hashgram-node API `127.0.0.1:26672`,
+indexer `127.0.0.1:1318` — are **loopback only** and stay that way.
+`hashgramctl mainnet-preflight` fails if 26657 or 1317 is reachable from
+outside. Do not change any `laddr`, `address` or `listen` in the chain
+home's `config` directory or in `/etc/hashgram`. The only thing the internet
+reaches is Caddy on 80/443. The browser talks to `hashgram.io/api`, never to
+the node.
+
+Second rule: the indexer database is a **rebuildable cache**. Every number
+served must be derivable from the chain; `hashgram-indexer rebuild` must
+reproduce it. Store nothing that is not on chain or in the node API.
+
+---
+
+# Part A — the read API (Go, `indexer/`)
+
+## What exists
+
+`indexer/` polls `chain_rpc` every 3 s (`ChainIngester.IndexBlock`), stores
+`blocks`, `transactions`, `transfers`, `usernames`, `identities`,
+`providers` and the social projections, and serves on `127.0.0.1:1318`:
+`/v1/health`, `/v1/stats`, `/v1/blocks/latest`, `/v1/txs/{hash}`,
+`/v1/accounts/{address}/transactions`, `/v1/accounts/{address}/transfers`,
+`/v1/providers`, plus `/v1/feed/…`, `/v1/reels…`, `/v1/profiles/…`,
+`/v1/search/…` (social — leave as is). `systemctl status hashgram-indexer`
+is active.
+
+## Add these routes
+
+All JSON; lists paginated (`?limit=` max 100, `?cursor=` opaque); money as
+`uhash` **strings** (use Postgres `numeric`; never `int64` for sums, never
+format on the server); `Cache-Control` per volatility.
+
+**Chain**
+- `GET /v1/chain` — chain_id, network_id, genesis_hash (from the
+  `network.json` pin in `/etc/hashgram`), genesis_time, height, block time,
+  average block time (last 100), node/app versions (`/status`), validator
+  count, bonded tokens, total supply (`/cosmos/bank/v1beta1/supply`),
+  circulating (supply minus module accounts and the Founder's unvested
+  balance), total txs, total accounts.
+- `GET /v1/blocks?limit&cursor`, `GET /v1/blocks/{height}` — header, proposer
+  (consensus address → moniker via `/cosmos/staking/v1beta1/validators` and RPC
+  `/validators`), txs, size, gas, events summary (transfers, delegations,
+  founder payouts), signatures present/missing.
+- `GET /v1/txs?limit&cursor&type=`, `GET /v1/txs/{hash}` — decoded messages
+  (use the SDK codec from `app/`, not string parsing), fee and its split (see
+  fees), events, raw log on failure.
+- `GET /v1/search?q=` — height, tx hash, block hash, `hash1…`,
+  `hashvaloper1…`, `@username` (`/hashgram/username/v1/lookup/{name}`), peer id
+  (`12D3Koo…`) → `{type,id}`.
+
+**Accounts**
+- New table `balances(address, uhash, spendable_uhash, kind, updated_height)`
+  refreshed every 20 blocks from `/cosmos/bank/v1beta1/denom_owners/uhash`
+  (paginate to the end) and `/cosmos/bank/v1beta1/spendable_balances/{addr}`;
+  `kind` ∈ `user | module | vesting | validator_operator` from
+  `/cosmos/auth/v1beta1/accounts/{addr}` (`@type` distinguishes module and
+  `PeriodicVestingAccount`).
+- `GET /v1/accounts/top?limit` — rank, label, kind, balance, share of supply.
+  Labels: `serviceproof` module = "Useful-service reserve"; the four
+  sub-accounts from `/hashgram/treasury/v1/reserves` = "Treasury", "Growth",
+  "Developer grants", "Liquidity"; founder module
+  `hash1t9zc2z9qsf707huqa5y3a0vgpra7vlyhyvdeeh` = "Founder revenue (module)";
+  the beneficiary from `/hashgram/founder/v1/params` = "Founder (vesting)".
+- `GET /v1/accounts/{address}` — balance, spendable, vesting schedule (auth),
+  delegations (`/cosmos/staking/v1beta1/delegations/{addr}`), rewards
+  (`/cosmos/distribution/v1beta1/delegators/{addr}/rewards`), username
+  (`/hashgram/username/v1/reverse/{owner}`), provider record
+  (`/hashgram/serviceproof/v1/provider/{operator}`), tx count, first/last seen.
+- `GET /v1/accounts/count`.
+
+**Validators & staking**
+- Add `signatures(height, validator_cons, signed)` from
+  `block.last_commit.signatures`.
+- `GET /v1/validators`, `GET /v1/validators/{operator}` — moniker, operator,
+  consensus address, tokens, voting power %, commission, status, jailed,
+  uptime over `signed_blocks_window` (30,000 blocks), missed blocks,
+  self-delegation, delegator count, delegations, last 50 proposed blocks.
+- `GET /v1/staking` — bonded/unbonded/total, ratio, unbonding 504 h, max
+  validators 100, params.
+
+**Rewards (what visitors mean by "prizes")** — `x/serviceproof`
+- `GET /v1/rewards/params` — `/hashgram/serviceproof/v1/params` (epoch 21,600
+  blocks, emission 5 bps, cap 250,000 HASH/epoch, bond 1,000 HASH, provider
+  cap 500 bps, credit rates).
+- `GET /v1/rewards/reserve` — `/hashgram/serviceproof/v1/reserve` and
+  `/hashgram/serviceproof/v1/emission_schedule`; also project the budget for
+  the next 30 / 365 / 3,650 epochs.
+- `GET /v1/rewards/epochs?limit&cursor` — from
+  `/hashgram/serviceproof/v1/epoch/current` and `/hashgram/serviceproof/v1/epoch/{number}`,
+  stored as they close: budget, paid, providers paid.
+- `GET /v1/rewards/providers`, `GET /v1/rewards/providers/{operator}` —
+  roles, bond, declared storage, reward address, jailed, fraud score,
+  current-epoch credit and lifetime paid (`/hashgram/serviceproof/v1/rewards/{operator}`),
+  assignments (`/hashgram/serviceproof/v1/assignments/{provider}`), challenge
+  pass rate (`/hashgram/serviceproof/v1/challenges/{provider}`), fraud
+  (`/hashgram/serviceproof/v1/fraud/{provider}`), payout history (transfers
+  from the `serviceproof` module account).
+- `GET /v1/rewards/welcome` — `/hashgram/welcome/v1/params`, `/hashgram/welcome/v1/status`,
+  `/hashgram/welcome/v1/tiers`, `/hashgram/welcome/v1/claims`. Disabled until an
+  attestor exists; say so in the payload.
+
+**Founder, fees, treasury**
+- `GET /v1/founder` — `/hashgram/founder/v1/params` (fee_basis_points 100,
+  ceiling 100 — hardcoded in the binary), `/hashgram/founder/v1/revenue`,
+  `/hashgram/founder/v1/beneficiary_history`, the beneficiary's vesting
+  schedule (199,000,000 HASH: 19,000,000 spendable, 180,000,000 in 96 monthly
+  periods), its delegations, payout history (transfers from the founder module
+  account every 7,200 blocks).
+- `GET /v1/fees` — `/hashgram/feerouter/v1/params`, `/hashgram/feerouter/v1/totals`,
+  `/hashgram/feerouter/v1/service_revenue`.
+- `GET /v1/treasury` — `/hashgram/treasury/v1/reserves`,
+  `/hashgram/treasury/v1/reserve/{name}` (`treasury|growth|dev_grants|liquidity`),
+  `/hashgram/treasury/v1/disbursements`.
+
+**Governance**
+- `GET /v1/gov/proposals`, `GET /v1/gov/proposals/{id}` — from
+  `/cosmos/gov/v1/proposals`: tally, votes, deposit, timeline, decoded message
+  (`MsgUpdateParams` shown as a diff against current params). Proposal #1
+  (storage assigner) ends 2026-09-17T13:05:25Z.
+
+**Network**
+- `GET /v1/network` — CometBFT `/net_info` (peer count; peers with ip
+  truncated to /24), hashgram-node `127.0.0.1:26672/v1/status` and `/v1/peers`
+  (libp2p peer count, roles, our peer id
+  `12D3KooWF53MV7ECXQMifSTDShv952Po83P89fbAYy6RTZ4NioMq`), the built-in seed
+  lists from `app/params/mainnet/*.txt`, `/hashgram/network/v1/info`,
+  `/hashgram/network/v1/fork_isolation`.
+- `GET /v1/network/nodes` — distinct nodes seen in 24 h across both layers.
+  Return `{"consensus_peers":n,"p2p_peers":m,"validators":v}` as three
+  numbers; never sum them into one.
+
+**Live**
+- `GET /v1/live` — Server-Sent Events: `block`, `tx`, `stats` (every 10 s),
+  `epoch`, `founder_payout`, `proposal`. Source: CometBFT WebSocket
+  `ws://127.0.0.1:26657/websocket` (`tm.event='NewBlock'`, `tm.event='Tx'`)
+  with polling fallback; heartbeat every 15 s; max 2,000 clients then 503 +
+  `Retry-After`.
+
+**OpenAPI** — `indexer/openapi.yaml` (3.1) for every `/v1/*` route, served at
+`/v1/openapi.yaml` and rendered at `/v1/docs` (Scalar or Redoc, monochrome).
+
+## API quality bar
+- Backfill from `index_state` to head, then follow; survive node restarts and
+  RPC timeouts with backoff; `hashgram-indexer check` verifies `blocks` count
+  = height and re-indexes gaps.
+- Every list endpoint < 50 ms at 1,000,000 blocks; comment every index in
+  `schema.go`.
+- Table-driven Go tests with recorded fixtures from this chain
+  (`indexer/testdata/`); `make test`, `make lint` pass.
+- Add `public_base_url` and `allowed_origins` to `indexer/config.go`
+  (defaults keep today's behaviour). The indexer keeps listening on
+  `127.0.0.1:1318`.
+
+---
+
+# Part B — the website (`web/`, Next.js)
 
 ## Non-negotiable design constraints
 
-1. **Black and white only.** Exactly two colours: `#000000` and `#FFFFFF`, plus
-   opacity-derived greys of those two (e.g. `rgba(255,255,255,0.6)`). No accent
-   colour anywhere — not for links, charts, status, focus rings, favicon or the
-   logo. Meaning is carried by weight, size, spacing, borders, motion, and
-   icons/glyphs (✓ ✗ ▲ ▼), never by hue. Charts are monochrome: line weight,
-   dash patterns, hatching and opacity distinguish series. Enforce this with a
-   lint rule (Stylelint `color-no-hex` allow-list) and a Playwright test that
-   samples rendered pixels and fails on any saturated colour.
-2. Two themes, both monochrome: dark (black background) as default, light
-   (white background) via toggle, honouring `prefers-color-scheme`.
-3. Typography does the work: one variable sans for UI (e.g. Inter or Geist),
-   one monospace for hashes, addresses and numbers (tabular figures). Hashes
-   are truncated in the middle (`hash13t8…ynjpy`) with copy-on-click and full
-   value on hover/focus.
-4. Motion is subtle and purposeful: new blocks slide in, numbers tick with
-   `font-variant-numeric: tabular-nums`, respect `prefers-reduced-motion`.
-5. Accessibility: WCAG 2.2 AA contrast (trivial in monochrome — but check
-   grey-on-grey), full keyboard navigation, skip links, ARIA live regions for
-   the live feed, focus visible.
-6. Self-hosted fonts; no third-party scripts, analytics, tag managers or
-   CDNs. Privacy is part of the brand.
+1. **Black and white only.** Exactly `#000000` and `#FFFFFF`, plus
+   opacity-derived greys of those two. No accent colour anywhere — not links,
+   charts, status, focus rings, favicon or logo. Meaning is carried by weight,
+   size, spacing, borders, motion and glyphs (✓ ✗ ▲ ▼), never by hue. Charts
+   are monochrome (line weight, dash pattern, hatching, opacity). Enforce it:
+   Stylelint `color-no-hex` allow-list, and a Playwright test that samples
+   rendered pixels on every route in both themes and fails on any saturated
+   colour.
+2. Two monochrome themes: dark (black background, default) and light, via
+   toggle, honouring `prefers-color-scheme`.
+3. One variable sans for UI (Inter or Geist), one monospace for hashes,
+   addresses, numbers (tabular figures). Hashes truncated in the middle
+   (`hash13t8…ynjpy`), copy on click, full value on hover/focus.
+4. Motion subtle and purposeful (new blocks slide in, numbers tick); respect
+   `prefers-reduced-motion`.
+5. WCAG 2.2 AA, full keyboard navigation, ARIA live regions for the feed.
+6. Self-hosted fonts; no third-party scripts, analytics, tag managers, CDNs.
 
 ## Logo
-
-Design the logo in SVG, monochrome, deliverable as `public/logo.svg`
-(mark), `public/wordmark.svg` (mark + "Hashgram"), `public/favicon.svg`,
-`public/og-image.png` (1200×630, black background). Direction: derive the mark
-from the hash sign `#` — four strokes forming a grid whose intersections
-suggest blocks in a chain; it must work at 16 px and as a 2-metre wall print,
-in black-on-white and white-on-black, with no gradients. Provide a
-`brand/README.md` with clear-space and minimum-size rules. Show me three
-candidates as SVG before committing to one.
+SVG, monochrome: `web/public/logo.svg` (mark), `wordmark.svg`,
+`favicon.svg`, `og-image.png` (1200×630, black). Direction: derive the mark
+from the hash sign `#` — four strokes forming a grid whose intersections read
+as blocks in a chain; must work at 16 px and as a wall print, black-on-white
+and white-on-black, no gradients. `web/brand/README.md` with clear-space and
+minimum-size rules. Show three candidates before committing to one.
 
 ## Stack
+Next.js App Router, TypeScript, RSC, Tailwind with a two-token palette,
+`next/font`, MDX for docs. Data from `NEXT_PUBLIC_API_BASE` (default `/api`,
+same origin), typed client generated from `/api/v1/openapi.yaml`
+(openapi-typescript). Live via `EventSource('/api/v1/live')` with reconnect;
+fall back to polling `/api/v1/chain` every 6 s. Charts: visx/D3 primitives.
+Tests: Vitest, Playwright (incl. the colour test), Lighthouse CI budget
+(performance ≥ 95, accessibility 100, no layout shift). `output: 'standalone'`,
+systemd unit `deploy/systemd/hashgram-web.service` listening on
+`127.0.0.1:3000`.
 
-- Next.js (App Router, TypeScript, React Server Components), Tailwind with a
-  two-token colour palette, `next/font` self-hosting, MDX for docs.
-- Data: fetch from `NEXT_PUBLIC_API_BASE` (default `https://api.hashgram.io`),
-  typed by generating a client from `GET /v1/openapi.yaml` (openapi-typescript).
-  Live updates via `EventSource` on `/v1/live` with reconnect and backoff;
-  fall back to polling `/v1/chain` every 6 s if SSE fails.
-- Charts: a small monochrome chart layer (visx or D3 primitives) — no heavy
-  charting library with its own colour theme.
-- Tests: Vitest for units, Playwright for e2e (including the colour test),
-  Lighthouse CI budget: performance ≥ 95, accessibility 100, no layout shift.
-- Deploy: static-first (`output: 'standalone'` or static export where
-  possible), Dockerfile, and a Caddy site block for `hashgram.io` /
-  `www.hashgram.io` → this app. The API is a separate host (`api.hashgram.io`);
-  never proxy it through the website.
+## Genesis pin in the browser
+The site hardcodes the genesis hash above and compares it to
+`/api/v1/chain.genesis_hash` on load. Mismatch → full-width banner "This
+API is not serving Hashgram Mainnet" and the explorer is disabled. Nothing
+else is hardcoded.
 
-## Site map and what each page shows
+## Site map
 
-Every number below comes from the API; nothing is hardcoded except the
-genesis hash, which the site **must** display and compare against
-`GET /v1/chain.genesis_hash` — a mismatch shows a full-width warning banner
-("This API is not serving Hashgram Mainnet") and disables the explorer.
-Genesis hash: `e322bc2319f6e0173286fa526dab5a8ff8ad0797c7b80dd03e7c9d98621d5e4d`.
+**/ Home** — wordmark, one-sentence definition, live height ticking, last
+block age, search (height / tx / address / @username / validator / peer id →
+`/api/v1/search`), live strip of 10 blocks + 10 txs, key stats with 24 h
+monochrome sparklines: supply (fixed — "no mint module"), circulating, bonded
+ratio, validators, consensus peers, P2P peers, providers, txs, accounts,
+block time, current epoch + budget, founder revenue accrued.
 
-**/ Home — the network right now**
-- Hero: wordmark, one-sentence definition, the live block height ticking, the
-  last block's age ("2 s ago"), search bar (height / tx hash / address /
-  @username / validator / peer id → `/v1/search`).
-- Live strip: latest 10 blocks and latest 10 transactions sliding in from
-  `/v1/live`.
-- Key stats: total supply (fixed, 1,000,000,000 HASH, "no mint module"),
-  circulating, bonded ratio, validators, consensus peers, P2P peers,
-  providers, transactions total, accounts, average block time, current
-  epoch and its budget, founder revenue accrued.
-- A monochrome sparkline per stat (last 24 h).
+**/blocks, /blocks/[height]** — live-prepending list; detail with header,
+proposer, signatures present/missing, txs, events, raw JSON toggle, prev/next.
 
-**/blocks, /blocks/[height]**
-- Paginated list with live prepend; detail shows header, proposer (linked
-  validator), signatures count / missing, txs, events summary, raw JSON
-  toggle, prev/next.
+**/txs, /txs/[hash]** — type filter (Send, Delegate, Vote, RegisterProvider,
+SubmitReceipt, ClaimFounderRevenue, RegisterUsername, …); detail with decoded
+messages, fee and where it went (validators, founder 1 %, service revenue),
+events, raw log on failure.
 
-**/txs, /txs/[hash]**
-- List with type filter (Send, Delegate, Vote, RegisterProvider,
-  SubmitReceipt, ClaimFounderRevenue, RegisterUsername, …); detail shows
-  decoded messages in a readable form, fee and where the fee went (validator
-  share, founder 1 %, service revenue — from the API's fee split), events,
-  raw log on failure, JSON toggle.
+**/accounts, /accounts/[address]** — top holders: rank, label/address, kind,
+balance, share bar, tx count; footnote explaining module and reserve
+accounts. Detail: balance, spendable vs vesting (step chart), delegations,
+rewards, username, provider record, txs/transfers tabs, monochrome QR.
 
-**/accounts, /accounts/[address]**
-- "Top holders" table: rank, label or address, kind (module / vesting / user /
-  operator), balance, share of supply as a monochrome bar, tx count. Module
-  and reserve accounts are labelled and explained in a footnote.
-- Detail: balance, spendable vs vesting (with the vesting schedule drawn as a
-  step chart), delegations, rewards, username, provider record, transactions
-  and transfers tabs, QR of the address (monochrome, naturally).
+**/validators, /validators/[operator]** — voting power distribution, uptime,
+commission, jailed, self-delegation, delegators; recent proposed blocks. Explain
+the >⅔ liveness rule and how many validators exist today.
 
-**/validators, /validators/[operator]**
-- Voting power distribution (monochrome stacked bar), uptime, commission,
-  jailed state, self-delegation, delegators; detail with recent proposed
-  blocks and delegation list. Explain plainly the >⅔ liveness rule and how
-  many validators the network has today.
+**/rewards — "How nodes earn"** — reserve 500,000,000 HASH live; emission
+chart `budget = min(remaining × 5/10,000, 250,000)` per epoch (≈ 1 day)
+projected 1/5/10 years; current epoch (blocks left, budget, providers,
+per-provider cap 5 % = 12,500 HASH/day today); providers table + detail with
+payout history; past epochs; what earns credit (storage 100/GiB-epoch, relay
+200/GiB, retrieval 150/GiB, calls 300/h; bond 1,000 HASH; fraud → 5 % slash +
+jail). State plainly: **there is no mining** — rewards are for real bytes
+stored and served, and the budget is a ceiling, not a guarantee. Welcome
+rewards: tiers, and "currently disabled — no attestor registered" when the API
+says so.
 
-**/rewards — "How nodes earn"** (this is what a visitor reading "prizes" wants)
-- The reserve: 500,000,000 HASH, live remaining balance.
-- The emission schedule chart: `budget = min(remaining × 5 / 10,000, 250,000)`
-  per epoch (≈ 1 day), projected 1 / 5 / 10 years, from `/v1/rewards/reserve`.
-- Current epoch: number, blocks remaining, budget, providers, per-provider
-  cap (5 % → 12,500 HASH/day today).
-- Providers table: roles, bond, declared storage, challenge pass rate,
-  credit this epoch, lifetime paid, reward address; detail page per provider
-  with payout history.
-- Past epochs table.
-- What earns credit (from `/v1/rewards/params`): storage 100 / GiB-epoch,
-  relay 200 / GiB, retrieval 150 / GiB, calls 300 / hour; bond 1,000 HASH;
-  fraud → 5 % slash + jail. Say clearly: **there is no mining**; rewards
-  come from real bytes stored and served, and the budget is a ceiling, not a
-  guarantee.
-- Welcome rewards section: tiers, and "currently disabled — no attestor
-  registered" when `/v1/rewards/welcome` says so.
+**/founder — transparency** — 1 % of protocol fee revenue (not a transfer
+tax), hardcoded ceiling, beneficiary, accrued/paid/pending live, payout every
+7,200 blocks, history; allocation 199,000,000 HASH with the 96-step vesting
+chart and "today" marked; the founder address's delegation and voting power
+live; link to the governance parameters.
 
-**/founder — transparency**
-- 1 % of protocol fee revenue (not a transfer tax), hardcoded ceiling 100 bps,
-  beneficiary address, accrued / paid / pending live, payout period 7,200
-  blocks, payout history.
-- Allocation: 199,000,000 HASH; 19,000,000 spendable; 180,000,000 vesting in
-  96 monthly steps over 8 years — drawn as a step chart with "today" marked.
-- Delegation and voting power of the founder address, live.
-- Link to the governance parameters that constrain all of this.
+**/governance, /governance/[id]** — proposals, monochrome tally bars, quorum
+40 %, threshold 50 %, veto 33.4 %, 7-day voting, timeline, decoded message,
+votes.
 
-**/governance, /governance/[id]**
-- Proposals with status, tally bars (monochrome), quorum 40 %, threshold
-  50 %, veto 33.4 %, voting period 7 days, timeline; detail with decoded
-  message and votes.
+**/network** — consensus peers, libp2p peers, validators as three separate
+numbers with definitions; peer table (moniker/peer id, version, roles,
+first/last seen, ip /24); built-in seeds and "join with `hashgramctl
+join-mainnet`, no arguments"; versions seen; network id, magic `HGM1`,
+protocol major version, fork isolation explained.
 
-**/network**
-- Consensus peers, libp2p peers, validators — as three separate numbers with
-  one-line definitions. Peer table (moniker/peer id, version, roles, first
-  seen, last seen; IPs truncated to /24 as the API provides).
-- Built-in seeds and bootstrap peers (public), and how to join:
-  `hashgramctl join-mainnet` with no arguments.
-- Client and node software versions seen.
-- Protocol facts from `/v1/network`: network id, magic `HGM1`, protocol
-  major version, fork-isolation explanation.
+**/docs** — render from this repository's `docs/` with MDX, left nav, right
+TOC, build-time full-text search, code copy, source commit + last modified:
+`ARCHITECTURE.md`, `PROTOCOL.md`, `TOKENOMICS.md`, `SERVICE_REWARDS.md`,
+`DECENTRALIZATION.md`, `MAINNET.md`, `OPERATIONS.md`, `NODE_ROLES.md`,
+`CLIENT_CONNECTIVITY_SPEC.md`, `SOCIAL_PROTOCOL.md`, `MESSAGING.md`,
+`CALLS.md`, `STORAGE.md`, `MODERATION.md`, `SECURITY.md`, `THREAT_MODEL.md`,
+`DISASTER_RECOVERY.md`, `LOGGING_POLICY.md`. Exclude `PROMPT_*.md`, `*_KA.md`,
+`FOUNDER_LAUNCH_RUNBOOK.md`, `PHASE1_REPORT.md`, `FINAL_REPORT.md`. Add three
+web-native pages: **What is Hashgram** (plain language), **Run a node**
+(`hashgramctl init` → `join-mainnet` → `configure-role` → earning; honest that
+earnings need real traffic), **API** (embeds `/api/v1/docs`).
 
-**/docs — the documentation**
-- Render these Markdown files from the Hashgram repository's `docs/` with
-  MDX, a left navigation, right-hand table of contents, full-text search
-  (client-side index built at build time), copy buttons on code, and
-  "edit on git" links: `ARCHITECTURE.md`, `PROTOCOL.md`, `TOKENOMICS.md`,
-  `SERVICE_REWARDS.md`, `DECENTRALIZATION.md`, `MAINNET.md`, `OPERATIONS.md`,
-  `NODE_ROLES.md`, `CLIENT_CONNECTIVITY_SPEC.md`, `SOCIAL_PROTOCOL.md`,
-  `MESSAGING.md`, `CALLS.md`, `STORAGE.md`, `MODERATION.md`, `SECURITY.md`,
-  `THREAT_MODEL.md`, `DISASTER_RECOVERY.md`, `LOGGING_POLICY.md`.
-  Exclude `PROMPT_*.md`, `*_KA.md`, `FOUNDER_LAUNCH_RUNBOOK.md`, `PHASE1_REPORT.md`,
-  `FINAL_REPORT.md`.
-- Add three written-for-the-web pages: **What is Hashgram** (plain language,
-  ten minutes), **Run a node** (from `hashgramctl init` to earning; be honest
-  that earnings need real traffic), **API** (embed `/v1/docs` from the API
-  host).
-- Every docs page shows its source commit hash and last-modified date.
+**/status** — `/api/v1/health`, head lag, indexer lag, SSE state.
 
-**/status** — API and node health (`/v1/health`, head lag, indexer lag,
-SSE connected), for people who wonder whether the site or the chain is slow.
+## Behaviour
+Timestamps relative in UI, absolute UTC on hover. Amounts: `uhash` strings →
+`BigInt` → HASH with ≤ 6 decimals, thousands separators, tabular figures.
+Designed empty/error states ("Indexer is N blocks behind"). Every row a link,
+every hash copyable. Open Graph images per page (monochrome, large type).
+i18n-ready, English shipped.
 
-## Behaviour details
+---
 
-- All timestamps: absolute in UTC on hover, relative in the UI.
-- All amounts: `uhash` strings from the API → format client-side as HASH
-  with six decimals max, thousands separators, tabular figures; never use
-  JavaScript `Number` for uhash (use `BigInt`).
-- Empty and error states are designed, not blank: an unsynced indexer shows
-  "Indexer is N blocks behind" with the numbers.
-- Deep links everywhere; every table row is a link; every hash/address is
-  copyable.
-- Open Graph and Twitter cards per page (monochrome OG image with the value
-  in large type, e.g. "Block 4,716").
-- i18n structure ready but English only shipped.
+# Part C — publishing on this host
+
+- `deploy/caddy/Caddyfile`:
+  `hashgram.io` — `handle /api/*` → strip `/api` → `127.0.0.1:1318`; `handle` →
+  `127.0.0.1:3000`; `www.hashgram.io` → 308 to apex. Automatic TLS, HTTP/2 +
+  HTTP/3, security headers, zstd/gzip, request body limit 1 KB on `/api`, rate
+  limit 60 req/min/IP on `/api` and 10 SSE connections/IP, access log with IPs
+  truncated to /24 (`docs/LOGGING_POLICY.md`).
+- `deploy/systemd/caddy.service` and `hashgram-web.service`, hardened like
+  `hashgram-indexer.service` (Go/Node services need
+  `MemoryDenyWriteExecute=false`; `StartLimit*` keys belong in `[Unit]`).
+- A new `install-hashgram-io.sh` in `scripts/install`: builds `web/`, installs
+  Caddy, opens **only** 80/443 in ufw, enables the units, then runs
+  `hashgramctl mainnet-preflight` and fails if it fails.
+- DNS the operator sets: `hashgram.io` A → this host, `www` CNAME → apex.
+- Update `docs/CLIENT_CONNECTIVITY_SPEC.md` §10 and `docs/OPERATIONS.md` with
+  the routes and the procedure; run `scripts/dev/check-docs.sh`.
+
+---
 
 ## Out of scope — what not to build
-
-- No wallet, no key generation, no signing, no "connect wallet", no
-  broadcasting — this site is read-only. Say so in the footer.
-- No token price, market cap, exchange links or "buy" buttons.
-- No user accounts, cookies beyond the theme preference, or analytics.
-- No fake liveness: if the SSE stream is down, show it; do not animate stale
-  data.
-- Do not call the node's RPC/REST directly from the browser; only
-  `api.hashgram.io`.
+- No wallet, key generation, signing, "connect wallet", broadcasting or
+  faucet. Read-only, and the footer says so.
+- No token price, market cap, exchange links, "buy" buttons.
+- No accounts, cookies beyond theme, analytics, external CDNs, call-home.
+- No exposure of 26657 / 1317 / 9091 / 26672 / 1318 / 3000 to the internet.
+- No genesis hash computed from RPC `/genesis` (CometBFT re-serialises it;
+  read the pin file in `/etc/hashgram`).
+- No single invented "nodes online" number; no fake liveness when SSE is down.
+- No full IP addresses of peers or visitors in storage or logs.
 
 ## Definition of done
-
-1. `pnpm build` and `pnpm test` pass; Lighthouse: performance ≥ 95,
-   accessibility 100, best practices 100, SEO 100 on `/`, `/blocks`, `/docs`.
-2. The Playwright colour test finds no saturated pixel on any route in either
-   theme.
-3. With the API live, `/` shows a new block within 5 s of it being produced,
-   without a page reload, and the founder page shows accrued revenue > 0.
-4. `/accounts` lists the useful-service reserve as the largest holder with
-   the correct label, and the Founder with its vesting split.
-5. `/rewards` renders the emission schedule and today's per-provider cap
-   from live parameters, and states that there is no mining.
-6. `/docs` renders all listed files with working internal links, code copy,
-   and search.
-7. A README explains: environment variables, how docs are synced from the
-   Hashgram repository (a script that copies `docs/*.md` and records the
-   commit hash), how to run against a local API, and the deploy steps with
-   the Caddy block.
+1. `https://hashgram.io/` shows a new block within 5 s of production without
+   reload; `/api/v1/chain` returns the live head; `/api/v1/live` streams.
+2. `/accounts` lists the useful-service reserve (500,000,000 HASH) as the
+   largest holder with its label; the Founder with 19,000,000 spendable /
+   180,000,000 vesting; shares sum ≤ 100 %.
+3. `/founder` shows fee_basis_points 100, beneficiary
+   `hash13t8v5nnghrvgcuuqcrt9k5wyhtqwq7fl3ynjpy`, accrued > 0, 96 vesting
+   periods, delegation 60,000,000 HASH to
+   `hashvaloper127zemcfnxd3jrldpjzzgcckek4dswyw0l7rfcq`.
+4. `/rewards` renders the emission schedule and today's per-provider cap from
+   live params and states there is no mining.
+5. `/docs` renders all listed files with working links, code copy, search.
+6. Playwright colour test finds no saturated pixel on any route, both themes;
+   Lighthouse performance ≥ 95, accessibility 100, best practices 100, SEO 100.
+7. `hashgram-indexer rebuild` reproduces identical API responses.
+8. `hashgramctl mainnet-preflight` passes; `ss -ltn` shows only 22, 80, 443,
+   26656, 26670, 3478, 5349 on non-loopback addresses.
+9. `make test`, `make lint`, `scripts/dev/check-docs.sh`, `pnpm test`,
+   `pnpm build` pass; `web/README.md` documents env vars, local development
+   against the local indexer, and deployment.
