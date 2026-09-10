@@ -1,11 +1,34 @@
-# Hashgram
+<div align="center">
 
-**A Layer-1 network with a fixed supply, a finite reward reserve, end-to-end
-encrypted messaging, a signed social layer, and no central point of control.**
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="brand/wordmark-white-512.png">
+  <source media="(prefers-color-scheme: light)" srcset="brand/wordmark-black-512.png">
+  <img alt="hashgram" src="brand/wordmark-white-512.png" width="420">
+</picture>
 
-[![CI](https://github.com/deepdrogo/hashgram/actions/workflows/ci.yml/badge.svg)](https://github.com/deepdrogo/hashgram/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-black.svg)](LICENSE)
-[![Mainnet](https://img.shields.io/badge/mainnet-hashgram--1%20live-black.svg)](#mainnet-at-a-glance)
+<br><br>
+
+**A Layer-1 network with a fixed supply, a finite reward reserve,<br>
+end-to-end encrypted messaging, a signed social layer, and no central point of control.**
+
+<br>
+
+[![CI](https://img.shields.io/github/actions/workflow/status/deepdrogo/hashgram/ci.yml?branch=main&style=flat-square&label=CI&labelColor=000000&color=ffffff)](https://github.com/deepdrogo/hashgram/actions/workflows/ci.yml)
+[![Mainnet](https://img.shields.io/badge/mainnet-hashgram--1%20%C2%B7%20live-000000?style=flat-square&labelColor=000000&color=ffffff)](#mainnet-at-a-glance)
+[![Supply](https://img.shields.io/badge/supply-1%2C000%2C000%2C000%20HASH%20%C2%B7%20fixed-000000?style=flat-square&labelColor=000000&color=ffffff)](#tokenomics)
+[![License](https://img.shields.io/badge/license-Apache--2.0-000000?style=flat-square&labelColor=000000&color=ffffff)](LICENSE)
+
+<br>
+
+[**hashgram.io**](https://hashgram.io) — live explorer &nbsp;·&nbsp;
+[**Docs**](https://hashgram.io/docs) &nbsp;·&nbsp;
+[**API**](https://hashgram.io/api/v1/docs) &nbsp;·&nbsp;
+[**Run a node**](#run-a-node-and-join-mainnet) &nbsp;·&nbsp;
+[**Build a client**](#clients)
+
+</div>
+
+<br>
 
 Hashgram Core is one repository: the blockchain (Go, Cosmos SDK v0.53 /
 CometBFT v0.38), the peer-to-peer node (Rust, libp2p), the client SDK (Rust),
@@ -477,6 +500,20 @@ the document says so rather than describing it in the present tense.
 **Launch record** — [FOUNDER_LAUNCH_RUNBOOK.md](docs/FOUNDER_LAUNCH_RUNBOOK.md) · [LAUNCH_HANDOVER_KA.md](docs/LAUNCH_HANDOVER_KA.md) (Georgian) · [OWNER_LAUNCH_KA.md](docs/OWNER_LAUNCH_KA.md) (Georgian) · [FINAL_REPORT.md](docs/FINAL_REPORT.md) · [PHASE1_REPORT.md](docs/PHASE1_REPORT.md)
 
 ---
+
+## Brand
+
+<div align="center">
+<img src="brand/logo-white-on-black-256.png" alt="Hashgram mark, white on black" width="96">&nbsp;&nbsp;&nbsp;&nbsp;
+<img src="brand/logo-black-on-white-256.png" alt="Hashgram mark, black on white" width="96">
+</div>
+
+The mark is a heavy `#` — four strokes on a 64-unit grid with the four
+intersections knocked out: the negative-space squares read as blocks, the
+strokes as the chain linking them. One colour, no gradients. Strict monochrome
+palette of seven values (`#000000` → `#FFFFFF`). Files, clear-space rules and
+the licence for referring to Hashgram: [`brand/`](brand/) — the same set is
+published at [hashgram.io/brand](https://hashgram.io/brand).
 
 ## Contributing
 

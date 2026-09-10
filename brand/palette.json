@@ -1,0 +1,41 @@
+{
+  "name": "Hashgram monochrome",
+  "rule": "Exactly these seven values. No other hue, tint or gradient.",
+  "colors": [
+    {
+      "name": "Black",
+      "hex": "#000000",
+      "use": "Background"
+    },
+    {
+      "name": "Ink 950",
+      "hex": "#0D0D0D",
+      "use": "Cards, secondary surfaces"
+    },
+    {
+      "name": "Ink 900",
+      "hex": "#1A1A1A",
+      "use": "Borders, dividers"
+    },
+    {
+      "name": "Ink 800",
+      "hex": "#262626",
+      "use": "Inputs, hover borders"
+    },
+    {
+      "name": "Ink 700",
+      "hex": "#404040",
+      "use": "Disabled, tertiary strokes"
+    },
+    {
+      "name": "Ink 500",
+      "hex": "#808080",
+      "use": "Secondary text"
+    },
+    {
+      "name": "White",
+      "hex": "#FFFFFF",
+      "use": "Primary text, mark"
+    }
+  ]
+}
