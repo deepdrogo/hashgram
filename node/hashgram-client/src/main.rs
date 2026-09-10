@@ -425,9 +425,18 @@ impl Ctx {
     }
 
     async fn link(&self) -> anyhow::Result<Link> {
-        let addrs: Vec<Multiaddr> = self
-            .profile
-            .bootstrap
+        // Operator-supplied bootstrap addresses win. With none configured, a
+        // Mainnet profile falls back to the list compiled into the binary,
+        // the same file the nodes use (app/params/mainnet/bootstrap_peers.txt),
+        // so a fresh client needs no address typed by anyone. Devnets have
+        // nothing built in and must be told.
+        let configured: Vec<String> = if self.profile.bootstrap.is_empty() && self.network.is_mainnet()
+        {
+            hashgram_sdk::net::mainnet_bootstrap_peers()
+        } else {
+            self.profile.bootstrap.clone()
+        };
+        let addrs: Vec<Multiaddr> = configured
             .iter()
             .map(|a| a.parse().with_context(|| format!("bootstrap {a}")))
             .collect::<anyhow::Result<_>>()?;

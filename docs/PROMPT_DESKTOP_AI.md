@@ -8,6 +8,65 @@ that does not exist; every path below does.
 
 ---
 
+## Step 0 — get the code (there is no git remote yet)
+
+The Hashgram repository lives on the owner's server. **Do not ask for SSH
+access to that server**: it is the Mainnet validator, and nothing that runs
+on a developer laptop may hold a key to it. The owner hands you a
+`git bundle` (full history, no secrets — every key file is git-ignored and
+absent from history) plus its SHA-256 and the expected HEAD commit. Then:
+
+```powershell
+# in the folder where the project should live, e.g. A:\hashgram
+curl.exe -O <URL>/hashgram.bundle
+curl.exe -O <URL>/hashgram.bundle.sha256
+curl.exe -O <URL>/HEAD.txt
+(Get-FileHash hashgram.bundle -Algorithm SHA256).Hash.ToLower()   # must equal the first field of hashgram.bundle.sha256
+git bundle verify hashgram.bundle
+git clone hashgram.bundle hashgram
+cd hashgram
+git rev-parse HEAD          # must equal HEAD.txt
+git remote remove origin    # the bundle is not a remote; a real one is added later
+```
+
+Work on a branch (`git switch -c desktop`). When the owner later creates a
+remote, `git remote add origin <url>` and push — history is preserved
+because the bundle carried it. Until then, hand changes back the same way
+in reverse: `git bundle create desktop.bundle main..desktop` and give the
+file to the owner.
+
+Toolchain on Windows: Rust ≥ 1.90 (`x86_64-pc-windows-msvc`, MSVC Build
+Tools with the C++ workload), Node 22, `corepack enable` (pnpm), Tauri 2
+prerequisites (WebView2 is present on Windows 11), NSIS is fetched by the
+Tauri bundler. Protobuf needs **no** `protoc` — the Rust build uses `protox`
+(pure Rust, `node/hashgram-proto/build.rs`). Go is **not** required for this
+application (Stage 0 changes Rust crates only); `scripts/dev/check-docs.sh`
+needs Git Bash and Go — run it on the server or skip it locally and say so.
+
+First commands that must succeed before anything else:
+
+```powershell
+cd node;  cargo build -p hashgram-client -p hashgram-node;  cargo test -p hashgram-net -p hashgram-sdk
+```
+
+Then, to confirm the network is reachable from this laptop with **no**
+server address typed by anyone (the seed list is compiled in):
+
+```powershell
+$env:HASHGRAM_PASSPHRASE = "throwaway-for-this-check"
+.\target\debug\hashgram-client.exe configure --network mainnet --genesis-hash e322bc2319f6e0173286fa526dab5a8ff8ad0797c7b80dd03e7c9d98621d5e4d
+.\target\debug\hashgram-client.exe net peers
+```
+
+Expected: at least one line `12D3Koo…  <roles>` within 10 s. The client
+already falls back to `hashgram_net::mainnet_bootstrap_peers()` when a
+Mainnet profile has no `--bootstrap` (see `link()` in
+`node/hashgram-client/src/main.rs`) — the desktop app uses the same rule.
+If nothing appears, the laptop's firewall is blocking outbound UDP 26670
+(QUIC); TCP 26670 is the fallback and must be allowed too.
+
+---
+
 You are building **Hashgram for Windows**: one native, fast, beautiful
 application that is the user's wallet, messenger, social network (feed,
 reels, stories, channels), calls, identity, and — if they choose — their
