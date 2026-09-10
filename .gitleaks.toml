@@ -1,10 +1,20 @@
 # gitleaks configuration for Hashgram.
 #
-# The default rule set applies unchanged. The only allowance is for
-# dependency lockfiles, which carry package checksums next to package names
-# and therefore trip the generic high-entropy rule (the crate `libcrux-secrets`
-# followed by a sha256 checksum reads as an API key to a regex). Lockfiles are
-# generated from public registries and never hold credentials.
+# The default rule set applies unchanged. Two allowances, both for files that
+# are public by construction:
+#
+# 1. Dependency lockfiles carry package checksums next to package names and
+#    trip the generic high-entropy rule (the crate `libcrux-secrets` followed
+#    by a sha256 checksum reads as an API key to a regex). Lockfiles are
+#    generated from public registries and never hold credentials.
+#
+# 2. The canonical Mainnet genesis file, app/params/mainnet/genesis.json,
+#    which is compiled into every binary. It contains base64 *public* keys —
+#    the genesis validator's ed25519 consensus public key and secp256k1
+#    account public keys — and nothing else that could be a credential. Its
+#    SHA-256 is pinned as a constant and checked by TestMainnetGenesisMatchesPin,
+#    so the file cannot be edited to smuggle anything in without breaking the
+#    build. The whole point of a genesis file is that everyone has it.
 #
 # Nothing else is allowlisted: a real key in a test fixture, a script or a
 # document must fail the scan.
@@ -15,8 +25,9 @@ title = "hashgram"
 useDefault = true
 
 [allowlist]
-description = "Dependency lockfiles: registry checksums, not secrets"
+description = "Lockfiles (registry checksums) and the public, hash-pinned Mainnet genesis"
 paths = [
   '''(^|/)Cargo\.lock$''',
   '''(^|/)go\.sum$''',
+  '''(^|/)app/params/mainnet/genesis\.json$''',
 ]

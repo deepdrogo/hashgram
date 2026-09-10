@@ -56,5 +56,7 @@ pub use identity::{
     compute_genesis_hash, NetworkIdentity, GENESIS_HASH_LEN, MAGIC_LEN, NETWORK_MAGIC_DEVNET,
     NETWORK_MAGIC_MAINNET, PROTOCOL_MAJOR_VERSION,
 };
-pub use mainnet::{mainnet_bootstrap_peers, mainnet_dns_seeds, MAINNET_GENESIS, MAINNET_GENESIS_HASH};
+pub use mainnet::{
+    mainnet_bootstrap_peers, mainnet_dns_seeds, MAINNET_GENESIS, MAINNET_GENESIS_HASH,
+};
 pub use purpose::{ParsePurposeError, SigningPurpose, ALL_PURPOSES};

@@ -244,7 +244,10 @@ mod tests {
         std::fs::write(d.join("node.toml"), "bootstrap_peers = []\n").unwrap();
         let s = load(&d.join("node.toml"), Some(&d)).unwrap();
         assert!(s.identity.is_mainnet());
-        assert_eq!(s.config.bootstrap_peers, hashgram_net::mainnet_bootstrap_peers());
+        assert_eq!(
+            s.config.bootstrap_peers,
+            hashgram_net::mainnet_bootstrap_peers()
+        );
         assert!(!s.config.bootstrap_peers.is_empty());
     }
 

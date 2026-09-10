@@ -3,7 +3,12 @@
 //! `node/fuzz`), but it runs in every CI job and catches the panics that
 //! matter most: an unwrap on attacker bytes.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic
+)]
 
 use hashgram_net::{Handshake, NetworkIdentity};
 use hashgram_proto::frame::{decode_bounded, decode_frame};

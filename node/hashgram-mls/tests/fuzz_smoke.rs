@@ -13,10 +13,12 @@ fn hostile_mls_bytes_do_not_panic() {
         x ^= x >> 7;
         x ^= x << 17;
         let n = (x % 300) as usize;
-        let data: Vec<u8> = (0..n).map(|i| (x.rotate_left(i as u32 % 63) & 0xff) as u8).collect();
+        let data: Vec<u8> = (0..n)
+            .map(|i| (x.rotate_left(i as u32 % 63) & 0xff) as u8)
+            .collect();
         let _ = c.process(&data);
         let _ = c.join(&data, GroupMeta::default());
-        let _ = c.add_members(&gid, &[data.clone()]);
+        let _ = c.add_members(&gid, std::slice::from_ref(&data));
     }
     // A real message from another device still works afterwards.
     let mut other = MlsClient::new("hash1other", &[8u8; 32]).unwrap();
@@ -24,5 +26,8 @@ fn hostile_mls_bytes_do_not_panic() {
     let (_, welcome) = c.add_members(&gid, &[kp]).unwrap();
     other.join(&welcome, GroupMeta::default()).unwrap();
     let ct = c.encrypt(&gid, b"still fine").unwrap();
-    assert!(matches!(other.process(&ct).unwrap(), hashgram_mls::Inbound::Application { .. }));
+    assert!(matches!(
+        other.process(&ct).unwrap(),
+        hashgram_mls::Inbound::Application { .. }
+    ));
 }

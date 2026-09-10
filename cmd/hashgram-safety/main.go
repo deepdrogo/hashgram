@@ -21,7 +21,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -119,7 +118,7 @@ func main() {
 			if err != nil {
 				return err
 			}
-			a := &p2ppb.ContentAttestation{Policy: cfg.Policy, ReasonCode: reason, Timestamp: uint64(time.Now().Unix())}
+			a := &p2ppb.ContentAttestation{Policy: cfg.Policy, ReasonCode: reason, Timestamp: safety.UnixNow()}
 			switch verdict {
 			case "ALLOW", "QUARANTINE", "RESTRICT", "BLOCK":
 				a.Verdict = safety.ParseVerdict(verdict).Proto()

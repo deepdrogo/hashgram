@@ -281,7 +281,7 @@ func (s *SocialIngester) Apply(ctx context.Context, ev *p2ppb.SocialEvent) error
 	defer tx.Rollback(ctx) //nolint:errcheck
 
 	id := hexs(ev.Id)
-	ts := int64(ev.Timestamp)
+	ts := i64(ev.Timestamp)
 	var payload proto.Message
 	switch ev.Type {
 	case "PROFILE_UPDATE":
@@ -318,7 +318,7 @@ func (s *SocialIngester) Apply(ctx context.Context, ev *p2ppb.SocialEvent) error
 	tag, err := tx.Exec(ctx,
 		`INSERT INTO social_events(id, type, author, device_pubkey, ts, sequence, previous_event, payload, media)
 		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb) ON CONFLICT (id) DO NOTHING`,
-		id, ev.Type, ev.Author, hexs(ev.DevicePubkey), ts, int64(ev.Sequence), hexs(ev.PreviousEvent),
+		id, ev.Type, ev.Author, hexs(ev.DevicePubkey), ts, i64(ev.Sequence), hexs(ev.PreviousEvent),
 		payloadJSON(payload), mediaJSON(ev.Media))
 	if err != nil {
 		return err
@@ -392,7 +392,7 @@ func (s *SocialIngester) Apply(ctx context.Context, ev *p2ppb.SocialEvent) error
 	case *p2ppb.StoryCreate:
 		_, err = tx.Exec(ctx,
 			`INSERT INTO stories(id, author, caption, media, sensitive, ts, expires_at) VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7) ON CONFLICT (id) DO NOTHING`,
-			id, ev.Author, p.Caption, mediaJSON(ev.Media), p.Sensitive, ts, int64(p.ExpiresAt))
+			id, ev.Author, p.Caption, mediaJSON(ev.Media), p.Sensitive, ts, i64(p.ExpiresAt))
 	}
 	if err != nil {
 		return err
@@ -447,7 +447,7 @@ func (s *SocialIngester) SyncAttestations(ctx context.Context) error {
 			 ON CONFLICT (subject, attestor) DO UPDATE SET verdict = EXCLUDED.verdict, policy = EXCLUDED.policy,
 			   reason_code = EXCLUDED.reason_code, ts = EXCLUDED.ts, trusted = EXCLUDED.trusted
 			 WHERE attestations.ts <= EXCLUDED.ts`,
-			a.Subject, a.Kind, a.AttestorPubkey, a.Verdict, a.Policy, a.ReasonCode, int64(a.Timestamp),
+			a.Subject, a.Kind, a.AttestorPubkey, a.Verdict, a.Policy, a.ReasonCode, i64(a.Timestamp),
 			trusted[strings.ToLower(a.AttestorPubkey)])
 	}
 	if batch.Len() == 0 {

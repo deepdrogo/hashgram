@@ -70,6 +70,10 @@ func adoptServiceOwnership(p hgconfig.Paths) error {
 		if sys, ok := st.Sys().(*syscall.Stat_t); ok && int(sys.Uid) == uid && int(sys.Gid) == gid {
 			return nil
 		}
+		// Lchown changes the link itself and never follows it, so a symlink
+		// planted in the node home cannot redirect the chown outside it. The
+		// tree walked is the node's own data directory, created by this tool.
+		// #nosec G122 -- Lchown does not follow symlinks; TOCTOU cannot escape the tree.
 		if err := os.Lchown(path, uid, gid); err != nil {
 			return fmt.Errorf("handing %s to %s: %w", path, chainServiceUser, err)
 		}

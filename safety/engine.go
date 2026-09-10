@@ -73,7 +73,7 @@ func (c *Config) Defaults() {
 	if c.PollInterval == 0 {
 		c.PollInterval = 5 * time.Second
 	}
-	if c.MaxMediaBytes == 0 {
+	if c.MaxMediaBytes <= 0 {
 		c.MaxMediaBytes = 64 << 20
 	}
 	if c.ModelMinConfidence == 0 {
@@ -312,7 +312,9 @@ func (e *Engine) review(ctx context.Context, ev nodeEvent) error {
 	item := &Item{EventID: ev.ID, Author: ev.Author, Type: ev.Type, Text: textOf(ev)}
 	for _, m := range ev.Media {
 		mi := MediaItem{CID: m.CID, Mime: m.Mime, Size: m.Size}
-		if int64(m.Size) <= e.cfg.MaxMediaBytes {
+		// Compare in uint64: m.Size comes from the network, and casting it to
+		// int64 would let a declared size above 2^63 wrap negative and pass.
+		if e.cfg.MaxMediaBytes > 0 && m.Size <= uint64(e.cfg.MaxMediaBytes) {
 			if data, err := e.fetchBlob(ctx, m.CID); err == nil {
 				mi.Data = data
 				mi.ContentHash = ContentHash(data)
@@ -346,7 +348,7 @@ func (e *Engine) review(ctx context.Context, ev nodeEvent) error {
 			Verdict:    f.Verdict.Proto(),
 			Policy:     e.cfg.Policy,
 			ReasonCode: f.ReasonCode,
-			Timestamp:  uint64(time.Now().Unix()),
+			Timestamp:  UnixNow(),
 		}
 		if subject == "" {
 			a.EventId, _ = hex.DecodeString(ev.ID)
@@ -417,4 +419,15 @@ func (e *Engine) Publish(ctx context.Context, a *p2ppb.ContentAttestation) error
 		return fmt.Errorf("node refused attestation: HTTP %d: %s", resp.StatusCode, string(b))
 	}
 	return nil
+}
+
+// UnixNow is the current Unix time as the protocol's unsigned timestamp.
+// Unix time is negative only for clocks set before 1970; such a clock is
+// clamped to zero rather than wrapped to a date in the far future.
+func UnixNow() uint64 {
+	n := time.Now().Unix()
+	if n < 0 {
+		return 0
+	}
+	return uint64(n) // #nosec G115 -- guarded: n >= 0 here.
 }

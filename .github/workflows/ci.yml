@@ -336,6 +336,14 @@ jobs:
         # mainnet-preflight refuses to pass on a devnet host.
         run: scripts/testnet/devnet.sh
 
+      - name: Stop the single-node devnet
+        # devnet.sh leaves its node running by design (so a developer can poke
+        # at it). On a shared runner that node still holds 26660 (Prometheus),
+        # 9091 (gRPC) and 6060 (pprof), which the four-validator script's
+        # validator2 and the fork nodes need. Stop it before the next step.
+        if: always()
+        run: scripts/testnet/devnet.sh clean
+
       - name: Four-validator consensus and fork isolation
         run: scripts/testnet/four-validator.sh
 

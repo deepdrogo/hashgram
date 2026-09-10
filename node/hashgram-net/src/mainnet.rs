@@ -52,7 +52,10 @@ mod tests {
     #[test]
     fn bootstrap_peers_are_present_and_carry_peer_ids() {
         let peers = mainnet_bootstrap_peers();
-        assert!(!peers.is_empty(), "a fresh node would have nowhere to start");
+        assert!(
+            !peers.is_empty(),
+            "a fresh node would have nowhere to start"
+        );
         for p in &peers {
             assert!(p.starts_with('/'), "{p}");
             assert!(p.contains("/p2p/"), "{p} lacks /p2p/<peer-id>");

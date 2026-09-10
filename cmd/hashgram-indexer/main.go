@@ -209,6 +209,10 @@ func run(ctx context.Context, cfg indexer.Config, log *slog.Logger) error {
 		Handler:           api.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
+	// The goroutine waits for ctx to end and then needs a deadline for the
+	// graceful shutdown; that deadline cannot descend from the cancelled ctx or
+	// Shutdown would return immediately.
+	// #nosec G118 -- intentional: the fresh context is created after ctx is done.
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
