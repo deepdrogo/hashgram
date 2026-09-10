@@ -72,7 +72,7 @@ PostgreSQL grow), public IPv4. Then, as root, in the repository clone:
 
 ```bash
 sudo scripts/install/bootstrap-ubuntu.sh        # users, dirs, ufw, PostgreSQL on loopback, all binaries, units
-# hashgramctl finds the chain home the installer created on its own; no HASHGRAM_HOME needed
+# the chain home created by the installer is picked up automatically; no HASHGRAM_HOME needed
 hashgramctl init --moniker hashgram-io           # a full node; its consensus key is never used for signing
 hashgramctl join-mainnet                         # no arguments: genesis, hash and seeds are built in
 hashgramctl network-info                         # pin must be e322bc23…5e4d
