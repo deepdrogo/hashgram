@@ -17,7 +17,7 @@ KIT=/root/hashgram-founder-delegate-kit
 ZIP=/root/hashgram-founder-delegate-kit.zip
 FACTS=/etc/hashgram/launch-facts.txt
 CHAIN_ID=hashgram-1
-GAS=250000
+GAS=600000
 FEES=2500uhash
 
 die() { echo "ERROR: $*" >&2; exit 1; }

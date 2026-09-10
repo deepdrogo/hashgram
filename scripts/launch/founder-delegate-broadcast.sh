@@ -34,9 +34,10 @@ PY
 # with a clearer message.) An empty keyring dir keeps the SDK from looking
 # for a local key it must not find on this machine.
 EMPTY_KR="$(mktemp -d)"; trap 'rm -rf "$EMPTY_KR"' EXIT
-hashgramd tx validate-signatures "$SIGNED" --home "$HOME_DIR" --chain-id "$CHAIN_ID" \
-  --account-number "$ACCT" --sequence "$SEQ" --offline --keyring-backend test --keyring-dir "$EMPTY_KR" 2>&1 \
-  | tee /dev/stderr | grep -E "^\s*0: $FOUNDER\s+\[OK\]" -q || die "signature does not verify as $FOUNDER"
+VALIDATION="$(hashgramd tx validate-signatures "$SIGNED" --home "$HOME_DIR" --chain-id "$CHAIN_ID" \
+  --account-number "$ACCT" --sequence "$SEQ" --offline --keyring-backend test --keyring-dir "$EMPTY_KR" 2>&1 || true)"
+echo "$VALIDATION"
+grep -Eq "^\s*0: $FOUNDER\s+\[OK\]" <<<"$VALIDATION" || die "signature does not verify as $FOUNDER"
 
 # 3. The sequence must still be what we signed for.
 CUR_SEQ="$(hashgramd query auth account-info "$FOUNDER" --home "$HOME_DIR" --output json \
