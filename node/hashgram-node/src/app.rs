@@ -55,6 +55,9 @@ pub struct Services {
     pub social: Option<Arc<crate::social::SocialService>>,
     /// Safety attestation table (every node honours; `safety` publishes).
     pub safety: Option<Arc<crate::safety::SafetyService>>,
+    /// Chain relay: read queries and broadcast forwarded to the co-located
+    /// gateway (`relay` or `bootstrap` role, chain reachable).
+    pub chain_relay: Option<Arc<crate::chain_relay::ChainRelayService>>,
 }
 
 fn err(code: &str, msg: impl Into<String>) -> pb::Response {
@@ -299,6 +302,22 @@ async fn handle_request(shared: &Arc<Shared>, peer: PeerId, request: pb::Request
                 }
             }
         }
+
+        B::ChainQuery(q) => match &shared.services.chain_relay {
+            Some(r) => r.query(peer, &q).await,
+            None => err(
+                "unsupported",
+                "this node does not relay chain queries (needs the relay or bootstrap role and a chain node)",
+            ),
+        },
+
+        B::ChainBroadcast(b) => match &shared.services.chain_relay {
+            Some(r) => r.broadcast(peer, &b).await,
+            None => err(
+                "unsupported",
+                "this node does not relay chain broadcasts (needs the relay or bootstrap role and a chain node)",
+            ),
+        },
 
         B::ReceiptDeliver(d) => {
             let Some(agent) = &shared.rewards else {

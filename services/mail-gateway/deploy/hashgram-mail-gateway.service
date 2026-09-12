@@ -1,0 +1,53 @@
+# systemd unit for hashgram-mail-gateway. Example only — copy to
+# /etc/systemd/system/ on the gateway host; do not install on a validator.
+#
+#   useradd --system --home /var/lib/hashgram-mail-gateway --shell /usr/sbin/nologin hashgram-mail
+#   install -d -o hashgram-mail -g hashgram-mail -m 0750 /var/lib/hashgram-mail-gateway
+#   install -d -o root -g hashgram-mail -m 0750 /etc/hashgram-mail-gateway
+#   # gateway.toml, dkim-s1.pem (0640 root:hashgram-mail) and passphrase.env (0640) go there
+#   systemctl daemon-reload && systemctl enable --now hashgram-mail-gateway
+#
+# passphrase.env contains one line: HASHGRAM_GATEWAY_PASSPHRASE=…
+
+[Unit]
+Description=Hashgram external mail gateway (SMTP <-> HashMail bridge)
+Documentation=file:///usr/share/doc/hashgram/MAIL_GATEWAY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hashgram-mail
+Group=hashgram-mail
+EnvironmentFile=/etc/hashgram-mail-gateway/passphrase.env
+Environment=RUST_LOG=info
+ExecStart=/usr/local/bin/hashgram-mail-gateway --config /etc/hashgram-mail-gateway/gateway.toml run
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+
+# The gateway listens on an unprivileged loopback port; the fronting MTA owns :25.
+# If you set smtp.allow_privileged = true and listen on :25 directly, add:
+#   AmbientCapabilities=CAP_NET_BIND_SERVICE
+#   CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hashgram-mail-gateway
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

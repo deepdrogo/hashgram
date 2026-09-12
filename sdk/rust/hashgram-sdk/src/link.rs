@@ -63,13 +63,38 @@ struct PeerInfo {
     operator: String,
 }
 
+/// A peer that failed the Hashgram handshake, and why. Kept so a UI can
+/// list "wrong network" nodes greyed out with the reason instead of
+/// retrying them silently.
+#[derive(Debug, Clone)]
+pub struct RejectedPeer {
+    /// Peer id.
+    pub peer: PeerId,
+    /// The swarm's reason string (e.g. genesis mismatch).
+    pub reason: String,
+    /// Seconds since the Unix epoch when it was rejected.
+    pub at: u64,
+}
+
+/// How long a client waits for DHT provider records before proceeding
+/// with its connected store peers.
+pub const PROVIDER_QUERY_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// The link.
 pub struct Link {
     handle: NodeHandle,
     peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>>,
+    rejected: Arc<RwLock<Vec<RejectedPeer>>>,
     peerstore_path: Option<std::path::PathBuf>,
     _task: tokio::task::JoinHandle<()>,
     _events: tokio::task::JoinHandle<()>,
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 impl Link {
@@ -112,8 +137,10 @@ impl Link {
                 .map_err(|e| LinkError::Start(e.to_string()))?;
 
         let peers: Arc<RwLock<HashMap<PeerId, PeerInfo>>> = Arc::default();
+        let rejected: Arc<RwLock<Vec<RejectedPeer>>> = Arc::default();
         let (first_tx, mut first_rx) = mpsc::channel::<()>(64);
         let peers_for_task = peers.clone();
+        let rejected_for_task = rejected.clone();
         let inner = handle.clone();
         let events_task = tokio::spawn(async move {
             while let Some(ev) = events.recv().await {
@@ -135,6 +162,17 @@ impl Link {
                     }
                     Event::PeerRejected { peer, reason } => {
                         info!(%peer, reason, "peer rejected");
+                        let mut r = rejected_for_task.write().await;
+                        r.retain(|x| x.peer != peer);
+                        r.push(RejectedPeer {
+                            peer,
+                            reason,
+                            at: unix_now(),
+                        });
+                        // Bounded: a flood of strangers cannot grow this.
+                        if r.len() > 64 {
+                            r.remove(0);
+                        }
                     }
                     Event::InboundRequest { channel, .. } => {
                         // A client serves nothing.
@@ -162,10 +200,12 @@ impl Link {
 
         // Wait for every bootstrap peer to verify (or the deadline), so the
         // first operation sees the whole set of roles rather than whichever
-        // node answered first.
+        // node answered first. Several addresses of one peer (QUIC and TCP
+        // of the same node) count once, or a single-node network would
+        // always wait out the full deadline.
         if !bootstrap.is_empty() {
             let deadline = tokio::time::Instant::now() + wait;
-            let want = bootstrap.len();
+            let want = distinct_peer_ids(bootstrap);
             loop {
                 if peers.read().await.len() >= want {
                     break;
@@ -185,10 +225,17 @@ impl Link {
         Ok(Self {
             handle,
             peers,
+            rejected,
             peerstore_path: peerstore_path.map(Path::to_path_buf),
             _task: task,
             _events: events_task,
         })
+    }
+
+    /// Peers that failed the handshake (wrong network, wrong protocol,
+    /// malformed), most recent last.
+    pub async fn rejected(&self) -> Vec<RejectedPeer> {
+        self.rejected.read().await.clone()
     }
 
     /// The swarm handle.
@@ -366,7 +413,13 @@ impl Link {
     /// Providers of a DHT key, from Kademlia. Unverified peers among them
     /// will be verified at connection before any request is served.
     pub async fn providers(&self, key: Vec<u8>) -> Vec<PeerId> {
-        self.handle.get_providers(key).await
+        // A client never waits for a full Kademlia walk: with few peers the
+        // walk lasts until the 30 s query timeout, and every caller falls
+        // back to its connected store peers. Whatever is known within the
+        // bound is returned; nothing is an acceptable answer.
+        tokio::time::timeout(PROVIDER_QUERY_TIMEOUT, self.handle.get_providers(key))
+            .await
+            .unwrap_or_default()
     }
 
     /// Node announcements from any verified peer.
@@ -389,14 +442,106 @@ impl Link {
         }
     }
 
+    /// Verified peers that relay chain queries (`relay` or `bootstrap`
+    /// role), with their operator addresses.
+    pub async fn chain_relays(&self) -> Vec<KnownPeer> {
+        self.peers()
+            .await
+            .into_iter()
+            .filter(|p| p.roles.iter().any(|r| r == "relay" || r == "bootstrap"))
+            .collect()
+    }
+
+    /// One allow-listed chain read through `peer`. `path` has no leading
+    /// slash and no query string; `query` has no `?`. Returns the gateway's
+    /// answer verbatim (status, body, height).
+    pub async fn chain_get(
+        &self,
+        peer: PeerId,
+        path: &str,
+        query: &str,
+    ) -> Result<ChainAnswer, LinkError> {
+        match self
+            .request(
+                peer,
+                pb::request::Body::ChainQuery(pb::ChainQuery {
+                    path: path.to_owned(),
+                    query: query.to_owned(),
+                }),
+            )
+            .await?
+        {
+            pb::response::Body::ChainQuery(r) => Ok(ChainAnswer {
+                status: u16::try_from(r.status).unwrap_or(u16::MAX),
+                body: r.body,
+                height: r.height,
+            }),
+            _ => Err(LinkError::Unexpected),
+        }
+    }
+
+    /// Hands a signed transaction to `peer` for `POST /cosmos/tx/v1beta1/txs`
+    /// (sync mode). The peer never sees a key.
+    pub async fn chain_broadcast(
+        &self,
+        peer: PeerId,
+        tx_bytes: Vec<u8>,
+    ) -> Result<ChainAnswer, LinkError> {
+        match self
+            .request(
+                peer,
+                pb::request::Body::ChainBroadcast(pb::ChainBroadcast { tx_bytes }),
+            )
+            .await?
+        {
+            pb::response::Body::ChainBroadcast(r) => Ok(ChainAnswer {
+                status: u16::try_from(r.status).unwrap_or(u16::MAX),
+                body: r.body,
+                height: r.height,
+            }),
+            _ => Err(LinkError::Unexpected),
+        }
+    }
+
     /// Stops the swarm, flushing the peerstore.
-    pub async fn shutdown(self) {
+    pub async fn shutdown(&self) {
         self.handle.shutdown().await;
-        let _ = self.peerstore_path;
+        let _ = &self.peerstore_path;
     }
 }
 
+/// A chain gateway answer relayed by a node, verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChainAnswer {
+    /// HTTP status the gateway returned.
+    pub status: u16,
+    /// Body bytes as served.
+    pub body: Vec<u8>,
+    /// Block height the gateway reported, 0 when absent.
+    pub height: u64,
+}
+
 use std::path::Path;
+
+/// Counts distinct `/p2p/<id>` components among bootstrap addresses;
+/// addresses without one count individually.
+fn distinct_peer_ids(addrs: &[Multiaddr]) -> usize {
+    let mut ids = std::collections::HashSet::new();
+    let mut anonymous = 0usize;
+    for a in addrs {
+        let id = a.iter().find_map(|p| match p {
+            hashgram_p2p::Protocol::P2p(id) => Some(id),
+            _ => None,
+        });
+        match id {
+            Some(id) => {
+                ids.insert(id);
+            }
+            None => anonymous += 1,
+        }
+    }
+    ids.len() + anonymous
+}
 
 fn free_port() -> u16 {
     std::net::TcpListener::bind("0.0.0.0:0")

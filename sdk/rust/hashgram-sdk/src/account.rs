@@ -12,16 +12,34 @@ use hashgram_proto::Ed25519Signer;
 
 use crate::SdkError;
 
+/// Words in a Hashgram account mnemonic. There is no other length.
+pub const MNEMONIC_WORDS: usize = 24;
+
+/// Derives the identity root seed from the wallet secret.
+///
+/// The 24 words are the account. Restoring them on a second machine must
+/// yield not only the same `hash1…` address but the same identity root key,
+/// or that machine could never sign a `MsgAddDevice` for itself. So the
+/// root seed is a fixed derivation of the wallet secret (BLAKE3 in
+/// derive-key mode with a Hashgram-specific context), never a fresh random
+/// key. Only the public key goes on chain.
+#[must_use]
+pub fn derive_root_seed(wallet_secret: &[u8]) -> [u8; 32] {
+    blake3::derive_key("hashgram identity root key v1", wallet_secret)
+}
+
 /// A device's opened account material.
 pub struct Account {
     /// The vault file.
     pub vault: Vault,
-    /// Passphrase, kept to re-encrypt on save.
+    /// Passphrase, kept to re-encrypt on save when no session key is held.
     passphrase: String,
     /// Decrypted contents.
     pub contents: VaultContents,
     /// KDF cost used when writing.
     pub kdf: KdfCost,
+    /// Derived vault key for this session: saves skip the KDF.
+    key: Option<hashgram_identity::vault::VaultKey>,
 }
 
 impl Account {
@@ -34,7 +52,7 @@ impl Account {
         kdf: KdfCost,
     ) -> Result<(Self, String), SdkError> {
         let (mnemonic, wallet) = Wallet::generate()?;
-        let root = Ed25519Signer::generate()?;
+        let root = Ed25519Signer::from_secret(derive_root_seed(&wallet.secret_bytes()));
         let device = Ed25519Signer::generate()?;
         let contents = VaultContents {
             address: wallet.address().to_string(),
@@ -47,12 +65,15 @@ impl Account {
         };
         let vault = Vault::at(vault_path);
         vault.create(passphrase, &contents, kdf)?;
+        // One more KDF now buys KDF-free saves for the rest of the session.
+        let key = vault.open_with_key(passphrase).ok().map(|(_, k)| k);
         Ok((
             Self {
                 vault,
                 passphrase: passphrase.to_owned(),
                 contents,
                 kdf,
+                key,
             },
             mnemonic,
         ))
@@ -67,6 +88,16 @@ impl Account {
         device_id: &str,
         kdf: KdfCost,
     ) -> Result<Self, SdkError> {
+        // A Hashgram account is 24 words (256-bit entropy), the only length
+        // `Wallet::generate` produces. Shorter BIP-39 phrases are valid
+        // wallets elsewhere but are not Hashgram accounts; refusing them
+        // here keeps every client on one rule.
+        let words = mnemonic.split_whitespace().count();
+        if words != MNEMONIC_WORDS {
+            return Err(SdkError::Invalid(format!(
+                "a Hashgram account is {MNEMONIC_WORDS} words; got {words}"
+            )));
+        }
         let wallet = Wallet::from_mnemonic(mnemonic, "", 0)?;
         Self::import_wallet(vault_path, passphrase, wallet, device_id, kdf)
     }
@@ -91,7 +122,7 @@ impl Account {
         device_id: &str,
         kdf: KdfCost,
     ) -> Result<Self, SdkError> {
-        let root = Ed25519Signer::generate()?;
+        let root = Ed25519Signer::from_secret(derive_root_seed(&wallet.secret_bytes()));
         let device = Ed25519Signer::generate()?;
         let contents = VaultContents {
             address: wallet.address().to_string(),
@@ -104,11 +135,14 @@ impl Account {
         };
         let vault = Vault::at(vault_path);
         vault.create(passphrase, &contents, kdf)?;
+        // One more KDF now buys KDF-free saves for the rest of the session.
+        let key = vault.open_with_key(passphrase).ok().map(|(_, k)| k);
         Ok(Self {
             vault,
             passphrase: passphrase.to_owned(),
             contents,
             kdf,
+            key,
         })
     }
 
@@ -133,30 +167,60 @@ impl Account {
         };
         let vault = Vault::at(vault_path);
         vault.create(passphrase, &contents, kdf)?;
+        // One more KDF now buys KDF-free saves for the rest of the session.
+        let key = vault.open_with_key(passphrase).ok().map(|(_, k)| k);
         Ok(Self {
             vault,
             passphrase: passphrase.to_owned(),
             contents,
             kdf,
+            key,
         })
     }
 
-    /// Opens an existing vault.
+    /// Writes a new vault from given contents (used by backup import).
+    pub fn from_contents(
+        vault_path: &Path,
+        passphrase: &str,
+        contents: VaultContents,
+        kdf: KdfCost,
+    ) -> Result<Self, SdkError> {
+        let vault = Vault::at(vault_path);
+        vault.create(passphrase, &contents, kdf)?;
+        let key = vault.open_with_key(passphrase).ok().map(|(_, k)| k);
+        Ok(Self {
+            vault,
+            passphrase: passphrase.to_owned(),
+            contents,
+            kdf,
+            key,
+        })
+    }
+
+    /// Opens an existing vault. The derived key is kept for the session so
+    /// [`Self::save`] does not repeat the KDF.
     pub fn open(vault_path: &Path, passphrase: &str, kdf: KdfCost) -> Result<Self, SdkError> {
         let vault = Vault::at(vault_path);
-        let contents = vault.open(passphrase)?;
+        let (contents, key) = vault.open_with_key(passphrase)?;
         Ok(Self {
             vault,
             passphrase: passphrase.to_owned(),
             contents,
             kdf,
+            key: Some(key),
         })
     }
 
-    /// Re-encrypts the vault with the current contents.
+    /// Re-encrypts the vault with the current contents. Uses the session
+    /// key when one is held (an opened vault), the passphrase otherwise (a
+    /// vault just created: one more KDF, once).
     pub fn save(&self) -> Result<(), SdkError> {
-        self.vault
-            .write(&self.passphrase, &self.contents, self.kdf)?;
+        match &self.key {
+            Some(k) => self.vault.write_with_key(k, &self.contents)?,
+            None => self
+                .vault
+                .write(&self.passphrase, &self.contents, self.kdf)?,
+        }
         Ok(())
     }
 
@@ -418,4 +482,69 @@ pub(crate) fn base64_decode(s: &str) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const WORDS: &str = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art";
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("hg-account-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d.join("vault.json")
+    }
+
+    #[test]
+    fn restoring_the_same_words_yields_the_same_address_and_root_key() {
+        // Two machines, the same 24 words: identical address and identical
+        // identity root key, so the second can sign its own MsgAddDevice.
+        // Device keys differ: each machine is its own device.
+        let a = Account::import(&tmp("a"), "pass-a", WORDS, "pc-1", KdfCost::light()).unwrap();
+        let b = Account::import(&tmp("b"), "pass-b", WORDS, "pc-2", KdfCost::light()).unwrap();
+        assert_eq!(a.address(), b.address());
+        assert!(a.address().starts_with("hash1"));
+        assert_eq!(
+            a.root().unwrap().public_key(),
+            b.root().unwrap().public_key()
+        );
+        assert_ne!(
+            a.device().unwrap().public_key(),
+            b.device().unwrap().public_key()
+        );
+    }
+
+    #[test]
+    fn a_created_account_restores_to_itself() {
+        let (created, mnemonic) =
+            Account::create(&tmp("c"), "pass", "pc-1", KdfCost::light()).unwrap();
+        assert_eq!(
+            mnemonic.split_whitespace().count(),
+            24,
+            "accounts are 24 words only"
+        );
+        let restored =
+            Account::import(&tmp("d"), "other", &mnemonic, "pc-2", KdfCost::light()).unwrap();
+        assert_eq!(created.address(), restored.address());
+        assert_eq!(
+            created.root().unwrap().public_key(),
+            restored.root().unwrap().public_key()
+        );
+    }
+
+    #[test]
+    fn twelve_words_are_refused() {
+        // The BIP-39 parser would accept a 12-word phrase; the account layer
+        // is where Hashgram's rule lives: 24 words, nothing else.
+        let twelve = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let path = tmp("e");
+        let err = match Account::import(&path, "p", twelve, "pc", KdfCost::light()) {
+            Ok(_) => panic!("a 12-word phrase was accepted"),
+            Err(e) => e,
+        };
+        assert!(err.to_string().contains("24 words"), "{err}");
+        assert!(!path.exists(), "no vault is written for a refused phrase");
+    }
 }

@@ -1,0 +1,23 @@
+[package]
+name = "hashgram-node-service"
+workspace = "../../../node"
+description = "Windows service wrapper that runs hashgram-node for Hashgram for Windows (Earn -> Run a node)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "hashgram-node-service"
+path = "src/main.rs"
+
+[target.'cfg(windows)'.dependencies]
+windows-service = "0.8"
+
+[dependencies]
+anyhow.workspace = true
+
+[lints]
+workspace = true

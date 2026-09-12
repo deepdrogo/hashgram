@@ -15,6 +15,7 @@
 //! credential expires; a leaked one is useless within the hour.
 
 use hashgram_p2p::NodeConfig;
+use hashgram_proto::limits::TURN_SENTINEL_LIMIT;
 use hashgram_proto::pb;
 use hmac::{Hmac, Mac};
 use sha1::Sha1;
@@ -111,30 +112,55 @@ fn base64_encode(input: &[u8]) -> String {
     out
 }
 
-/// Verifies a credential request (device signature over the mailbox-fetch
-/// preimage with an empty cursor and limit 0) and issues a credential.
+/// Checks that a credential request was signed by the device it names.
+///
+/// The request signs the `mailbox-fetch` preimage with an empty cursor and
+/// [`TURN_SENTINEL_LIMIT`] as the limit. The sentinel is what keeps this
+/// preimage disjoint from every real fetch: `validate::mailbox_fetch`
+/// refuses it, and this path requires it, so a store node holding a genuine
+/// fetch signature cannot replay it here to obtain credentials in the
+/// victim's name. Shape is checked before the signature because the check is
+/// cheaper and a wrong shape is a wrong request regardless of who signed it.
+pub fn verify_request(
+    identity: &hashgram_net::NetworkIdentity,
+    req: &pb::TurnCredentialRequest,
+    now: u64,
+) -> Result<(), String> {
+    let f = pb::MailboxFetch {
+        mailbox: hashgram_proto::signing::mailbox_for(&req.device_pubkey).to_vec(),
+        device_pubkey: req.device_pubkey.clone(),
+        cursor: vec![],
+        limit: TURN_SENTINEL_LIMIT,
+        timestamp: req.timestamp,
+        signature: req.signature.clone(),
+    };
+    hashgram_proto::validate::turn_credential_fetch(&f, now).map_err(|e| e.to_string())?;
+    hashgram_proto::signing::verify_mailbox_fetch(identity, &f).map_err(|e| e.to_string())
+}
+
+/// The coturn username label for a device: the first 8 bytes of its
+/// mailbox id, hex. Long enough to attribute a credential in coturn logs,
+/// short enough not to leak the whole device key to the TURN server.
+#[must_use]
+pub fn label_for(device_pubkey: &[u8]) -> String {
+    let mailbox = hashgram_proto::signing::mailbox_for(device_pubkey);
+    hex::encode(mailbox.get(..8).unwrap_or(&[]))
+}
+
+/// Verifies a credential request (see [`verify_request`]) and issues a
+/// credential.
 pub fn issue_for_request(
     shared: &crate::app::Shared,
     secret: &[u8],
     req: &pb::TurnCredentialRequest,
 ) -> Result<TurnCredential, String> {
-    let f = pb::MailboxFetch {
-        mailbox: hashgram_proto::signing::mailbox_for(&req.device_pubkey).to_vec(),
-        device_pubkey: req.device_pubkey.clone(),
-        cursor: vec![],
-        limit: 0,
-        timestamp: req.timestamp,
-        signature: req.signature.clone(),
-    };
-    hashgram_proto::validate::mailbox_fetch(&f, crate::store::now()).map_err(|e| e.to_string())?;
-    hashgram_proto::signing::verify_mailbox_fetch(&shared.identity, &f)
-        .map_err(|e| e.to_string())?;
-    let label = hex::encode(&hashgram_proto::signing::mailbox_for(&req.device_pubkey)[..8]);
+    let now = crate::store::now();
+    verify_request(&shared.identity, req, now)?;
     Ok(issue(
         secret,
-        &label,
+        &label_for(&req.device_pubkey),
         &shared.config.turn_uris,
-        crate::store::now(),
+        now,
     ))
 }
 
@@ -179,6 +205,82 @@ mod tests {
         assert_eq!(c.username, "4600:dev1");
         assert_eq!(c.expires_at, 4600);
         assert_eq!(c.uris.len(), 1);
+    }
+
+    const GENESIS: &str = "9348af00681eecefb8d6329d5ba101c13bc3c8943f2c610295026f6503654287";
+
+    fn signed_fetch(
+        id: &hashgram_net::NetworkIdentity,
+        dev: &hashgram_proto::Ed25519Signer,
+        limit: u32,
+        cursor: Vec<u8>,
+        now: u64,
+    ) -> pb::MailboxFetch {
+        let mut f = pb::MailboxFetch {
+            cursor,
+            limit,
+            timestamp: now,
+            ..Default::default()
+        };
+        hashgram_proto::signing::sign_mailbox_fetch(id, dev, &mut f).unwrap();
+        f
+    }
+
+    fn request_from(f: &pb::MailboxFetch) -> pb::TurnCredentialRequest {
+        pb::TurnCredentialRequest {
+            device_pubkey: f.device_pubkey.clone(),
+            timestamp: f.timestamp,
+            signature: f.signature.clone(),
+        }
+    }
+
+    #[test]
+    fn a_sentinel_signed_request_is_accepted() {
+        let id = hashgram_net::NetworkIdentity::devnet(GENESIS);
+        let dev = hashgram_proto::Ed25519Signer::generate().unwrap();
+        let now = crate::store::now();
+        let f = signed_fetch(&id, &dev, TURN_SENTINEL_LIMIT, vec![], now);
+        verify_request(&id, &request_from(&f), now).unwrap();
+        // And that same signature is not a valid mailbox fetch: the two
+        // preimage sets are disjoint.
+        assert!(hashgram_proto::validate::mailbox_fetch(&f, now).is_err());
+    }
+
+    #[test]
+    fn a_real_fetch_signature_is_refused_by_the_turn_path() {
+        let id = hashgram_net::NetworkIdentity::devnet(GENESIS);
+        let dev = hashgram_proto::Ed25519Signer::generate().unwrap();
+        let now = crate::store::now();
+        // The exact preimage the old code accepted: empty cursor, limit 0.
+        for limit in [0, 1, 100] {
+            let f = signed_fetch(&id, &dev, limit, vec![], now);
+            // It is a perfectly good fetch...
+            hashgram_proto::validate::mailbox_fetch(&f, now).unwrap();
+            hashgram_proto::signing::verify_mailbox_fetch(&id, &f).unwrap();
+            // ...and worthless as a credential request.
+            assert!(
+                verify_request(&id, &request_from(&f), now).is_err(),
+                "limit {limit}"
+            );
+        }
+        // A fetch with a cursor cannot be replayed either.
+        let f = signed_fetch(&id, &dev, 0, vec![7; 40], now);
+        assert!(verify_request(&id, &request_from(&f), now).is_err());
+    }
+
+    #[test]
+    fn a_stale_or_foreign_request_is_refused() {
+        let id = hashgram_net::NetworkIdentity::devnet(GENESIS);
+        let dev = hashgram_proto::Ed25519Signer::generate().unwrap();
+        let now = crate::store::now();
+        let f = signed_fetch(&id, &dev, TURN_SENTINEL_LIMIT, vec![], now - 1000);
+        assert!(verify_request(&id, &request_from(&f), now).is_err());
+        // Signed for another network: the signing domain binds the network
+        // and chain ids, so a mainnet signature is worthless on devnet.
+        let other = hashgram_net::NetworkIdentity::mainnet(GENESIS);
+        let f = signed_fetch(&other, &dev, TURN_SENTINEL_LIMIT, vec![], now);
+        assert!(verify_request(&id, &request_from(&f), now).is_err());
+        assert_eq!(label_for(&dev.public_key()).len(), 16);
     }
 
     #[test]

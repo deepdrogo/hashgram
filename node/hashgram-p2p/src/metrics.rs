@@ -52,6 +52,7 @@ pub enum RequestKind {
     Attestation,
     Receipt,
     Calls,
+    Chain,
     Unknown,
 }
 
@@ -256,6 +257,7 @@ pub fn request_kind(req: &hashgram_proto::pb::Request) -> RequestKind {
         Some(B::AttestationQuery(_)) => RequestKind::Attestation,
         Some(B::ReceiptDeliver(_)) => RequestKind::Receipt,
         Some(B::TurnCredentials(_)) => RequestKind::Calls,
+        Some(B::ChainQuery(_) | B::ChainBroadcast(_)) => RequestKind::Chain,
         None => RequestKind::Unknown,
     }
 }

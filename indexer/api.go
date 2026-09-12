@@ -33,6 +33,11 @@ func NewAPI(db *pgxpool.Pool, log *slog.Logger) *API {
 
 // Handler returns the router.
 func (a *API) Handler() http.Handler {
+	return withTimeout(a.routes(), 15*time.Second)
+}
+
+// routes is the route table; Handler wraps it with the request timeout.
+func (a *API) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", a.health)
 	mux.HandleFunc("GET /v1/stats", a.stats)
@@ -56,7 +61,15 @@ func (a *API) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/providers", a.providers)
 	mux.HandleFunc("GET /v1/blocks/latest", a.latestBlocks)
 	mux.HandleFunc("GET /v1/txs/{hash}", a.tx)
-	return withTimeout(mux, 15*time.Second)
+	// Network: balances, validators, leaderboards (api_network.go).
+	mux.HandleFunc("GET /v1/leaderboards/holders", a.leaderboardHolders)
+	mux.HandleFunc("GET /v1/leaderboards/validators", a.leaderboardValidators)
+	mux.HandleFunc("GET /v1/leaderboards/providers", a.leaderboardProviders)
+	mux.HandleFunc("GET /v1/leaderboards/earners", a.leaderboardProviders)
+	mux.HandleFunc("GET /v1/validators", a.validators)
+	mux.HandleFunc("GET /v1/validators/{operator}", a.validator)
+	mux.HandleFunc("GET /v1/network/stats", a.networkStats)
+	return mux
 }
 
 func withTimeout(h http.Handler, d time.Duration) http.Handler {
@@ -95,6 +108,16 @@ func beforeOf(r *http.Request) int64 {
 func safeMode(r *http.Request) bool {
 	v := r.URL.Query().Get("safe")
 	return v == "1" || v == "true"
+}
+
+// likeEscaper neutralises LIKE metacharacters in user input so that a
+// prefix search for "a_b" matches the literal string and not "a" + any
+// character + "b". Queries using it must declare ESCAPE '\'.
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// escapeLike escapes %, _ and \ for use inside a LIKE pattern.
+func escapeLike(s string) string {
+	return likeEscaper.Replace(s)
 }
 
 // safetyClause excludes blocked content always and sensitive/restricted
@@ -170,7 +193,7 @@ func (a *API) health(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) stats(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{}
-	for _, t := range []string{"blocks", "transactions", "transfers", "usernames", "identities", "providers", "social_events", "posts", "reels", "follows", "channels", "attestations"} {
+	for _, t := range []string{"blocks", "transactions", "transfers", "usernames", "identities", "providers", "validators", "balances", "social_events", "posts", "reels", "follows", "channels", "attestations"} {
 		var n int64
 		if err := a.db.QueryRow(r.Context(), "SELECT count(*) FROM "+t).Scan(&n); err == nil {
 			out[t] = n
@@ -178,6 +201,12 @@ func (a *API) stats(w http.ResponseWriter, r *http.Request) {
 	}
 	if h, err := getState(r.Context(), a.db, "chain_height"); err == nil {
 		out["chain_height"] = h
+	}
+	// Sanity figure: sum(balances) as the ingester last computed it. Compare
+	// with the bank supply; a mismatch means the projection has drifted.
+	var supply string
+	if err := a.db.QueryRow(r.Context(), "SELECT value FROM stats WHERE key = $1", statHashgramSupply).Scan(&supply); err == nil {
+		out[statHashgramSupply] = supply
 	}
 	writeJSON(w, 200, out)
 }
@@ -479,7 +508,7 @@ func (a *API) searchUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := a.db.Query(r.Context(), `
 SELECT u.name, u.owner, COALESCE(p.display_name, '') FROM usernames u LEFT JOIN profiles p ON p.address = u.owner
-WHERE u.name LIKE $1 || '%' ORDER BY u.name LIMIT $2`, q, limitOf(r, 20, 100))
+WHERE u.name LIKE $1 || '%' ESCAPE '\' ORDER BY u.name LIMIT $2`, escapeLike(q), limitOf(r, 20, 100))
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -504,7 +533,7 @@ func (a *API) searchHashtags(w http.ResponseWriter, r *http.Request) {
 	q := strings.ToLower(strings.TrimPrefix(r.URL.Query().Get("q"), "#"))
 	rows, err := a.db.Query(r.Context(), `
 SELECT tag, count(*) FROM (SELECT unnest(hashtags) AS tag FROM posts WHERE NOT deleted UNION ALL SELECT unnest(hashtags) FROM reels WHERE NOT deleted) t
-WHERE tag LIKE $1 || '%' GROUP BY tag ORDER BY count(*) DESC LIMIT $2`, q, limitOf(r, 20, 100))
+WHERE tag LIKE $1 || '%' ESCAPE '\' GROUP BY tag ORDER BY count(*) DESC LIMIT $2`, escapeLike(q), limitOf(r, 20, 100))
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return

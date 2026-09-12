@@ -49,6 +49,15 @@ type Config struct {
 	// TrustedAttestors are hex ed25519 keys whose safety verdicts the read
 	// API enforces. Should match the node's trusted_attestors.
 	TrustedAttestors []string `toml:"trusted_attestors"`
+
+	// GenesisPath is a local genesis.json used to seed the balances
+	// projection. Empty means fetch `GET /genesis` (falling back to
+	// `/genesis_chunked`) from ChainRPC.
+	GenesisPath string `toml:"genesis_path"`
+
+	// ValidatorRefreshBlocks is how many indexed blocks pass between
+	// refreshes of the validators projection from the staking REST query.
+	ValidatorRefreshBlocks int64 `toml:"validator_refresh_blocks"`
 }
 
 // Defaults fills unset fields.
@@ -72,6 +81,9 @@ func (c *Config) Defaults() {
 	}
 	if c.PollInterval == 0 {
 		c.PollInterval = 3 * time.Second
+	}
+	if c.ValidatorRefreshBlocks <= 0 {
+		c.ValidatorRefreshBlocks = 50
 	}
 }
 

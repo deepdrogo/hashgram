@@ -29,6 +29,7 @@ mod app;
 mod blob;
 mod calls;
 mod chain;
+mod chain_relay;
 mod keys;
 mod mailbox;
 mod rewards;
@@ -337,9 +338,13 @@ async fn run(home: PathBuf, config: PathBuf, insecure_no_chain: bool) -> anyhow:
     let mut services = app::Services::default();
     if cfg.stores() {
         let db = store::open(&home, "mailbox")?;
-        services.mailbox = Some(mailbox::MailboxService::open(db, &identity.network_id)?);
+        let mailbox = mailbox::MailboxService::open(db, &identity.network_id)?;
+        mailbox.register_metrics(&mut registry);
+        services.mailbox = Some(mailbox);
         let db = store::open(&home, "blobs")?;
-        services.blob = Some(blob::BlobService::open(db, cfg.storage_quota_bytes)?);
+        let blob = blob::BlobService::open(db, cfg.storage_quota_bytes)?;
+        blob.register_metrics(&mut registry);
+        services.blob = Some(blob);
         info!(quota = cfg.storage_quota_bytes, "store services enabled");
     }
     {
@@ -362,6 +367,24 @@ async fn run(home: PathBuf, config: PathBuf, insecure_no_chain: bool) -> anyhow:
     {
         let db = store::open(&home, "safety")?;
         services.safety = Some(safety::SafetyService::open(db, &cfg.trusted_attestors)?);
+    }
+    // Chain relay: relay/bootstrap nodes forward allow-listed chain reads
+    // and broadcasts for wallets that have no gateway of their own. It is
+    // a public good, not a rewarded role, and needs the chain to be there.
+    match (&chain, cfg.serves_relay()) {
+        (Some(c), true) => {
+            services.chain_relay = Some(Arc::new(chain_relay::ChainRelayService::new(
+                c.clone(),
+                &mut registry,
+            )));
+            info!("chain relay enabled (allow-listed reads and broadcast over /hashgram/rpc/1)");
+        }
+        (Some(_), false) => {
+            info!("chain relay off: this node does not serve the relay or bootstrap role");
+        }
+        (None, _) => {
+            info!("chain relay off: no chain node configured");
+        }
     }
 
     let turn_secret = if cfg.has_role("call") && !cfg.turn_secret_file.is_empty() {
@@ -389,6 +412,7 @@ async fn run(home: PathBuf, config: PathBuf, insecure_no_chain: bool) -> anyhow:
                 sec,
                 announce_signer.clone(),
             )?;
+            agent.register_metrics(&mut registry);
             info!(operator = %agent.operator(), reward = %cfg.reward_address, "useful-service agent enabled");
             Some(agent)
         }
@@ -432,6 +456,9 @@ async fn run(home: PathBuf, config: PathBuf, insecure_no_chain: bool) -> anyhow:
                     }
                 }
                 if let Some(b) = &shared.services.blob {
+                    if let Err(e) = b.expire_incomplete(store::now()) {
+                        warn!(error = %e, "incomplete upload sweep failed");
+                    }
                     b.repair_pass(&shared, 8).await;
                 }
                 if let Some(agent) = &shared.rewards {

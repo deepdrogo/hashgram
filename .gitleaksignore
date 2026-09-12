@@ -1,0 +1,6 @@
+# Fingerprints of confirmed false positives in git history (gitleaks git .).
+# Each line: <commit>:<file>:<rule>:<line>. Add one only after reading the
+# match. These two are the same doc-comment sentence in crypto.rs naming the
+# cipher after the word "vault key", not a credential; reworded in 228fed13.
+a4b690214dd9accfb21c226a0d88388b12c8cc6d:apps/desktop/src-tauri/src/crypto.rs:generic-api-key:5
+85a8648fdd48d6a6f64a3c1e06a56d62339846fb:apps/desktop/src-tauri/src/crypto.rs:generic-api-key:5

@@ -173,6 +173,115 @@ pub async fn upload(
     })
 }
 
+/// Uploads bytes that the caller has already encrypted (a HashDrive object
+/// or sealed manifest, see `hashgram_app::drive`). The manifest is marked
+/// `encrypted = true` and the MIME is the ciphertext container, so the CID
+/// matches `hashgram_app::drive::object_ref`.
+pub async fn upload_sealed(
+    link: &Link,
+    network: &NetworkIdentity,
+    device: &Ed25519Signer,
+    ciphertext: &[u8],
+    replicas: usize,
+) -> Result<Uploaded, SdkError> {
+    let manifest = manifest_for(ciphertext, "application/octet-stream", true)
+        .map_err(|e| SdkError::Invalid(e.to_string()))?;
+    let c = cid(&manifest).to_vec();
+    let providers =
+        push_manifest_and_chunks(link, network, device, &manifest, &c, ciphertext, replicas)
+            .await?;
+    Ok(Uploaded {
+        cid: hex::encode(&c),
+        size: manifest.size,
+        chunks: manifest.chunks.len(),
+        providers,
+        key: None,
+        nonce: None,
+        plaintext_hash: String::new(),
+    })
+}
+
+/// Pushes a manifest and its chunks to up to `replicas` store/media peers,
+/// resuming from each peer's `missing_chunks`. Returns the peers that hold
+/// the whole blob.
+async fn push_manifest_and_chunks(
+    link: &Link,
+    network: &NetworkIdentity,
+    device: &Ed25519Signer,
+    manifest: &pb::BlobManifest,
+    c: &[u8],
+    bytes: &[u8],
+    replicas: usize,
+) -> Result<Vec<String>, SdkError> {
+    let stores = link.peers_with_role("store").await;
+    let media = link.peers_with_role("media").await;
+    let mut targets: Vec<PeerId> = media;
+    for s in stores {
+        if !targets.contains(&s) {
+            targets.push(s);
+        }
+    }
+    if targets.is_empty() {
+        return Err(SdkError::Link(crate::link::LinkError::NoPeer("store")));
+    }
+    let mut providers = Vec::new();
+    for p in targets.into_iter().take(replicas.max(1)) {
+        let mut put = pb::BlobPutManifest {
+            cid: c.to_vec(),
+            manifest: Some(manifest.clone()),
+            timestamp: now(),
+            ..Default::default()
+        };
+        signing::sign_blob_upload(network, device, &mut put)?;
+        let missing = match link
+            .request(p, pb::request::Body::BlobPutManifest(put))
+            .await
+        {
+            Ok(pb::response::Body::BlobPutManifest(r)) if r.accepted => r.missing_chunks,
+            Ok(pb::response::Body::BlobPutManifest(r)) => {
+                debug!(%p, reason = r.reason, "manifest refused");
+                continue;
+            }
+            Ok(_) => continue,
+            Err(e) => {
+                debug!(%p, error = %e, "manifest upload failed");
+                continue;
+            }
+        };
+        let mut ok = true;
+        for index in missing {
+            let start = index as usize * CHUNK_SIZE;
+            let end = (start + CHUNK_SIZE).min(bytes.len());
+            let chunk = bytes.get(start..end).unwrap_or(&[]).to_vec();
+            match link
+                .request(
+                    p,
+                    pb::request::Body::BlobPutChunk(pb::BlobPutChunk {
+                        cid: c.to_vec(),
+                        index,
+                        data: chunk,
+                    }),
+                )
+                .await
+            {
+                Ok(pb::response::Body::BlobPutChunk(r)) if r.accepted => {}
+                other => {
+                    debug!(%p, ?other, "chunk refused");
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if ok {
+            providers.push(p.to_string());
+        }
+    }
+    if providers.is_empty() {
+        return Err(SdkError::Delivery("no store node accepted the blob".into()));
+    }
+    Ok(providers)
+}
+
 /// Finds providers of a CID: DHT first, then connected store/media peers.
 pub async fn providers(link: &Link, c: &[u8]) -> Vec<PeerId> {
     let mut out = link.providers(dht::blob(c)).await;

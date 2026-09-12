@@ -77,6 +77,45 @@ impl ChainClient {
         Ok(r.default_node_info.network)
     }
 
+    /// A raw GET of `path?query`, returning the gateway's status, body and
+    /// reported block height. The body is read up to `max_bytes`; a longer
+    /// one yields [`RawError::TooLarge`]. Used by the chain relay, which
+    /// forwards answers verbatim so a client can compare two nodes byte for
+    /// byte.
+    pub async fn get_raw(
+        &self,
+        path: &str,
+        query: &str,
+        max_bytes: usize,
+    ) -> Result<RawResponse, RawError> {
+        let mut url = format!("{}/{}", self.base, path.trim_start_matches('/'));
+        if !query.is_empty() {
+            url.push('?');
+            url.push_str(query);
+        }
+        let resp = self.http.get(url).send().await.map_err(classify)?;
+        read_raw(resp, max_bytes).await
+    }
+
+    /// A raw JSON POST, same rules as [`Self::get_raw`]. The relay uses it
+    /// for exactly one path: transaction broadcast.
+    pub async fn post_raw(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+        max_bytes: usize,
+    ) -> Result<RawResponse, RawError> {
+        let url = format!("{}/{}", self.base, path.trim_start_matches('/'));
+        let resp = self
+            .http
+            .post(url)
+            .json(body)
+            .send()
+            .await
+            .map_err(classify)?;
+        read_raw(resp, max_bytes).await
+    }
+
     /// Generic GET returning JSON, for the local API's pass-through queries.
     pub async fn get_json(&self, path: &str) -> anyhow::Result<serde_json::Value> {
         let url = format!("{}/{}", self.base, path.trim_start_matches('/'));
@@ -89,6 +128,73 @@ impl ChainClient {
             .json()
             .await?)
     }
+}
+
+/// A gateway answer forwarded verbatim.
+#[derive(Debug, Clone)]
+pub struct RawResponse {
+    /// HTTP status.
+    pub status: u16,
+    /// Body bytes as served.
+    pub body: Vec<u8>,
+    /// `grpc-metadata-x-cosmos-block-height`, 0 when absent.
+    pub height: u64,
+}
+
+/// Why a raw fetch failed (distinct from a non-2xx status, which is
+/// returned to the requester as data).
+#[derive(Debug, thiserror::Error)]
+pub enum RawError {
+    /// The gateway took longer than the client timeout.
+    #[error("chain gateway timed out")]
+    Timeout,
+    /// Could not connect or the connection broke.
+    #[error("chain gateway unreachable: {0}")]
+    Unreachable(String),
+    /// The body exceeded the cap.
+    #[error("chain gateway answer exceeds {0} bytes")]
+    TooLarge(usize),
+}
+
+fn classify(e: reqwest::Error) -> RawError {
+    if e.is_timeout() {
+        RawError::Timeout
+    } else {
+        RawError::Unreachable(e.to_string())
+    }
+}
+
+/// The gateway header that carries the height an answer was served at.
+pub const HEIGHT_HEADER: &str = "grpc-metadata-x-cosmos-block-height";
+
+async fn read_raw(resp: reqwest::Response, max_bytes: usize) -> Result<RawResponse, RawError> {
+    let status = resp.status().as_u16();
+    let height = resp
+        .headers()
+        .get(HEIGHT_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(0);
+    if let Some(len) = resp.content_length() {
+        if len > max_bytes as u64 {
+            return Err(RawError::TooLarge(max_bytes));
+        }
+    }
+    // Stream the body so a lying Content-Length cannot make us buffer more
+    // than the cap.
+    let mut body = Vec::with_capacity(1024);
+    let mut resp = resp;
+    while let Some(chunk) = resp.chunk().await.map_err(classify)? {
+        if body.len() + chunk.len() > max_bytes {
+            return Err(RawError::TooLarge(max_bytes));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(RawResponse {
+        status,
+        body,
+        height,
+    })
 }
 
 /// Standard base64 for the gateway's bytes query parameter.

@@ -1,0 +1,24 @@
+[package]
+name = "hashgram-app"
+description = "Hashgram One application protocol: HashMail, HashDrive, People, Circles, Spaces (pure logic, no I/O)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hashgram-net = { path = "../hashgram-net" }
+hashgram-proto = { path = "../hashgram-proto" }
+prost.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+blake3.workspace = true
+getrandom.workspace = true
+chacha20poly1305 = "0.10"
+sha2.workspace = true
+
+[lints]
+workspace = true

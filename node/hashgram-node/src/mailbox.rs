@@ -19,14 +19,28 @@
 //! Every envelope carries an expiry the node clamps to its retention bound.
 //! A sweep deletes expired envelopes whether or not they were read. Nothing
 //! is kept after acknowledgement.
+//!
+//! # Replay
+//!
+//! A signed fetch or ack binds a timestamp but not the responder, so within
+//! the ±[`MAX_REQUEST_AGE_SECS`] freshness window the same bytes are valid
+//! at every store node holding the mailbox, and valid again at this one.
+//! Binding the responder is a wire change (protocol v2); until then this
+//! node remembers the exact requests it has served inside the window and
+//! refuses a second presentation. It is a mitigation, not a fix: another
+//! store node can still replay a request here once.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context;
 use hashgram_p2p::{topics, MessageAcceptance, PeerId};
+use hashgram_proto::keys::blake3_hash;
+use hashgram_proto::limits::MAX_REQUEST_AGE_SECS;
 use hashgram_proto::pb;
 use hashgram_proto::{signing, validate};
+use prometheus_client::metrics::counter::Counter;
+use prometheus_client::registry::Registry;
 use prost::Message;
 use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 use tracing::{debug, warn};
@@ -38,6 +52,88 @@ use crate::store::now;
 pub const MAX_ENVELOPES_PER_MAILBOX: u64 = 2000;
 /// Most bytes one mailbox may hold: 64 MiB.
 pub const MAX_BYTES_PER_MAILBOX: u64 = 64 << 20;
+/// Most served-request keys the replay cache remembers. At 32 bytes a key
+/// plus bookkeeping this is a few megabytes; when full, the oldest entry is
+/// evicted, which only weakens the mitigation under a flood the freshness
+/// window already bounds.
+pub const REPLAY_CACHE_CAP: usize = 100_000;
+
+/// The exact signed requests served recently, so that presenting one again
+/// within its freshness window is refused.
+///
+/// Keys are a hash over the request's identifying fields, so the cache
+/// holds a fixed 32 bytes per request whatever the cursor or id list size.
+/// The request's own timestamp is kept alongside so pruning can follow the
+/// same rule as `validate::fresh`: once a request would be refused as stale
+/// anyway, remembering it buys nothing.
+#[derive(Debug, Default)]
+struct ReplayCache {
+    seen: HashMap<[u8; 32], u64>,
+    /// Insertion order, for oldest-first eviction when full.
+    order: VecDeque<[u8; 32]>,
+}
+
+impl ReplayCache {
+    /// Records a served request. Returns `false` if it was already there.
+    fn record(&mut self, key: [u8; 32], ts: u64) -> bool {
+        if self.seen.contains_key(&key) {
+            return false;
+        }
+        while self.seen.len() >= REPLAY_CACHE_CAP {
+            match self.order.pop_front() {
+                Some(old) => {
+                    self.seen.remove(&old);
+                }
+                None => break,
+            }
+        }
+        self.seen.insert(key, ts);
+        self.order.push_back(key);
+        true
+    }
+
+    /// Forgets requests old enough that freshness would refuse them.
+    fn prune(&mut self, now: u64) {
+        let before = self.seen.len();
+        self.seen
+            .retain(|_, ts| ts.saturating_add(MAX_REQUEST_AGE_SECS) >= now);
+        if self.seen.len() != before {
+            let seen = &self.seen;
+            self.order.retain(|k| seen.contains_key(k));
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.seen.len()
+    }
+}
+
+/// Replay key of a fetch: `(mailbox, timestamp, blake3(cursor))`, hashed.
+fn fetch_replay_key(f: &pb::MailboxFetch) -> [u8; 32] {
+    let mut buf = Vec::with_capacity(1 + 32 + 8 + 32);
+    buf.push(b'F');
+    buf.extend_from_slice(&f.mailbox);
+    buf.extend_from_slice(&f.timestamp.to_be_bytes());
+    buf.extend_from_slice(&blake3_hash(&f.cursor));
+    blake3_hash(&buf)
+}
+
+/// Replay key of an ack: `(mailbox, timestamp, blake3(envelope ids))`,
+/// hashed. The ids are hashed in the order given: a different order is a
+/// different signature, so it is a different request.
+fn ack_replay_key(a: &pb::MailboxAck) -> [u8; 32] {
+    let mut ids = Vec::with_capacity(32 * a.envelope_ids.len());
+    for id in &a.envelope_ids {
+        ids.extend_from_slice(id);
+    }
+    let mut buf = Vec::with_capacity(1 + 32 + 8 + 32);
+    buf.push(b'A');
+    buf.extend_from_slice(&a.mailbox);
+    buf.extend_from_slice(&a.timestamp.to_be_bytes());
+    buf.extend_from_slice(&blake3_hash(&ids));
+    blake3_hash(&buf)
+}
 
 /// Envelope key: (mailbox, created_at, id).
 type EnvelopeKey<'a> = (&'a [u8], u64, &'a [u8]);
@@ -78,6 +174,10 @@ pub struct MailboxService {
     network_id: String,
     /// Mailboxes other store nodes said have mail. A hint only.
     notified: Mutex<HashSet<Vec<u8>>>,
+    /// Signed requests served inside the freshness window.
+    replays: Mutex<ReplayCache>,
+    /// Requests refused because they had already been served.
+    replay_refused: Counter,
 }
 
 fn ok(body: pb::response::Body) -> pb::Response {
@@ -111,7 +211,47 @@ impl MailboxService {
             db,
             network_id: network_id.to_owned(),
             notified: Mutex::new(HashSet::new()),
+            replays: Mutex::new(ReplayCache::default()),
+            replay_refused: Counter::default(),
         }))
+    }
+
+    /// Registers this service's metrics: `hashgram_mailbox_replay_refused_total`.
+    pub fn register_metrics(&self, registry: &mut Registry) {
+        registry.register(
+            "hashgram_mailbox_replay_refused",
+            "Signed mailbox requests refused because the same request was already served within the freshness window",
+            self.replay_refused.clone(),
+        );
+    }
+
+    /// Remembers a verified fetch; `false` if this exact request was
+    /// already served within the window (and counts the refusal).
+    fn first_sight_fetch(&self, f: &pb::MailboxFetch) -> bool {
+        self.first_sight(fetch_replay_key(f), f.timestamp)
+    }
+
+    /// Remembers a verified ack; `false` if already served.
+    fn first_sight_ack(&self, a: &pb::MailboxAck) -> bool {
+        self.first_sight(ack_replay_key(a), a.timestamp)
+    }
+
+    fn first_sight(&self, key: [u8; 32], ts: u64) -> bool {
+        let fresh = self
+            .replays
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .record(key, ts);
+        if !fresh {
+            self.replay_refused.inc();
+        }
+        fresh
+    }
+
+    /// How many served requests the replay cache currently remembers.
+    #[cfg(test)]
+    fn replay_cache_len(&self) -> usize {
+        self.replays.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Gossip topics this service listens on.
@@ -208,6 +348,12 @@ impl MailboxService {
                         .await;
                     return err("invalid", e.to_string());
                 }
+                // Only after the signature: an unsigned flood must not be
+                // able to fill the cache with keys the real device will
+                // later present.
+                if !self.first_sight_fetch(&f) {
+                    return err("invalid", "replayed request");
+                }
                 match self.fetch(&f.mailbox, &f.cursor, limit as usize) {
                     Ok((envelopes, cursor, remaining)) => {
                         ok(pb::response::Body::MailboxFetch(pb::MailboxFetchResult {
@@ -232,6 +378,9 @@ impl MailboxService {
                         .score(peer, hashgram_p2p::ScoreEvent::InvalidSignature)
                         .await;
                     return err("invalid", e.to_string());
+                }
+                if !self.first_sight_ack(&a) {
+                    return err("invalid", "replayed request");
                 }
                 match self.ack(&a.mailbox, &a.envelope_ids) {
                     Ok(deleted) => ok(pb::response::Body::MailboxAck(pb::MailboxAckResult {
@@ -443,9 +592,14 @@ impl MailboxService {
         Ok(deleted)
     }
 
-    /// Deletes expired envelopes and key packages. Returns how many.
+    /// Deletes expired envelopes and key packages, and forgets replay keys
+    /// older than the freshness window. Returns how many envelopes went.
     pub fn sweep(&self) -> anyhow::Result<u64> {
         let t = now();
+        self.replays
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .prune(t);
         let txn = self.db.begin_write()?;
         let mut removed = 0u64;
         {
@@ -702,6 +856,106 @@ mod tests {
             .collect();
         assert_eq!(s.ack(&mb, &ids).unwrap(), 5);
         assert_eq!(s.stats().unwrap().envelopes, 0);
+    }
+
+    fn devnet() -> hashgram_net::NetworkIdentity {
+        hashgram_net::NetworkIdentity::devnet(
+            "9348af00681eecefb8d6329d5ba101c13bc3c8943f2c610295026f6503654287",
+        )
+    }
+
+    #[test]
+    fn the_same_signed_fetch_is_served_once() {
+        let s = service();
+        let id = devnet();
+        let dev = Ed25519Signer::generate().unwrap();
+        let t = now();
+        let mut f = pb::MailboxFetch {
+            timestamp: t,
+            ..Default::default()
+        };
+        signing::sign_mailbox_fetch(&id, &dev, &mut f).unwrap();
+        validate::mailbox_fetch(&f, t).unwrap();
+        signing::verify_mailbox_fetch(&id, &f).unwrap();
+
+        assert!(s.first_sight_fetch(&f), "first presentation is served");
+        assert!(
+            !s.first_sight_fetch(&f),
+            "the same bytes again are a replay"
+        );
+        assert_eq!(s.replay_refused.get(), 1);
+
+        // A fresh timestamp is a different request.
+        let mut f2 = pb::MailboxFetch {
+            timestamp: t + 1,
+            ..Default::default()
+        };
+        signing::sign_mailbox_fetch(&id, &dev, &mut f2).unwrap();
+        assert!(s.first_sight_fetch(&f2));
+        // So is the same timestamp with a different cursor.
+        let mut f3 = pb::MailboxFetch {
+            timestamp: t,
+            cursor: vec![5; 40],
+            ..Default::default()
+        };
+        signing::sign_mailbox_fetch(&id, &dev, &mut f3).unwrap();
+        assert!(s.first_sight_fetch(&f3));
+        assert!(!s.first_sight_fetch(&f3));
+        assert_eq!(s.replay_refused.get(), 2);
+        assert_eq!(s.replay_cache_len(), 3);
+    }
+
+    #[test]
+    fn the_same_signed_ack_is_served_once() {
+        let s = service();
+        let id = devnet();
+        let dev = Ed25519Signer::generate().unwrap();
+        let t = now();
+        let mut a = pb::MailboxAck {
+            envelope_ids: vec![vec![1; 32], vec![2; 32]],
+            timestamp: t,
+            ..Default::default()
+        };
+        signing::sign_mailbox_ack(&id, &dev, &mut a).unwrap();
+        assert!(s.first_sight_ack(&a));
+        assert!(!s.first_sight_ack(&a));
+        // Same timestamp, different id set: a different request.
+        let mut b = a.clone();
+        b.envelope_ids.push(vec![3; 32]);
+        signing::sign_mailbox_ack(&id, &dev, &mut b).unwrap();
+        assert!(s.first_sight_ack(&b));
+        // A fetch and an ack never collide even on equal fields.
+        let f = pb::MailboxFetch {
+            mailbox: a.mailbox.clone(),
+            timestamp: t,
+            ..Default::default()
+        };
+        assert_ne!(fetch_replay_key(&f), ack_replay_key(&a));
+    }
+
+    #[test]
+    fn replay_cache_is_bounded_and_pruned() {
+        let mut c = ReplayCache::default();
+        let t = 1_700_000_000u64;
+        for i in 0..(REPLAY_CACHE_CAP as u64 + 10) {
+            let mut k = [0u8; 32];
+            k[..8].copy_from_slice(&i.to_be_bytes());
+            assert!(c.record(k, t));
+        }
+        assert_eq!(c.len(), REPLAY_CACHE_CAP);
+        // The oldest were evicted first: key 0 is gone, the newest stays.
+        let mut k0 = [0u8; 32];
+        k0[..8].copy_from_slice(&0u64.to_be_bytes());
+        assert!(c.record(k0, t), "evicted key is accepted again");
+        let mut newest = [0u8; 32];
+        newest[..8].copy_from_slice(&(REPLAY_CACHE_CAP as u64 + 9).to_be_bytes());
+        assert!(!c.record(newest, t), "newest key is still remembered");
+        // Pruning follows the freshness window exactly.
+        c.prune(t + MAX_REQUEST_AGE_SECS);
+        assert_eq!(c.len(), REPLAY_CACHE_CAP);
+        c.prune(t + MAX_REQUEST_AGE_SECS + 1);
+        assert_eq!(c.len(), 0);
+        assert!(c.order.is_empty());
     }
 
     #[test]

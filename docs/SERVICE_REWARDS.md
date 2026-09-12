@@ -154,3 +154,9 @@ names which.
 - Receipt submission costs the provider gas; a provider serving only tiny
   clients pays fees to claim small credit. Batching to 100 per transaction
   bounds this.
+- Relaying chain reads and broadcasts for wallets (`ChainQuery`,
+  `ChainBroadcast` in `docs/PROTOCOL.md`) earns **no** credit. It is a
+  public good `relay` and `bootstrap` nodes provide like peer exchange: the
+  answers are cheap, come from the co-located chain node, and paying for
+  them would reward the cheapest possible lie. Clients cross-check two
+  operators instead.

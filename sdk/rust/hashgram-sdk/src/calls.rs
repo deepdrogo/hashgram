@@ -18,6 +18,7 @@
 
 use hashgram_net::NetworkIdentity;
 use hashgram_p2p::PeerId;
+use hashgram_proto::limits::TURN_SENTINEL_LIMIT;
 use hashgram_proto::pb;
 use hashgram_proto::{signing, Ed25519Signer};
 
@@ -98,8 +99,12 @@ pub async fn turn_credentials(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    // The sentinel limit is what distinguishes this preimage from a real
+    // fetch: the node's fetch validator refuses it and its TURN path
+    // requires it, so this signature cannot be replayed as a mailbox read
+    // and a mailbox read cannot be replayed for credentials.
     let mut f = pb::MailboxFetch {
-        limit: 0,
+        limit: TURN_SENTINEL_LIMIT,
         timestamp: now,
         ..Default::default()
     };

@@ -80,3 +80,17 @@ target/
 /hashgram-safety
 /hashgram-node
 /hashgram-client
+
+# Chain relay devnet harness state (scripts/testnet/chain-relay-devnet.ps1).
+/devnet-relay/
+
+
+# Frontend dependencies (apps/desktop).
+node_modules/
+apps/desktop/dist/
+apps/desktop/src-tauri/gen/
+
+
+# Sidecar binaries copied in by apps/desktop/release.ps1.
+apps/desktop/src-tauri/binaries/
+

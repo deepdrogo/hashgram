@@ -20,6 +20,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
         })?;
 
+    // The application package (hashgram.app.v1) is compiled on its own
+    // first; the chat package embeds it, and is told to refer to it as
+    // `crate::app` rather than the nested `super::super::app::v1` path
+    // prost would otherwise assume, because this crate exposes the packages
+    // as flat modules (`pb`, `chat`, `app`).
+    let app_files = ["hashgram/app/v1/app.proto"];
     let files = [
         "hashgram/p2p/v1/handshake.proto",
         "hashgram/p2p/v1/envelope.proto",
@@ -31,14 +37,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "hashgram/chat/v1/chat.proto",
     ];
 
-    for f in &files {
+    for f in app_files.iter().chain(files.iter()) {
         println!("cargo:rerun-if-changed={}", proto_root.join(f).display());
     }
 
-    let descriptors = protox::compile(files.iter().map(|f| proto_root.join(f)), [&proto_root])?;
-
+    let app_descriptors =
+        protox::compile(app_files.iter().map(|f| proto_root.join(f)), [&proto_root])?;
     prost_build::Config::new()
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .compile_fds(app_descriptors)?;
+
+    let descriptors = protox::compile(files.iter().map(|f| proto_root.join(f)), [&proto_root])?;
+    prost_build::Config::new()
+        .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .extern_path(".hashgram.app.v1", "crate::app")
         .compile_fds(descriptors)?;
 
     Ok(())

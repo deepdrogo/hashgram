@@ -216,11 +216,43 @@ impl Vault {
         cost: KdfCost,
     ) -> Result<(), VaultError> {
         let mut salt = [0u8; 16];
-        let mut nonce = [0u8; 24];
         getrandom::fill(&mut salt).map_err(|_| VaultError::NoRandomness)?;
+        let key = self.derive(passphrase.as_bytes(), &salt, cost)?;
+        let vk = VaultKey {
+            key: zeroize::Zeroizing::new(key),
+            salt,
+            cost,
+        };
+        self.write_with_key(&vk, contents)
+    }
+
+    /// Opens the vault and also returns the derived key, so later writes in
+    /// the same session can skip the KDF ([`Self::write_with_key`]). An
+    /// application that persists MLS state after every message needs this:
+    /// Argon2id at 64 MiB on every save would make chat unusable.
+    pub fn open_with_key(&self, passphrase: &str) -> Result<(VaultContents, VaultKey), VaultError> {
+        let (contents, key, salt, cost) = self.open_inner(passphrase)?;
+        Ok((
+            contents,
+            VaultKey {
+                key: zeroize::Zeroizing::new(key),
+                salt,
+                cost,
+            },
+        ))
+    }
+
+    /// Rewrites the vault under an already-derived key. The salt is the one
+    /// the key was derived from; the nonce is fresh (24 random bytes, so
+    /// reuse of the key is safe by construction of XChaCha20-Poly1305).
+    pub fn write_with_key(
+        &self,
+        vk: &VaultKey,
+        contents: &VaultContents,
+    ) -> Result<(), VaultError> {
+        let mut nonce = [0u8; 24];
         getrandom::fill(&mut nonce).map_err(|_| VaultError::NoRandomness)?;
-        let mut key = self.derive(passphrase.as_bytes(), &salt, cost)?;
-        let cipher = XChaCha20Poly1305::new((&key).into());
+        let cipher = XChaCha20Poly1305::new(vk.key.as_slice().into());
         let mut plaintext = serde_json::to_vec(contents).map_err(|e| VaultError::Format {
             path: self.path.clone(),
             reason: e.to_string(),
@@ -229,11 +261,11 @@ impl Vault {
             .encrypt(XNonce::from_slice(&nonce), plaintext.as_slice())
             .map_err(|_| VaultError::Locked)?;
         plaintext.zeroize();
-        key.zeroize();
+        let cost = vk.cost;
         let file = FileFormat {
             version: 1,
             kdf: "argon2id".into(),
-            salt: hex::encode(salt),
+            salt: hex::encode(vk.salt),
             m_cost: cost.m_cost,
             t_cost: cost.t_cost,
             p_cost: cost.p_cost,
@@ -271,6 +303,15 @@ impl Vault {
 
     /// Opens the vault.
     pub fn open(&self, passphrase: &str) -> Result<VaultContents, VaultError> {
+        let (contents, mut key, _, _) = self.open_inner(passphrase)?;
+        key.zeroize();
+        Ok(contents)
+    }
+
+    fn open_inner(
+        &self,
+        passphrase: &str,
+    ) -> Result<(VaultContents, [u8; 32], [u8; 16], KdfCost), VaultError> {
         let raw = std::fs::read(&self.path).map_err(|e| self.io(e))?;
         let file: FileFormat = serde_json::from_slice(&raw).map_err(|e| VaultError::Format {
             path: self.path.clone(),
@@ -297,19 +338,36 @@ impl Vault {
             t_cost: file.t_cost,
             p_cost: file.p_cost,
         };
-        let mut key = self.derive(passphrase.as_bytes(), &salt, cost)?;
+        let salt_arr: [u8; 16] = salt.as_slice().try_into().map_err(|_| bad("salt length"))?;
+        let key = self.derive(passphrase.as_bytes(), &salt, cost)?;
         let cipher = XChaCha20Poly1305::new((&key).into());
         let mut plaintext = cipher
             .decrypt(XNonce::from_slice(&nonce), ciphertext.as_slice())
             .map_err(|_| VaultError::Locked)?;
-        key.zeroize();
         let contents: VaultContents =
             serde_json::from_slice(&plaintext).map_err(|e| VaultError::Format {
                 path: self.path.clone(),
                 reason: e.to_string(),
             })?;
         plaintext.zeroize();
-        Ok(contents)
+        Ok((contents, key, salt_arr, cost))
+    }
+}
+
+/// A derived vault key, held in memory for the length of an unlocked
+/// session so saves do not repeat the KDF. Zeroised on drop.
+pub struct VaultKey {
+    key: zeroize::Zeroizing<[u8; 32]>,
+    salt: [u8; 16],
+    cost: KdfCost,
+}
+
+impl std::fmt::Debug for VaultKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VaultKey")
+            .field("salt", &hex::encode(self.salt))
+            .field("cost", &self.cost)
+            .finish_non_exhaustive()
     }
 }
 
@@ -397,5 +455,26 @@ mod tests {
         assert_ne!(a["salt"], b["salt"]);
         assert_ne!(a["nonce"], b["nonce"]);
         assert_eq!(v.open("pw").unwrap(), contents());
+    }
+
+    #[test]
+    fn a_session_key_writes_without_the_kdf_and_stays_openable() {
+        let v = Vault::at(tmp("session"));
+        v.create("pw", &contents(), KdfCost::light()).unwrap();
+        let (c, key) = v.open_with_key("pw").unwrap();
+        assert_eq!(c, contents());
+        let mut c2 = contents();
+        c2.extra.insert("mls".into(), "beef".into());
+        let before: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(v.path()).unwrap()).unwrap();
+        v.write_with_key(&key, &c2).unwrap();
+        let after: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(v.path()).unwrap()).unwrap();
+        // Same salt (same key), fresh nonce, new contents, still opens with
+        // the passphrase.
+        assert_eq!(before["salt"], after["salt"]);
+        assert_ne!(before["nonce"], after["nonce"]);
+        assert_eq!(v.open("pw").unwrap(), c2);
+        assert!(matches!(v.open("wrong"), Err(VaultError::Locked)));
     }
 }

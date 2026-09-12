@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -49,6 +50,11 @@ type ChainIngester struct {
 	db   *pgxpool.Pool
 	http *http.Client
 	log  *slog.Logger
+
+	// Projection cursors cached by the single Follow goroutine.
+	bal              balanceState
+	validatorsHeight int64
+	validatorsLoaded bool
 }
 
 // NewChainIngester constructs one.
@@ -103,19 +109,19 @@ type blockWithTxs struct {
 	} `json:"block"`
 }
 
+// blockResults is the CometBFT /block_results response. CometBFT 0.38 reports
+// begin/end-block events together as finalize_block_events; the 0.37 fields
+// are decoded too so the balances projection works against either.
 type blockResults struct {
 	Result struct {
 		TxsResults []struct {
-			Code    int    `json:"code"`
-			GasUsed string `json:"gas_used"`
-			Events  []struct {
-				Type       string `json:"type"`
-				Attributes []struct {
-					Key   string `json:"key"`
-					Value string `json:"value"`
-				} `json:"attributes"`
-			} `json:"events"`
+			Code    int         `json:"code"`
+			GasUsed string      `json:"gas_used"`
+			Events  []abciEvent `json:"events"`
 		} `json:"txs_results"`
+		BeginBlockEvents    []abciEvent `json:"begin_block_events"`
+		EndBlockEvents      []abciEvent `json:"end_block_events"`
+		FinalizeBlockEvents []abciEvent `json:"finalize_block_events"`
 	} `json:"result"`
 }
 
@@ -166,13 +172,7 @@ func (c *ChainIngester) IndexBlock(ctx context.Context, height int64) error {
 			continue
 		}
 		code, gasUsed := 0, int64(0)
-		var events []struct {
-			Type       string `json:"type"`
-			Attributes []struct {
-				Key   string `json:"key"`
-				Value string `json:"value"`
-			} `json:"attributes"`
-		}
+		var events []abciEvent
 		if i < len(results.Result.TxsResults) {
 			r := results.Result.TxsResults[i]
 			code = r.Code
@@ -209,17 +209,7 @@ func (c *ChainIngester) IndexBlock(ctx context.Context, height int64) error {
 			if ev.Type != "transfer" {
 				continue
 			}
-			var sender, recipient, amount string
-			for _, a := range ev.Attributes {
-				switch a.Key {
-				case "sender":
-					sender = a.Value
-				case "recipient":
-					recipient = a.Value
-				case "amount":
-					amount = a.Value
-				}
-			}
+			sender, recipient, amount := ev.attr("sender"), ev.attr("recipient"), ev.attr("amount")
 			if sender == "" || recipient == "" {
 				continue
 			}
@@ -239,10 +229,31 @@ func (c *ChainIngester) IndexBlock(ctx context.Context, height int64) error {
 			}
 		}
 	}
+	// Fold balances in the same transaction when the projection is exactly
+	// one block behind (the steady state). Otherwise catchUpBalances brings
+	// it forward from its own cursor.
+	if err := c.loadBalanceState(ctx); err != nil {
+		return err
+	}
+	appliedBalances := false
+	if c.bal.seeded && c.bal.height == height-1 {
+		if err := c.applyBalancesTx(ctx, tx, height, &results); err != nil {
+			return err
+		}
+		appliedBalances = true
+	}
+	// The block cursor moves with the block so a crash cannot leave rows
+	// without a cursor or a cursor without rows.
+	if err := setState(ctx, tx, "chain_height", strconv.FormatInt(height, 10)); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	return setState(ctx, c.db, "chain_height", strconv.FormatInt(height, 10))
+	if appliedBalances {
+		c.bal.height = height
+	}
+	return nil
 }
 
 func contains(xs []string, x string) bool {
@@ -287,9 +298,17 @@ func (c *ChainIngester) Follow(ctx context.Context) {
 	}
 }
 
+// stepBatch bounds the blocks ingested per poll so a fresh index streams
+// rather than stalls, and the balances catch-up cannot starve block ingest.
+const stepBatch = 200
+
 func (c *ChainIngester) step(ctx context.Context) error {
 	latest, _, err := c.Height(ctx)
 	if err != nil {
+		return err
+	}
+	// The API reports lag as chain_latest - chain_height.
+	if err := setState(ctx, c.db, stateChainLatest, strconv.FormatInt(latest, 10)); err != nil {
 		return err
 	}
 	cur, err := getState(ctx, c.db, "chain_height")
@@ -300,15 +319,56 @@ func (c *ChainIngester) step(ctx context.Context) error {
 	if next < 1 {
 		next = 1
 	}
+	indexed := int64(0)
 	if cur != "" {
-		if h, err := strconv.ParseInt(cur, 10, 64); err == nil && h+1 > next {
-			next = h + 1
+		if h, err := strconv.ParseInt(cur, 10, 64); err == nil {
+			indexed = h
+			if h+1 > next {
+				next = h + 1
+			}
 		}
 	}
-	// Bounded batch per step so a fresh index streams rather than stalls.
-	for n := 0; next <= latest && n < 200; next, n = next+1, n+1 {
+	// Seed genesis balances before the first block so block 1's events
+	// fold onto real figures. A genesis fetch failure is logged, not fatal:
+	// blocks keep flowing and catchUpBalances retries each poll.
+	if err := c.seedBalances(ctx); err != nil {
+		c.log.Warn("balances", "error", err)
+	}
+	for n := 0; next <= latest && n < stepBatch; next, n = next+1, n+1 {
 		if err := c.IndexBlock(ctx, next); err != nil {
 			return err
+		}
+		indexed = next
+	}
+	return c.stepProjections(ctx, indexed)
+}
+
+// stepProjections advances the secondary projections after blocks. Their
+// failures are logged rather than returned so a REST hiccup never stalls
+// block ingest.
+func (c *ChainIngester) stepProjections(ctx context.Context, indexed int64) error {
+	if indexed <= 0 {
+		return nil
+	}
+	changed, err := c.catchUpBalances(ctx, indexed, stepBatch)
+	if err != nil {
+		c.log.Warn("balances", "error", err)
+	}
+	if changed || c.bal.height == indexed {
+		if err := c.updateSupplyStat(ctx); err != nil {
+			c.log.Warn("balances: supply stat", "error", err)
+		}
+	}
+	if !c.validatorsLoaded {
+		h, err := getStateInt(ctx, c.db, stateValidatorsHeight)
+		if err != nil {
+			return err
+		}
+		c.validatorsHeight, c.validatorsLoaded = h, true
+	}
+	if validatorsDue(c.validatorsHeight, indexed, c.cfg.ValidatorRefreshBlocks) {
+		if err := c.syncValidators(ctx, indexed); err != nil {
+			c.log.Warn("validators", "error", err)
 		}
 	}
 	return nil
@@ -330,15 +390,52 @@ func (c *ChainIngester) SyncRegistries(ctx context.Context) error {
 	return nil
 }
 
+// Registry pagination bounds. A sync call walks at most maxRegistryPages
+// pages of registryPageSize rows; a listing longer than that is resumed
+// from a persisted cursor on the next call rather than silently truncated
+// (audit finding G7).
+const (
+	maxRegistryPages = 1000
+	registryPageSize = 200
+)
+
+// errPaginationIncomplete reports that a listing was cut off at the page
+// bound. The cursor is persisted; the next call continues from it.
+type errPaginationIncomplete struct {
+	path  string
+	pages int
+	rows  int
+}
+
+func (e *errPaginationIncomplete) Error() string {
+	return fmt.Sprintf("%s: stopped after %d pages (%d rows); resuming from the persisted cursor on the next sync", e.path, e.pages, e.rows)
+}
+
+// paginate walks a REST list query, calling fn for every element of `field`.
+// Progress is checkpointed in index_state under registry_cursor:<path>. A
+// stale checkpoint (the chain no longer accepts the key) is discarded so the
+// next call restarts from the first page instead of failing forever.
 func (c *ChainIngester) paginate(ctx context.Context, path, field string, fn func(item map[string]any) error) error {
-	key := ""
-	for page := 0; page < 1000; page++ {
-		u := c.cfg.ChainAPI + path + "?pagination.limit=200"
+	cursorKey := "registry_cursor:" + path
+	key, err := getState(ctx, c.db, cursorKey)
+	if err != nil {
+		return err
+	}
+	resumed := key != ""
+	rows := 0
+	for page := 0; page < maxRegistryPages; page++ {
+		u := c.cfg.ChainAPI + path + "?pagination.limit=" + strconv.Itoa(registryPageSize)
 		if key != "" {
 			u += "&pagination.key=" + url.QueryEscape(key)
 		}
 		var v map[string]any
 		if err := httpJSON(ctx, c.http, u, &v); err != nil {
+			if resumed && page == 0 {
+				c.log.Warn("registry cursor rejected; restarting listing from the first page", "path", path, "error", err)
+				if cerr := clearState(ctx, c.db, cursorKey); cerr != nil {
+					return cerr
+				}
+			}
 			return err
 		}
 		items, _ := v[field].([]any)
@@ -347,6 +444,7 @@ func (c *ChainIngester) paginate(ctx context.Context, path, field string, fn fun
 				if err := fn(m); err != nil {
 					return err
 				}
+				rows++
 			}
 		}
 		next := ""
@@ -356,11 +454,14 @@ func (c *ChainIngester) paginate(ctx context.Context, path, field string, fn fun
 			}
 		}
 		if next == "" {
-			return nil
+			return clearState(ctx, c.db, cursorKey)
 		}
 		key = next
+		if err := setState(ctx, c.db, cursorKey, key); err != nil {
+			return err
+		}
 	}
-	return nil
+	return &errPaginationIncomplete{path: path, pages: maxRegistryPages, rows: rows}
 }
 
 func str(m map[string]any, k string) string {
@@ -432,13 +533,35 @@ func (c *ChainIngester) syncProviders(ctx context.Context) error {
 		declared, _ := strconv.ParseInt(str(m, "declared_storage_bytes"), 10, 64)
 		fraud, _ := strconv.Atoi(str(m, "fraud_score"))
 		jailed, _ := m["jailed"].(bool)
-		_, err := c.db.Exec(ctx,
+		if _, err := c.db.Exec(ctx,
 			`INSERT INTO providers(operator, reward_address, roles, bond_uhash, declared_storage, jailed, fraud_score, moniker, synced_at)
 			 VALUES ($1,$2,$3,$4::numeric,$5,$6,$7,$8,now())
 			 ON CONFLICT (operator) DO UPDATE SET reward_address = EXCLUDED.reward_address, roles = EXCLUDED.roles,
 			   bond_uhash = EXCLUDED.bond_uhash, declared_storage = EXCLUDED.declared_storage, jailed = EXCLUDED.jailed,
 			   fraud_score = EXCLUDED.fraud_score, moniker = EXCLUDED.moniker, synced_at = now()`,
-			op, str(m, "reward_address"), roles, bond, declared, jailed, fraud, str(m, "moniker"))
-		return err
+			op, str(m, "reward_address"), roles, bond, declared, jailed, fraud, str(m, "moniker")); err != nil {
+			return err
+		}
+		// Lifetime earnings come from a per-provider query. A failure here
+		// leaves the previous figure in place rather than failing the sync.
+		if paid, ok := c.providerLifetimePaid(ctx, op); ok {
+			if _, err := c.db.Exec(ctx, `UPDATE providers SET total_paid = $2::numeric WHERE operator = $1`, op, paid.String()); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
+}
+
+// providerLifetimePaid reads lifetime_paid (uhash) from the serviceproof
+// rewards query. Returns false when the query fails or reports no uhash.
+func (c *ChainIngester) providerLifetimePaid(ctx context.Context, operator string) (*big.Int, bool) {
+	var v struct {
+		LifetimePaid []restCoin `json:"lifetime_paid"`
+	}
+	if err := httpJSON(ctx, c.http, c.cfg.ChainAPI+"/hashgram/serviceproof/v1/rewards/"+url.PathEscape(operator), &v); err != nil {
+		c.log.Debug("provider rewards", "operator", operator, "error", err)
+		return nil, false
+	}
+	return sumUhash(v.LifetimePaid)
 }

@@ -3,7 +3,9 @@ package indexer
 import (
 	"context"
 	"fmt"
+	"strconv"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -216,6 +218,39 @@ CREATE TABLE IF NOT EXISTS attestations (
   PRIMARY KEY (subject, attestor)
 );
 CREATE INDEX IF NOT EXISTS attestations_subject ON attestations(subject);
+
+-- Migration 2: balances, validators, provider earnings, stats ---------------
+-- Additive only. Every statement is idempotent so the block can be re-applied
+-- against a database created by an earlier binary.
+
+CREATE TABLE IF NOT EXISTS balances (
+  address         text PRIMARY KEY,
+  amount          numeric(40,0) NOT NULL,
+  updated_height  bigint NOT NULL
+);
+CREATE INDEX IF NOT EXISTS balances_amount ON balances(amount DESC, address);
+
+CREATE TABLE IF NOT EXISTS validators (
+  operator         text PRIMARY KEY,
+  moniker          text NOT NULL DEFAULT '',
+  tokens           numeric(40,0) NOT NULL DEFAULT 0,
+  commission_rate  text NOT NULL DEFAULT '',
+  status           text NOT NULL DEFAULT '',
+  jailed           boolean NOT NULL DEFAULT false,
+  updated_height   bigint NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS validators_tokens ON validators(tokens DESC, operator);
+
+ALTER TABLE providers ADD COLUMN IF NOT EXISTS total_paid numeric(40,0) NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS providers_total_paid ON providers(total_paid DESC, bond_uhash DESC, operator);
+
+-- stats holds derived scalar figures (e.g. hashgram_supply = sum(balances))
+-- that are recomputed by the ingester and read by the API for sanity checks.
+CREATE TABLE IF NOT EXISTS stats (
+  key             text PRIMARY KEY,
+  value           text NOT NULL,
+  updated_height  bigint NOT NULL DEFAULT 0
+);
 `
 
 // derivedTables are truncated by a rebuild. index_state is reset separately.
@@ -223,6 +258,7 @@ var derivedTables = []string{
 	"transfers", "transactions", "blocks", "usernames", "identities", "providers",
 	"social_events", "profiles", "follows", "posts", "comments", "reactions",
 	"reposts", "channels", "reels", "stories", "attestations",
+	"balances", "validators", "stats",
 }
 
 // Migrate applies the schema.
@@ -264,10 +300,36 @@ func getState(ctx context.Context, db *pgxpool.Pool, key string) (string, error)
 	return v, nil
 }
 
+// execer is the subset of pgxpool.Pool and pgx.Tx the state helpers need,
+// so a cursor can be advanced inside the same transaction as the rows it
+// describes.
+type execer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
 // setState writes a cursor.
-func setState(ctx context.Context, db *pgxpool.Pool, key, value string) error {
+func setState(ctx context.Context, db execer, key, value string) error {
 	_, err := db.Exec(ctx,
 		"INSERT INTO index_state(key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
 		key, value)
 	return err
+}
+
+// clearState removes a cursor. Reading it afterwards yields "".
+func clearState(ctx context.Context, db execer, key string) error {
+	_, err := db.Exec(ctx, "DELETE FROM index_state WHERE key = $1", key)
+	return err
+}
+
+// getStateInt reads a cursor as an integer; missing or malformed is 0.
+func getStateInt(ctx context.Context, db *pgxpool.Pool, key string) (int64, error) {
+	v, err := getState(ctx, db, key)
+	if err != nil || v == "" {
+		return 0, err
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return 0, nil
+	}
+	return n, nil
 }

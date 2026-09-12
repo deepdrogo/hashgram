@@ -2,20 +2,30 @@
 
 How the pieces fit together, and why they were split the way they were.
 
-This describes what is built. The one thing that is not — the client
-applications — is marked as such; everything else in this document runs and
-is exercised by `scripts/testnet/devnet.sh`, `four-validator.sh` and
-`phase2.sh`.
+This describes what is built. Mainnet `hashgram-1` launched on 2026-09-10
+(genesis hash
+`e322bc2319f6e0173286fa526dab5a8ff8ad0797c7b80dd03e7c9d98621d5e4d`). A
+Windows desktop application exists in `apps/desktop` (v0.1.1) and is being
+superseded by the Hashgram One desktop (`docs/DESKTOP_APP_MASTER_PROMPT.md`);
+iOS and Android clients are not built. Everything else in this document runs
+and is exercised by `scripts/testnet/devnet.sh`, `four-validator.sh`,
+`phase2.sh` and `hashgram-one-e2e.sh`. The application layer on top of this
+core — Mail, Drive, People, Feed, Spaces, Earn, Wallet, Network — is
+described in `HASHGRAM_ONE_ARCHITECTURE.md`.
 
 ## Layers
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
-│  Clients                          Windows / iOS / Android       │
-│                    (not built; specs + hashgram-sdk exist)      │
+│  Clients      Windows desktop (apps/desktop v0.1.1, being        │
+│               superseded by the Hashgram One desktop) · CLI      │
+│               (hashgram-client one …) · iOS / Android not built  │
+├─────────────────────────────────────────────────────────────────┤
+│  hashgram-sdk (HashgramOne facade)  ·  node/hashgram-app         │
+│  mail · drive · people · feed · circles · spaces · sync · earn   │
 └─────────────────────────────────────────────────────────────────┘
                 │                              │
-                │ chain queries and txs        │ messaging, social, media
+                │ chain queries and txs        │ MLS envelopes, blobs, social
                 ▼                              ▼
 ┌───────────────────────────────┐  ┌──────────────────────────────┐
 │  hashgramd                    │  │  hashgram-node               │
@@ -373,11 +383,20 @@ scripts/testnet/   devnet and four-validator acceptance suites
 scripts/dev/       CI pipeline, release build, policy checkers
 tools/             tokenomics simulator
 docs/              this documentation
-node/              Rust workspace: hashgram-net, -proto, -chain, -identity, -mls, -p2p, -node, -client, fuzz targets
-sdk/rust/          hashgram-sdk, the client SDK
+node/              Rust workspace: hashgram-net, -proto, -chain, -identity, -mls, -p2p, -node, -client, -app, -devtools, fuzz targets
+node/hashgram-app  pure application protocol (no I/O): mail, spam, drive crypto + manifest + merge, space log, circles, people, signing
+sdk/rust/          hashgram-sdk, the client SDK and Hashgram One application boundary (HashgramOne facade: mail, drive, people, feed, circles, spaces, devices, sync, provider, network, wallet, store)
+services/          mail-gateway: external SMTP ↔ HashMail bridge (library complete, binary entry point pending)
+apps/desktop       Windows desktop app v0.1.1 (Tauri 2 + SolidJS)
 indexer/, safety/  Go packages behind hashgram-indexer and hashgram-safety
 pkg/               Go protobuf for the off-chain wire types
+scripts/testnet/hashgram-one-e2e.sh   Hashgram One acceptance suite on a local devnet
 ```
+
+Application protobuf lives in `proto/hashgram/app/v1/app.proto`
+(`hashgram.app.v1.AppMessage`, carried as `CHAT_KIND_APP` inside MLS
+plaintext). Nodes never decode it; adding it changed no wire shape on
+`/hashgram/rpc/1`.
 
 ## The off-chain node
 
@@ -401,11 +420,22 @@ bounded before it allocates. `docs/PROTOCOL.md` is the specification.
 
 Stated plainly so that nothing above reads as more complete than it is:
 
-- Client applications for any platform. `hashgram-sdk` and the developer
-  client exist; Windows, iOS and Android apps do not.
+- iOS and Android applications. `hashgram-sdk`, the developer client and the
+  Windows desktop app (`apps/desktop`, v0.1.1) exist; the Hashgram One
+  desktop that replaces the latter is specified in
+  `DESKTOP_APP_MASTER_PROMPT.md` and not yet built.
 - A token bridge. Interfaces are sketched; nothing is deployed.
-- Mainnet itself, which requires a Founder address generated on a machine that
-  is not this server.
+- The external mail gateway as a running binary: `services/mail-gateway`
+  has the SMTP, MIME, DKIM, queue and bridge modules, but `main.rs` is a
+  placeholder and `MAIL_GATEWAY.md` is not written. Native HashMail does not
+  depend on it.
+- Storage market escrow (`ADR_HASH_STORAGE_MARKET.md`: off-chain lease
+  protocol first), Merkle light client, equivocation detection in the
+  indexer, blob retention/reclamation policy on nodes.
 - Cover traffic or mixing for messaging metadata, end-to-end encryption of
   SFU group calls, push notifications, call receipts from the reference
   client. Each is listed in the relevant protocol document's limitations.
+
+Mainnet itself **is** launched (2026-09-10, `hashgram-1`); on it, storage
+assignment and welcome attestation are inert until governance registers an
+assigner and attestors (`HASHGRAM_ONE_AUDIT.md` §6.2).

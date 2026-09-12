@@ -1,3 +1,7 @@
+> **Superseded (2026-09-12).** This is the messenger-era prompt kept for the
+> record. The Hashgram One desktop application is specified in
+> [DESKTOP_APP_MASTER_PROMPT.md](DESKTOP_APP_MASTER_PROMPT.md); use that.
+
 # COPY-PASTE PROMPT — Hashgram for Windows, the complete application
 
 Hand this entire file to a coding agent that has the Hashgram repository
@@ -8,22 +12,13 @@ that does not exist; every path below does.
 
 ---
 
-## Step 0 — get the code
+## Step 0 — get the code (there is no git remote yet)
 
-```powershell
-cd A:\hashgram
-git clone https://github.com/deepdrogo/hashgram
-cd hashgram
-git switch -c desktop
-```
-
-**Do not ask for SSH access to the owner's server**: it is the Mainnet
-validator, and nothing that runs on a developer laptop may hold a key to it.
-The repository contains no secrets; every key file is git-ignored and absent
-from history.
-
-If GitHub is unreachable, the owner can hand you a `git bundle` instead
-(full history, same content) plus its SHA-256 and the expected HEAD commit:
+The Hashgram repository lives on the owner's server. **Do not ask for SSH
+access to that server**: it is the Mainnet validator, and nothing that runs
+on a developer laptop may hold a key to it. The owner hands you a
+`git bundle` (full history, no secrets — every key file is git-ignored and
+absent from history) plus its SHA-256 and the expected HEAD commit. Then:
 
 ```powershell
 # in the folder where the project should live, e.g. A:\hashgram
@@ -38,9 +33,11 @@ git rev-parse HEAD          # must equal HEAD.txt
 git remote remove origin    # the bundle is not a remote; a real one is added later
 ```
 
-Either way, work on the `desktop` branch and open a pull request against
-`main` on GitHub (`gh pr create`). If you only have the bundle, hand changes
-back the same way in reverse: `git bundle create desktop.bundle main..desktop`.
+Work on a branch (`git switch -c desktop`). When the owner later creates a
+remote, `git remote add origin <url>` and push — history is preserved
+because the bundle carried it. Until then, hand changes back the same way
+in reverse: `git bundle create desktop.bundle main..desktop` and give the
+file to the owner.
 
 Toolchain on Windows: Rust ≥ 1.90 (`x86_64-pc-windows-msvc`, MSVC Build
 Tools with the C++ workload), Node 22, `corepack enable` (pnpm), Tauri 2

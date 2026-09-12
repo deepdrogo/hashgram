@@ -1,0 +1,668 @@
+syntax = "proto3";
+package hashgram.app.v1;
+
+option go_package = "github.com/hashgram/hashgram/pkg/apppb;apppb";
+
+// Hashgram One application protocol.
+//
+// Everything in this file travels INSIDE an MLS application message (see
+// hashgram.chat.v1.ChatMessage, kind CHAT_KIND_APP, field `app`). It is
+// therefore plaintext only to the members of the MLS group that carries
+// it. No node, relay, store or indexer ever decodes it; nothing here is
+// visible on the wire or on chain.
+//
+// It is nevertheless versioned and bounded exactly like a wire format,
+// because a malicious group member can send anything, and a client must
+// never crash on it, and because clients of different ages must coexist:
+//
+//   * `AppMessage.version` is the envelope version. A reader that does not
+//     know the version MUST treat the message as unsupported.
+//   * `AppMessage.min_reader_version` lets a sender say "if you are older
+//     than this, do not guess"; a reader below it shows an "unsupported
+//     message, update the app" placeholder instead of a partial rendering.
+//   * Every body type carries its own `version` so the individual
+//     applications (Mail, Drive, People, Circles, Spaces, Devices) can
+//     evolve independently.
+//   * Unknown oneof arms decode to "none" under proto3; the reader reports
+//     `Unsupported` and keeps the ciphertext so a later build can decode it.
+//
+// Identity strings: a Hashgram address is `hash1...` (bech32). A username
+// is the on-chain `x/username` name; `alice@hashgram.io` is the HashMail
+// address form of username `alice` and is only a display/lookup form,
+// never an identity by itself.
+
+// A reference to an encrypted blob plus the key to open it, identical in
+// meaning to hashgram.chat.v1.Attachment (duplicated here so this package
+// has no import cycle with the chat package that embeds it). The blob is
+// stored on media/store nodes as ciphertext; only group members hold the
+// key. The whole ciphertext is one XChaCha20-Poly1305 message; for large
+// files use DriveObjectRef, which is segmented and streamable.
+message BlobRef {
+  bytes cid = 1;
+  // XChaCha20-Poly1305 key, 32 bytes.
+  bytes key = 2;
+  // 24-byte nonce.
+  bytes nonce = 3;
+  string mime = 4;
+  // Plaintext size.
+  uint64 size = 5;
+  string name = 6;
+  // "image", "video", "audio", "file".
+  string kind = 7;
+  uint32 width = 8;
+  uint32 height = 9;
+  uint32 duration_ms = 10;
+  // BLAKE3 of the plaintext.
+  bytes plaintext_hash = 11;
+}
+
+// The application envelope. One per MLS application message.
+message AppMessage {
+  // Envelope format version. 1.
+  uint32 version = 1;
+  // Lowest AppMessage version a reader must implement to render this
+  // message safely. 0 or 1 means "any reader".
+  uint32 min_reader_version = 2;
+  // Random 16 bytes, unique per message, chosen by the sender. Used for
+  // deduplication across devices/stores and as the target of receipts.
+  bytes id = 3;
+  // Unix milliseconds on the sender's clock.
+  uint64 sent_at_ms = 4;
+
+  oneof body {
+    // --- HashMail -----------------------------------------------------------
+    MailMessage mail = 10;
+    MailReceipt mail_receipt = 11;
+
+    // --- HashDrive ----------------------------------------------------------
+    DriveShare drive_share = 20;
+    DriveShareUpdate drive_share_update = 21;
+    DriveShareRevoke drive_share_revoke = 22;
+
+    // --- People -------------------------------------------------------------
+    ContactRequest contact_request = 30;
+    ContactResponse contact_response = 31;
+    ProfileCard profile_card = 32;
+
+    // --- Circles ------------------------------------------------------------
+    CircleEvent circle_event = 40;
+
+    // --- Spaces -------------------------------------------------------------
+    SpaceEvent space_event = 50;
+
+    // --- Same-account device sync (self group only) -------------------------
+    DeviceSync device_sync = 60;
+  }
+}
+
+// ===========================================================================
+// HashMail
+// ===========================================================================
+
+// A mail participant. `address` is authoritative; `username` and
+// `display_name` are what the sender believed at send time and MUST be
+// re-resolved by the reader against the chain before being trusted for
+// display (a sender can lie about someone else's name, never about their
+// own address, because the MLS sender identity carries the address).
+message MailAddress {
+  string address = 1;
+  string username = 2;
+  string display_name = 3;
+}
+
+enum MailImportance {
+  MAIL_IMPORTANCE_NORMAL = 0;
+  MAIL_IMPORTANCE_LOW = 1;
+  MAIL_IMPORTANCE_HIGH = 2;
+}
+
+// Where a mail came from, so clients can label bridged mail honestly.
+enum MailOrigin {
+  // Native HashMail between Hashgram identities: end-to-end encrypted.
+  MAIL_ORIGIN_NATIVE = 0;
+  // Delivered by an external mail gateway from the public Internet. The
+  // gateway saw the plaintext. Clients MUST show this.
+  MAIL_ORIGIN_EXTERNAL_GATEWAY = 1;
+}
+
+// One attachment. Exactly one source.
+message MailAttachment {
+  string name = 1;
+  string mime = 2;
+  // Plaintext size in bytes.
+  uint64 size = 3;
+  // BLAKE3 of the plaintext, so the reader can verify after decrypting.
+  bytes plaintext_hash = 4;
+  // Content-ID for inline references from body_html (cid:...). Optional.
+  string content_id = 5;
+
+  oneof source {
+    // Small attachments ride inside the envelope. Bounded by
+    // MAX_INLINE_ATTACHMENT (64 KiB) in hashgram-app; larger ones are refused
+    // at build time and MUST be refused at read time.
+    bytes inline_data = 10;
+    // An encrypted blob on media/store nodes with its key. This is a fixed
+    // snapshot: the bytes never change.
+    BlobRef blob = 11;
+    // A HashDrive capability: either a snapshot or a live shared file.
+    DriveCapability drive = 12;
+  }
+}
+
+// A mail message. Threading follows RFC 5322 semantics (in_reply_to,
+// references) so bridging to external mail is lossless in both directions.
+message MailMessage {
+  // MailMessage schema version. 1.
+  uint32 version = 1;
+  // Random 16 bytes. The message identity for receipts, threading and
+  // deduplication across the several device copies.
+  bytes message_id = 2;
+  // 16 bytes. The first message of a thread uses its own message_id.
+  bytes thread_id = 3;
+  MailAddress from = 4;
+  repeated MailAddress to = 5;
+  repeated MailAddress cc = 6;
+  // True on the copy delivered to a BCC recipient. That copy is sent in a
+  // group containing only the sender and that recipient, so the other
+  // recipients never learn of it; the flag tells the reader's "reply all"
+  // to reply to the sender only.
+  bool bcc_copy = 7;
+  // Unix milliseconds on the sender's clock.
+  uint64 created_at_ms = 8;
+  // Subject line. Never leaves the MLS group.
+  string subject = 9;
+  // message_id being replied to, if any.
+  bytes in_reply_to = 10;
+  // Ancestor message_ids, oldest first, bounded (MAX_REFERENCES).
+  repeated bytes references = 11;
+  // Plain text body. Always present; HTML is optional and derived.
+  string body_text = 12;
+  // Optional HTML body. Readers MUST sanitise (no scripts, no remote
+  // loads by default). Bounded by MAX_MAIL_BODY.
+  string body_html = 13;
+  repeated MailAttachment attachments = 14;
+  // If non-zero, readers delete the message this many seconds after first
+  // read. Enforced by clients; advisory between cooperating clients.
+  uint32 expire_after_secs = 15;
+  MailOrigin origin = 16;
+  // Present only for MAIL_ORIGIN_EXTERNAL_GATEWAY.
+  ExternalMailMeta external = 17;
+  bool request_read_receipt = 18;
+  MailImportance importance = 19;
+  // Sender-chosen labels, advisory (e.g. "invoice"). Readers may ignore.
+  repeated string labels = 20;
+}
+
+// What an external gateway preserved from the Internet message.
+message ExternalMailMeta {
+  // Operator address of the gateway that bridged this message.
+  string gateway = 1;
+  // Original RFC 5322 From header.
+  string from_header = 2;
+  // Original Message-ID header.
+  string message_id_header = 3;
+  // Gateway's verdicts, as strings: "spf=pass", "dkim=pass", "dmarc=fail"...
+  repeated string auth_results = 4;
+  // Gateway spam score in [0, 1000]; 0 unknown.
+  uint32 spam_score = 5;
+}
+
+enum MailReceiptKind {
+  MAIL_RECEIPT_KIND_UNSPECIFIED = 0;
+  // The recipient's device decrypted the message.
+  MAIL_RECEIPT_KIND_DELIVERED = 1;
+  // The recipient opened it (sent only if the reader consents).
+  MAIL_RECEIPT_KIND_READ = 2;
+}
+
+message MailReceipt {
+  uint32 version = 1;
+  bytes message_id = 2;
+  MailReceiptKind kind = 3;
+  uint64 at_ms = 4;
+}
+
+// ===========================================================================
+// HashDrive
+// ===========================================================================
+
+// The key material for one encrypted Drive object. Objects are encrypted in
+// independent segments (see hashgram-app::drive): segment i uses
+// XChaCha20-Poly1305 with `key` and nonce = base_nonce XOR le64(i) in the
+// last 8 bytes, with the segment index and object size bound as AAD, so a
+// provider cannot reorder, drop or truncate segments undetected.
+message DriveKey {
+  // 32 bytes.
+  bytes key = 1;
+  // 24-byte base nonce.
+  bytes base_nonce = 2;
+}
+
+// A reference to one immutable encrypted object on media/store nodes.
+message DriveObjectRef {
+  // Object format version. 1.
+  uint32 version = 1;
+  // CID (BLAKE3 of the canonical blob manifest) of the ciphertext blob.
+  bytes cid = 2;
+  DriveKey key = 3;
+  // Plaintext size.
+  uint64 size = 4;
+  // Plaintext segment size used for encryption. 1 MiB - 16 by default.
+  uint32 segment_size = 5;
+  // BLAKE3 of the whole plaintext.
+  bytes plaintext_hash = 6;
+}
+
+enum DriveShareMode {
+  // A fixed version. Later edits by the owner do not reach the grantee.
+  DRIVE_SHARE_MODE_SNAPSHOT = 0;
+  // The grantee follows the owner's current version: the owner pushes
+  // DriveShareUpdate messages with the new object on every change until a
+  // DriveShareRevoke.
+  DRIVE_SHARE_MODE_LIVE = 1;
+}
+
+enum DrivePermission {
+  DRIVE_PERMISSION_READ = 0;
+  // Grantee may propose new versions (used inside Spaces; the owner or a
+  // Space admin still publishes the accepted version).
+  DRIVE_PERMISSION_WRITE = 1;
+}
+
+// A capability to read (and optionally follow) one Drive object. Holding
+// this message IS the permission: it contains the key. It is only ever
+// carried inside MLS, never stored on a node in the clear.
+message DriveCapability {
+  uint32 version = 1;
+  // 16 random bytes identifying this grant, for updates and revocation.
+  bytes share_id = 2;
+  // Owner address.
+  string owner = 3;
+  // Owner's private entry id (opaque to the grantee, echoed in updates).
+  bytes entry_id = 4;
+  string name = 5;
+  string mime = 6;
+  uint64 size = 7;
+  // The content at grant time.
+  DriveObjectRef object = 8;
+  DriveShareMode mode = 9;
+  DrivePermission permission = 10;
+  // The owner's version number of `object`.
+  uint64 version_no = 11;
+  uint64 granted_at_ms = 12;
+  // True when the object is an encrypted DriveFolderManifest rather than
+  // file bytes, i.e. this is a folder share.
+  bool folder = 13;
+}
+
+message DriveShare {
+  DriveCapability capability = 1;
+  string note = 2;
+}
+
+message DriveShareUpdate {
+  uint32 version = 1;
+  bytes share_id = 2;
+  DriveObjectRef object = 3;
+  uint64 version_no = 4;
+  // Rename, if any.
+  string name = 5;
+  uint64 size = 6;
+  uint64 at_ms = 7;
+}
+
+message DriveShareRevoke {
+  uint32 version = 1;
+  bytes share_id = 2;
+  uint64 at_ms = 3;
+  // Note: revocation stops future updates. Bytes the grantee already
+  // downloaded, and the snapshot object key it already holds, cannot be
+  // recalled. After revoking, the owner re-encrypts the next version under
+  // a fresh key so the grantee cannot fetch it even if they learn its CID.
+}
+
+// ---------------------------------------------------------------------------
+// Drive metadata (encrypted at rest as a private blob, never sent to a
+// node in the clear). The owner's devices share the manifest key through
+// DeviceSync.
+// ---------------------------------------------------------------------------
+
+enum DriveEntryKind {
+  DRIVE_ENTRY_KIND_FILE = 0;
+  DRIVE_ENTRY_KIND_FOLDER = 1;
+}
+
+message DriveVersion {
+  uint64 version_no = 1;
+  DriveObjectRef object = 2;
+  uint64 created_at_ms = 3;
+  // Which device wrote it (raw ed25519 key), for the history view.
+  bytes device_pubkey = 4;
+  string note = 5;
+}
+
+message DriveEntry {
+  // 16 random bytes, stable for the life of the entry (rename/move keep it).
+  bytes id = 1;
+  // Parent folder id; empty for the root's children.
+  bytes parent_id = 2;
+  DriveEntryKind kind = 3;
+  string name = 4;
+  string mime = 5;
+  // Current plaintext size (files).
+  uint64 size = 6;
+  uint64 created_at_ms = 7;
+  uint64 modified_at_ms = 8;
+  // Current content (files). Folders have none.
+  DriveObjectRef current = 9;
+  // Older versions, oldest first, bounded by MAX_VERSIONS_PER_ENTRY.
+  repeated DriveVersion versions = 10;
+  bool trashed = 11;
+  uint64 trashed_at_ms = 12;
+  // Free-form attributes (e.g. "origin": "mail:<message_id hex>").
+  map<string, string> attrs = 13;
+  bool starred = 14;
+}
+
+message DriveShareRecord {
+  bytes share_id = 1;
+  bytes entry_id = 2;
+  // Grantee address, or a Space id (hex) prefixed "space:".
+  string grantee = 3;
+  DriveShareMode mode = 4;
+  DrivePermission permission = 5;
+  uint64 granted_at_ms = 6;
+  bool revoked = 7;
+  uint64 revoked_at_ms = 8;
+  // The MLS group the capability travels in, hex, so updates go to the
+  // same channel.
+  string group_id = 9;
+}
+
+// The whole Drive tree of one identity. Encrypted with the Drive manifest
+// key before upload. Revision increases on every write; devices resolve
+// concurrent writes with a last-writer-wins merge per entry id (see
+// hashgram-app::drive::merge).
+message DriveManifest {
+  uint32 version = 1;
+  // 16 random bytes fixed at Drive creation.
+  bytes drive_id = 2;
+  uint64 revision = 3;
+  uint64 updated_at_ms = 4;
+  // Device that wrote this revision.
+  bytes device_pubkey = 5;
+  repeated DriveEntry entries = 6;
+  repeated DriveShareRecord shares = 7;
+  // Permanently deleted entry ids, so a concurrent device that still has
+  // the entry does not resurrect it on merge. Bounded (oldest dropped).
+  repeated DriveTombstone tombstones = 8;
+}
+
+message DriveTombstone {
+  bytes id = 1;
+  uint64 at_ms = 2;
+}
+
+// The manifest of a shared folder (the object behind a folder capability).
+message DriveFolderManifest {
+  uint32 version = 1;
+  bytes folder_id = 2;
+  string name = 3;
+  uint64 revision = 4;
+  uint64 updated_at_ms = 5;
+  repeated DriveEntry entries = 6;
+}
+
+// ===========================================================================
+// People
+// ===========================================================================
+
+message ContactRequest {
+  uint32 version = 1;
+  string display_name = 2;
+  string username = 3;
+  // Short introduction so the recipient can decide. Bounded.
+  string message = 4;
+  uint64 at_ms = 5;
+}
+
+message ContactResponse {
+  uint32 version = 1;
+  bool accepted = 2;
+  uint64 at_ms = 3;
+}
+
+// A private profile card sent to contacts (richer than the public profile).
+message ProfileCard {
+  uint32 version = 1;
+  string display_name = 2;
+  string bio = 3;
+  BlobRef avatar = 4;
+  // Wallet address the user chooses to disclose to this contact. Empty =
+  // not disclosed.
+  string wallet_address = 5;
+  uint64 at_ms = 6;
+}
+
+// ===========================================================================
+// Circles: a Circle IS an MLS group; membership is the MLS roster. Content
+// is these events.
+// ===========================================================================
+
+message CircleInfo {
+  string name = 1;
+  string description = 2;
+  BlobRef avatar = 3;
+  // If true, members added later may be sent earlier posts by an existing
+  // member (clients honour it when re-sharing). Default false: history is
+  // not automatically shared with new members.
+  bool history_visible_to_new_members = 4;
+}
+
+message CirclePost {
+  string text = 1;
+  repeated BlobRef media = 2;
+  repeated DriveCapability drive_refs = 3;
+  // Optional poll.
+  Poll poll = 4;
+}
+
+message Poll {
+  string question = 1;
+  repeated string options = 2;
+  bool multiple_choice = 3;
+  uint64 closes_at_ms = 4;
+}
+
+message CircleComment {
+  bytes post_id = 1;
+  bytes reply_to = 2;
+  string text = 3;
+}
+
+message CircleReaction {
+  bytes target_id = 1;
+  // Empty removes.
+  string reaction = 2;
+}
+
+message CircleVote {
+  bytes post_id = 1;
+  repeated uint32 option_indexes = 2;
+}
+
+message CircleDelete {
+  bytes target_id = 1;
+}
+
+message CircleEvent {
+  uint32 version = 1;
+  // 16 random bytes; the identity of this post/comment for later events.
+  bytes event_id = 2;
+  uint64 at_ms = 3;
+  oneof body {
+    CircleInfo info = 10;
+    CirclePost post = 11;
+    CircleComment comment = 12;
+    CircleReaction reaction = 13;
+    CircleVote vote = 14;
+    CircleDelete delete = 15;
+  }
+}
+
+// ===========================================================================
+// Spaces: a Space is an MLS group plus a signed, hash-chained event log
+// that every member replays to the same state (roles, members, info,
+// shared drive, announcements). Role rules are enforced by every reader in
+// hashgram-app::space::State::apply; a member who sends an event they are
+// not allowed to send has it rejected by everyone.
+// ===========================================================================
+
+enum SpaceRole {
+  SPACE_ROLE_NONE = 0;
+  SPACE_ROLE_GUEST = 1;
+  SPACE_ROLE_MEMBER = 2;
+  SPACE_ROLE_ADMIN = 3;
+  SPACE_ROLE_OWNER = 4;
+}
+
+message SpaceCreate {
+  string name = 1;
+  string description = 2;
+  // Address of the creator; becomes OWNER.
+  string owner = 3;
+}
+
+message SpaceInfoUpdate {
+  string name = 1;
+  string description = 2;
+  BlobRef avatar = 3;
+}
+
+message SpaceMemberAdd {
+  string address = 1;
+  SpaceRole role = 2;
+}
+
+message SpaceMemberRemove {
+  string address = 1;
+  string reason = 2;
+}
+
+message SpaceRoleChange {
+  string address = 1;
+  SpaceRole role = 2;
+}
+
+message SpaceAnnouncement {
+  string title = 1;
+  string text = 2;
+  repeated DriveCapability attachments = 3;
+}
+
+// Shares a Drive entry (file or folder) with the whole Space.
+message SpaceDriveShare {
+  DriveCapability capability = 1;
+  // Path inside the Space drive, e.g. "Contracts/2026".
+  string path = 2;
+}
+
+message SpaceDriveUnshare {
+  bytes share_id = 1;
+}
+
+message SpacePost {
+  string text = 1;
+  repeated BlobRef media = 2;
+  repeated DriveCapability drive_refs = 3;
+}
+
+message SpaceComment {
+  bytes post_id = 1;
+  string text = 2;
+}
+
+message SpaceEvent {
+  uint32 version = 1;
+  // 16 bytes fixed at creation (= event_id of the SpaceCreate).
+  bytes space_id = 2;
+  // Random 16 bytes.
+  bytes event_id = 3;
+  // Actor's Hashgram address. Must equal the MLS sender address.
+  string actor = 4;
+  // Actor's device key that signed this event.
+  bytes device_pubkey = 5;
+  // Per-actor monotonically increasing counter (replay protection).
+  uint64 sequence = 6;
+  // event_id of the latest event this actor had seen (causal hint; readers
+  // order by (at_ms, event_id) and apply role checks against their own
+  // replayed state).
+  bytes parent_id = 7;
+  uint64 at_ms = 8;
+  oneof body {
+    SpaceCreate create = 10;
+    SpaceInfoUpdate info = 11;
+    SpaceMemberAdd member_add = 12;
+    SpaceMemberRemove member_remove = 13;
+    SpaceRoleChange role_change = 14;
+    SpaceAnnouncement announcement = 15;
+    SpaceDriveShare drive_share = 16;
+    SpaceDriveUnshare drive_unshare = 17;
+    SpacePost post = 18;
+    SpaceComment comment = 19;
+  }
+  // ed25519 signature by device_pubkey over the domain-separated digest of
+  // every field above under the "space-event" purpose (hashgram-app::space).
+  bytes signature = 30;
+}
+
+// ===========================================================================
+// Same-account device sync. Sent only in the account's self group (all of
+// the user's own devices). A reader MUST verify the MLS sender address is
+// its own address before applying any of this.
+// ===========================================================================
+
+message DriveKeyring {
+  bytes drive_id = 1;
+  // Key that encrypts the DriveManifest blob.
+  DriveKey manifest_key = 2;
+  // CID of the latest manifest revision known to the sender.
+  bytes manifest_cid = 3;
+  uint64 revision = 4;
+}
+
+message MailStateHint {
+  // Message ids the sender has read / archived / trashed / starred, so the
+  // other devices converge on flags without a server.
+  repeated bytes read = 1;
+  repeated bytes unread = 2;
+  repeated bytes archived = 3;
+  repeated bytes trashed = 4;
+  repeated bytes starred = 5;
+  repeated bytes unstarred = 6;
+  repeated bytes deleted = 7;
+  uint64 at_ms = 8;
+}
+
+message ContactsSnapshot {
+  repeated ContactRecord contacts = 1;
+  uint64 at_ms = 2;
+}
+
+message ContactRecord {
+  string address = 1;
+  string username = 2;
+  string display_name = 3;
+  // "friend", "pending_out", "pending_in", "blocked", "muted", "trusted".
+  repeated string states = 4;
+  uint64 updated_at_ms = 5;
+}
+
+message DeviceSync {
+  uint32 version = 1;
+  oneof body {
+    DriveKeyring drive_keyring = 10;
+    MailStateHint mail_state = 11;
+    ContactsSnapshot contacts = 12;
+  }
+}

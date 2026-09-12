@@ -1,0 +1,67 @@
+[package]
+name = "hashgram-mail-gateway"
+workspace = "../../node"
+description = "External SMTP compatibility gateway: bridges Internet mail to and from HashMail through an ordinary Hashgram identity"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "hashgram_mail_gateway"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hashgram-mail-gateway"
+path = "src/main.rs"
+
+[features]
+# RSA-SHA256 DKIM signing (RFC 6376 §3.3.3) pulls in the `rsa` crate and its
+# big-integer tree. It is on by default because every large receiver still
+# requires rsa-sha256; `--no-default-features` leaves ed25519-sha256
+# (RFC 8463, built on ed25519-dalek already in the workspace) only.
+default = ["dkim-rsa"]
+dkim-rsa = ["dep:rsa"]
+
+[dependencies]
+hashgram-sdk = { path = "../../sdk/rust/hashgram-sdk" }
+hashgram-app = { path = "../../node/hashgram-app" }
+
+tokio = { workspace = true, features = ["net", "io-util"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+hex.workspace = true
+blake3.workspace = true
+sha2.workspace = true
+ed25519-dalek.workspace = true
+getrandom.workspace = true
+prometheus-client.workspace = true
+axum.workspace = true
+
+# RFC 5322 / MIME parsing for inbound mail. The only parser dependency; the
+# outbound renderer, SMTP, DKIM canonicalisation and DNS glue are in-tree.
+mailparse = "0.16"
+# Local state: inbound log, retry queue, thread map, cursors, rate windows.
+rusqlite = { version = "0.40", features = ["bundled"] }
+# MX lookup for outbound delivery (same version libp2p-dns already pins).
+hickory-resolver = "0.25"
+# Opportunistic STARTTLS on the outbound SMTP client.
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12", "logging"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+webpki-roots = "1"
+base64 = "0.22"
+rsa = { version = "0.9", optional = true, features = ["sha2", "pem"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

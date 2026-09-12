@@ -49,6 +49,19 @@ pub mod chat {
     include!(concat!(env!("OUT_DIR"), "/hashgram.chat.v1.rs"));
 }
 
+/// The Hashgram One application messages (HashMail, HashDrive, People,
+/// Circles, Spaces, device sync) carried inside `chat::ChatMessage::app`.
+#[allow(
+    missing_docs,
+    unreachable_pub,
+    clippy::all,
+    clippy::pedantic,
+    clippy::nursery
+)]
+pub mod app {
+    include!(concat!(env!("OUT_DIR"), "/hashgram.app.v1.rs"));
+}
+
 pub mod blob;
 pub mod dht;
 pub mod frame;

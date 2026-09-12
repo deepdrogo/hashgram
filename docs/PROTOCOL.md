@@ -141,11 +141,52 @@ headroom). The prefix is checked before the body is read. The bodies:
 | Safety | `AttestationQuery` | every node |
 | Receipts | `ReceiptDeliver` | registered providers |
 | Calls | `TurnCredentialRequest` → `TurnCredentialResult` | `call` |
+| Chain relay | `ChainQuery` → `ChainQueryResponse`, `ChainBroadcast` → `ChainBroadcastResult` | `relay`, `bootstrap` (with a chain node) |
 
 Errors are a typed `Error { code, message }` body with codes
 `unauthenticated`, `unsupported`, `rate_limited`, `quota`, `not_found`,
 `invalid`, `internal`. Inbound requests are rate-limited per peer (40/s
 sustained, 80 burst); exceeding it costs score.
+
+### Chain relay
+
+A wallet needs two things from the chain — answers to read queries and a
+way to hand in a signed transaction — and nodes bind their REST gateway to
+loopback. `ChainQuery { path, query }` and `ChainBroadcast { tx_bytes }` let
+a `relay` or `bootstrap` node forward those from the peers it already talks
+to over this protocol to its co-located `hashgramd` gateway, so a client
+needs no HTTP endpoint at all (`node/hashgram-node/src/chain_relay.rs`).
+
+- **Allow-list, one definition.** Only read paths under `cosmos/bank/`,
+  `cosmos/auth/`, `cosmos/staking/`, `cosmos/distribution/`, `cosmos/gov/`,
+  `cosmos/base/`, `hashgram/`, plus `cosmos/tx/v1beta1/txs` (the list) and
+  `cosmos/tx/v1beta1/txs/{64-hex hash}` are forwarded. `simulate` is
+  refused (it executes a transaction against the gateway). Any path with
+  `..`, `//`, `?`, `#`, whitespace, a backslash, a percent-encoded separator
+  or a non-printable byte is refused as `invalid` before the gateway sees it.
+  The local API's `/v1/chain/{path}` passthrough uses the same function.
+- **Verbatim answers.** `ChainQueryResponse { status, body, height }` carries
+  the gateway's HTTP status, the JSON body as served (≤ 64 KiB; larger
+  answers come back as status 413 so the client narrows its query) and the
+  block height from `grpc-metadata-x-cosmos-block-height`. Nothing is
+  re-encoded, so two nodes can be compared byte for byte.
+- **Bounds.** 5 s upstream timeout; a separate per-peer token bucket (10/s
+  sustained, 20 burst) on top of the protocol-wide one; transactions ≤ 32 KiB;
+  metrics `hashgram_node_chain_relay_requests{kind}` and
+  `hashgram_node_chain_relay_outcomes{outcome}`.
+- **Broadcast** is `POST /cosmos/tx/v1beta1/txs` in `BROADCAST_MODE_SYNC`.
+  The relay only ever sees bytes the client signed.
+- **Not rewarded.** Relaying chain reads earns no service credit; it is a
+  public good like peer exchange (`docs/SERVICE_REWARDS.md`, "Known
+  limitations").
+
+The client side (`hashgram_sdk::chain_relay`) trusts no single relay: every
+read goes to two peers run by different operators (operator address from
+the handshake), answers are compared after JSON normalisation, heights must
+be within 3 blocks, a mismatch marks both peers disputed and asks a third,
+and the result is reported as "verified by N nodes" or refused. This is not
+a light client — no Merkle proof is checked — and `docs/CLIENT_CONNECTIVITY_SPEC.md`
+§10 lists that as still missing.
 
 ## 6. Gossip topics
 

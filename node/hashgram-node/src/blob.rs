@@ -20,6 +20,12 @@
 //! device up to a per-device share, and never for manifests that do not
 //! validate. A chunk that does not match its manifest entry is refused and
 //! the sender scored.
+//!
+//! Quota is reserved when the manifest is accepted, by the declared size,
+//! because that is the moment the node commits to holding the bytes. An
+//! upload that never finishes would hold that reservation forever, so a
+//! manifest still missing chunks after [`INCOMPLETE_UPLOAD_TTL_SECS`] is
+//! dropped by the maintenance sweep and its reservation returned.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -32,6 +38,8 @@ use hashgram_proto::keys::blake3_hash;
 use hashgram_proto::limits::{CHUNK_SIZE, MAX_RPC_FRAME};
 use hashgram_proto::pb;
 use hashgram_proto::{signing, validate};
+use prometheus_client::metrics::counter::Counter;
+use prometheus_client::registry::Registry;
 use prost::Message;
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use tracing::{debug, info, warn};
@@ -41,6 +49,13 @@ use crate::store::now;
 
 /// Desired copies of every blob.
 pub const TARGET_REPLICAS: u32 = 3;
+
+/// How long an accepted manifest may stay incomplete before the node gives
+/// up on the upload and releases its quota reservation: 24 hours. Long
+/// enough for a phone on a bad link to resume a large upload across a day;
+/// short enough that an abandoned or hostile reservation does not hold the
+/// uploader's share, or the node's, indefinitely.
+pub const INCOMPLETE_UPLOAD_TTL_SECS: u64 = 24 * 3600;
 
 /// Per-uploader share of the quota, as a fraction denominator: one device
 /// may use at most 1/8 of this node's quota.
@@ -68,7 +83,10 @@ pub struct BlobStats {
     pub blobs_complete: u64,
     /// Blobs with a manifest but missing chunks (uploads in progress).
     pub blobs_partial: u64,
-    /// Bytes of chunk data held.
+    /// Bytes reserved against the quota: the declared size of every
+    /// accepted manifest, summed per uploader. This is the figure quota is
+    /// enforced on; chunks shared between manifests are counted once per
+    /// manifest, so it can exceed the bytes physically held.
     pub bytes_used: u64,
     /// Configured quota, 0 for unlimited.
     pub quota_bytes: u64,
@@ -104,6 +122,8 @@ pub struct BlobService {
     store_peers: Mutex<HashMap<PeerId, Vec<Multiaddr>>>,
     /// cid -> peers known to hold it, and when last checked.
     replicas: Mutex<ReplicaMap>,
+    /// Incomplete uploads dropped after their TTL.
+    incomplete_expired: Counter,
 }
 
 fn ok(body: pb::response::Body) -> pb::Response {
@@ -138,7 +158,17 @@ impl BlobService {
             quota,
             store_peers: Mutex::new(HashMap::new()),
             replicas: Mutex::new(HashMap::new()),
+            incomplete_expired: Counter::default(),
         }))
+    }
+
+    /// Registers this service's metrics: `hashgram_blob_incomplete_expired_total`.
+    pub fn register_metrics(&self, registry: &mut Registry) {
+        registry.register(
+            "hashgram_blob_incomplete_expired",
+            "Blob manifests dropped because their upload was still incomplete after the TTL",
+            self.incomplete_expired.clone(),
+        );
     }
 
     /// A verified peer appeared; remember it if it stores.
@@ -319,13 +349,18 @@ impl BlobService {
         Ok((0..total as u32).filter(|i| !have.contains(i)).collect())
     }
 
+    /// Bytes reserved by accepted manifests, as the sum of every uploader's
+    /// usage. Reservation is by declared size at manifest time, and a chunk
+    /// shared by two manifests counts for both: that is the number quota is
+    /// enforced against, so it is the number reported. Walking the uploader
+    /// table is O(uploaders); the earlier chunk walk was O(bytes held).
     fn bytes_used(&self) -> anyhow::Result<u64> {
         let txn = self.db.begin_read()?;
-        let meta = txn.open_table(META)?;
+        let per = txn.open_table(UPLOADER_USAGE)?;
         let mut total = 0u64;
-        for r in meta.iter()? {
+        for r in per.iter()? {
             let (_, v) = r?;
-            total += v.value().2;
+            total = total.saturating_add(v.value());
         }
         Ok(total)
     }
@@ -588,12 +623,57 @@ impl BlobService {
         Ok(out)
     }
 
+    /// Drops manifests whose upload is still incomplete `INCOMPLETE_UPLOAD_TTL_SECS`
+    /// after they were accepted, releasing the uploader's reservation and
+    /// any chunks no other blob references. Returns how many were dropped.
+    ///
+    /// `now` is a parameter rather than read here so the sweep is testable
+    /// without waiting a day; the maintenance tick passes the clock.
+    pub fn expire_incomplete(&self, now: u64) -> anyhow::Result<u64> {
+        let due: Vec<Vec<u8>> = {
+            let txn = self.db.begin_read()?;
+            let meta = txn.open_table(META)?;
+            let manifests = txn.open_table(MANIFESTS)?;
+            let present = txn.open_table(PRESENT)?;
+            let mut out = Vec::new();
+            for r in meta.iter()? {
+                let (k, v) = r?;
+                let (_, stored_at, _) = v.value();
+                if stored_at.saturating_add(INCOMPLETE_UPLOAD_TTL_SECS) >= now {
+                    continue;
+                }
+                let c = k.value();
+                let total = manifests
+                    .get(c)?
+                    .and_then(|g| pb::BlobManifest::decode(g.value()).ok())
+                    .map(|m| m.chunks.len());
+                let have = present.range((c, 0u32)..=(c, u32::MAX))?.count();
+                // A manifest row that no longer decodes is also junk worth
+                // dropping; a complete blob is kept whatever its age.
+                if total.is_none_or(|t| have < t) {
+                    out.push(c.to_vec());
+                }
+            }
+            out
+        };
+        let mut removed = 0u64;
+        for c in due {
+            if self.delete(&c)? {
+                removed += 1;
+                self.incomplete_expired.inc();
+            }
+        }
+        if removed > 0 {
+            info!(removed, "expired incomplete blob uploads");
+        }
+        Ok(removed)
+    }
+
     /// Statistics.
     pub fn stats(&self) -> anyhow::Result<BlobStats> {
         let txn = self.db.begin_read()?;
         let manifests = txn.open_table(MANIFESTS)?;
         let present = txn.open_table(PRESENT)?;
-        let chunks = txn.open_table(CHUNKS)?;
         let mut complete = 0;
         let mut partial = 0;
         let mut degraded = 0;
@@ -616,12 +696,15 @@ impl BlobService {
                 partial += 1;
             }
         }
-        let mut bytes_used = 0u64;
-        for r in chunks.iter()? {
-            let (_, v) = r?;
-            bytes_used += v.value().len() as u64;
-        }
         drop(replicas);
+        // O(uploaders), not O(bytes): the per-uploader table is maintained on
+        // every manifest accept and delete, so its total is the reservation.
+        let per = txn.open_table(UPLOADER_USAGE)?;
+        let mut bytes_used = 0u64;
+        for r in per.iter()? {
+            let (_, v) = r?;
+            bytes_used = bytes_used.saturating_add(v.value());
+        }
         Ok(BlobStats {
             blobs_complete: complete,
             blobs_partial: partial,
@@ -1017,7 +1100,79 @@ mod tests {
         assert!(!s.put_chunk(&c, 1, &data[..CHUNK_SIZE]).unwrap());
         assert!(s.put_chunk(&c, 2, &data[..CHUNK_SIZE]).unwrap());
         assert_eq!(s.put_manifest(&c, &m, &[1; 32]).unwrap(), Vec::<u32>::new());
-        // Dedup: one physical chunk.
+        // Quota accounting is by declared size, not physical chunks: the
+        // three identical chunks are one on disk but the reservation is the
+        // manifest's size, which is what the uploader is charged.
+        assert_eq!(s.stats().unwrap().bytes_used, m.size);
+        assert_eq!(s.stats().unwrap().bytes_used, (CHUNK_SIZE * 3) as u64);
+    }
+
+    #[test]
+    fn an_incomplete_upload_expires_and_releases_quota() {
+        let s = service(100_000);
+        let uploader = [1u8; 32];
+        // Two uploads by the same device: one finished, one abandoned after
+        // the manifest and a single chunk.
+        let done = vec![7u8; 3000];
+        let md = manifest_for(&done, "x", false).unwrap();
+        let cd = s.put_local(&md, &done, &uploader).unwrap();
+        let abandoned = vec![8u8; 5000];
+        let ma = manifest_for(&abandoned, "x", false).unwrap();
+        let ca = cid(&ma).to_vec();
+        assert_eq!(s.put_manifest(&ca, &ma, &uploader).unwrap(), vec![0]);
+        let t = now();
+        let st = s.stats().unwrap();
+        assert_eq!((st.blobs_complete, st.blobs_partial), (1, 1));
+        assert_eq!(st.bytes_used, 8000);
+
+        // Inside the TTL nothing happens.
+        assert_eq!(
+            s.expire_incomplete(t + INCOMPLETE_UPLOAD_TTL_SECS).unwrap(),
+            0
+        );
+        assert_eq!(s.stats().unwrap().blobs_partial, 1);
+        // Past it, the incomplete one goes and its reservation returns; the
+        // complete one is untouched however old it is.
+        assert_eq!(
+            s.expire_incomplete(t + INCOMPLETE_UPLOAD_TTL_SECS + 1)
+                .unwrap(),
+            1
+        );
+        assert_eq!(s.incomplete_expired.get(), 1);
+        let st = s.stats().unwrap();
+        assert_eq!((st.blobs_complete, st.blobs_partial), (1, 0));
+        assert_eq!(st.bytes_used, 3000);
+        assert!(s.get_manifest(&ca).unwrap().is_none());
+        assert_eq!(s.has(&cd).unwrap(), (true, 1, 1));
+        // The reservation is really free: the uploader may upload again.
+        assert_eq!(s.put_manifest(&ca, &ma, &uploader).unwrap(), vec![0]);
+        // Running again with nothing due is a no-op.
+        assert_eq!(s.expire_incomplete(t).unwrap(), 0);
+    }
+
+    #[test]
+    fn expiring_an_incomplete_upload_keeps_chunks_other_blobs_use() {
+        let s = service(0);
+        // Blob A is complete. Blob B shares A's first chunk and never gets
+        // its second, so it expires; A's chunk must survive.
+        let a = vec![1u8; CHUNK_SIZE];
+        let ma = manifest_for(&a, "x", false).unwrap();
+        let ca = s.put_local(&ma, &a, &[1; 32]).unwrap();
+        let mut b = vec![1u8; CHUNK_SIZE];
+        b.extend(vec![2u8; 10]);
+        let mb = manifest_for(&b, "x", false).unwrap();
+        let cb = cid(&mb).to_vec();
+        // Chunk 0 is already held, so only chunk 1 is reported missing.
+        assert_eq!(s.put_manifest(&cb, &mb, &[2; 32]).unwrap(), vec![1]);
+        let t = now();
+        assert_eq!(
+            s.expire_incomplete(t + INCOMPLETE_UPLOAD_TTL_SECS + 1)
+                .unwrap(),
+            1
+        );
+        assert!(s.get_manifest(&cb).unwrap().is_none());
+        assert!(s.get_chunk(&ca, 0).unwrap().is_some());
+        assert_eq!(s.has(&ca).unwrap(), (true, 1, 1));
         assert_eq!(s.stats().unwrap().bytes_used, CHUNK_SIZE as u64);
     }
 

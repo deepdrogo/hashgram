@@ -435,10 +435,20 @@ if want rust fast; then
       warn "fix with: cd node && cargo fmt --all"
     fi
 
+    # apps/desktop (Tauri) and its service wrapper are Windows-only: elsewhere
+    # they need GTK/WebKit or the Windows service API. They are built, tested
+    # and packaged by .github/workflows/desktop-release.yml on a Windows runner.
+    RUST_EXCLUDE=""
+    case "$(uname -s)" in
+      MINGW*|MSYS*|CYGWIN*|Windows*) ;;
+      *) RUST_EXCLUDE="--exclude hashgram-desktop --exclude hashgram-node-service" ;;
+    esac
+
     # The workspace denies panicking constructs in non-test code, so clippy
     # failing here is a real defect rather than a style opinion: an unwrap on
     # a malformed frame in a network daemon is a remote denial of service.
-    if (cd node && cargo clippy --all-targets --all-features -- -D warnings) \
+    # shellcheck disable=SC2086
+    if (cd node && cargo clippy --workspace $RUST_EXCLUDE --all-targets --all-features -- -D warnings) \
          >/tmp/ci-clippy.log 2>&1; then
       ok "clippy clean with the workspace deny list"
     else
@@ -446,7 +456,8 @@ if want rust fast; then
       grep -E '^(error|warning)' /tmp/ci-clippy.log | sed 's/^/        /' | head -25
     fi
 
-    if (cd node && cargo test --all) >/tmp/ci-rusttest.log 2>&1; then
+    # shellcheck disable=SC2086
+    if (cd node && cargo test --workspace $RUST_EXCLUDE) >/tmp/ci-rusttest.log 2>&1; then
       COUNT="$(grep -ohE '[0-9]+ passed' /tmp/ci-rusttest.log \
         | awk '{s+=$1} END {print s+0}')"
       ok "all Rust tests pass (${COUNT} tests, including the decoder fuzz smoke)"

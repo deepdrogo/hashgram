@@ -380,6 +380,30 @@ cannot be fed a fork's data — learns the nodes' roles, and then:
 | Upload and download media, private encryption | blob bodies; DHT providers | `hashgram_sdk::blob` |
 | Find call nodes, get TURN credentials, signal | `AnnounceQuery`, `TurnCredentialRequest`; MLS `CallSignal` | `hashgram_sdk::calls` |
 | Pay providers for service | `ReceiptDeliver` | automatic in the SDK |
+| Read the chain and broadcast transactions with no REST endpoint | `ChainQuery`, `ChainBroadcast` (served by `relay`/`bootstrap` nodes; allow-listed read paths only) | `hashgram_sdk::chain_relay`, `hashgram_sdk::chain_client_over_link` |
+
+### Chain access without a server
+
+`ChainClient` (`hashgram_chain::Client`) works over a pluggable transport:
+HTTP to a REST gateway (§3–§4 above), or the P2P chain relay. Over the
+relay every read is issued to **two nodes run by different operators** and
+compared byte for byte after JSON normalisation, with heights within 3
+blocks; a mismatch marks both nodes disputed and asks a third. The result
+carries a `Verification` (which peers answered, whether they agreed,
+whether only one operator was reachable) for the UI to show as "verified by
+2 nodes" or as a warning. `simulate` is not available over the relay, so the
+client estimates gas instead of asking. `hashgram-client` uses the relay
+whenever `chain_api` is empty, which is the default:
+
+```text
+hashgram-client configure --network mainnet --genesis-hash <hash>   # no --chain-api
+hashgram-client wallet balance                                    # "verified by 2 nodes (2 operators)"
+```
+
+The precedence an application should use, each with a live health
+indicator: a node on the same machine (`127.0.0.1`), then the P2P relay
+across ≥ 2 nodes, then HTTPS endpoints the user pasted. Never a single
+hardcoded hostname as the only way in.
 
 `hashgram-sdk` (`sdk/rust/hashgram-sdk`) implements all of it and
 `hashgram-client` (`node/hashgram-client`) is the reference command line on
@@ -412,7 +436,12 @@ can cross-check against events it verifies itself.
 
 ### What still does not exist
 
-- Native applications for Windows, iOS and Android (the prompts describe them).
+- Native applications for iOS and Android (the prompts describe them); the
+  Windows application is being built in `apps/desktop/`.
+- A Merkle-proof light client. The P2P chain relay cross-checks two
+  operators' answers, which removes the single server but does not prove an
+  answer against a block header. Proofs are a later milestone; until then
+  "verified by 2 nodes" means exactly that and no more.
 - Push notifications: clients poll or stay connected.
 - Call receipts from the reference client; a WebRTC media stack in the SDK.
 - End-to-end encryption of SFU-hosted group calls against the SFU operator.

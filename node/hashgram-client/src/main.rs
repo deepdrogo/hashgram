@@ -17,11 +17,14 @@
 #![allow(clippy::integer_division, clippy::indexing_slicing)]
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
 use clap::{Parser, Subcommand};
 use hashgram_sdk::account::{self, Account};
+
+mod one;
 use hashgram_sdk::link::Link;
 use hashgram_sdk::messaging::Messaging;
 use hashgram_sdk::social::{payload_json, Social};
@@ -71,7 +74,10 @@ enum Cmd {
         network: String,
         #[arg(long)]
         genesis_hash: String,
-        #[arg(long, default_value = "http://127.0.0.1:1317")]
+        /// REST gateway for chain reads and broadcast. Leave empty (the
+        /// default) to read the chain through the P2P relay of the nodes
+        /// this client connects to, cross-checked across two operators.
+        #[arg(long, default_value = "")]
         chain_api: String,
         #[arg(long = "bootstrap")]
         bootstrap: Vec<String>,
@@ -158,6 +164,11 @@ enum Cmd {
     Call {
         #[command(subcommand)]
         cmd: CallCmd,
+    },
+    /// Hashgram One: Mail, Drive, People, Feed, Circles, Spaces, Earn, Network.
+    One {
+        #[command(subcommand)]
+        cmd: one::OneCmd,
     },
 }
 
@@ -405,6 +416,9 @@ struct Ctx {
     passphrase: String,
     kdf: KdfCost,
     json: bool,
+    /// One swarm per process, shared by the chain relay and every other
+    /// network operation.
+    link: tokio::sync::OnceCell<Arc<Link>>,
 }
 
 impl Ctx {
@@ -417,14 +431,58 @@ impl Ctx {
             .context("opening the keystore")
     }
 
-    fn chain(&self) -> anyhow::Result<ChainClient> {
+    /// The chain client: HTTP when `chain_api` is set, otherwise the P2P
+    /// relay through the connected nodes with cross-checking (Stage 0 of
+    /// the desktop build: a wallet with no server address at all).
+    async fn chain(&self) -> anyhow::Result<ChainClient> {
+        if self.profile.chain_api.trim().is_empty() {
+            let link = self.link().await?;
+            if link.chain_relays().await.is_empty() {
+                bail!("no connected node relays chain queries yet (needs a node with the relay or bootstrap role running the chain relay); set --chain-api to use a REST gateway instead");
+            }
+            return Ok(hashgram_sdk::chain_client_over_link(
+                link,
+                &self.network.chain_id,
+            ));
+        }
         Ok(ChainClient::new(
             &self.profile.chain_api,
             &self.network.chain_id,
         )?)
     }
 
-    async fn link(&self) -> anyhow::Result<Link> {
+    /// Prints how the last chain read was verified (P2P relay only).
+    fn note_verification(&self, chain: &ChainClient) {
+        let Some(v) = chain.verification() else {
+            return;
+        };
+        if self.json {
+            return;
+        }
+        if v.agreed {
+            eprintln!(
+                "verified by {} nodes ({} operators)",
+                v.verified_by(),
+                v.operators.len()
+            );
+        } else if v.single_operator {
+            eprintln!("verified by 1 node â€” only one operator is reachable on this network; agreement could not be independent");
+        } else {
+            eprintln!(
+                "verified by {} node(s); no second operator answered",
+                v.verified_by()
+            );
+        }
+    }
+
+    async fn link(&self) -> anyhow::Result<Arc<Link>> {
+        self.link
+            .get_or_try_init(|| async { self.connect_link().await.map(Arc::new) })
+            .await
+            .cloned()
+    }
+
+    async fn connect_link(&self) -> anyhow::Result<Link> {
         // Operator-supplied bootstrap addresses win. With none configured, a
         // Mainnet profile falls back to the list compiled into the binary,
         // the same file the nodes use (app/params/mainnet/bootstrap_peers.txt),
@@ -540,10 +598,26 @@ async fn run() -> anyhow::Result<()> {
             KdfCost::default()
         },
         json: cli.json,
+        link: tokio::sync::OnceCell::new(),
     };
 
     match cli.cmd {
         Cmd::Configure { .. } => unreachable!(),
+        Cmd::One { cmd } => {
+            one::run(
+                one::OneCtx {
+                    home: &ctx.home,
+                    network: ctx.network.clone(),
+                    passphrase: &ctx.passphrase,
+                    kdf: ctx.kdf,
+                    chain_api: ctx.profile.chain_api.clone(),
+                    bootstrap: ctx.profile.bootstrap.clone(),
+                    json: ctx.json,
+                },
+                cmd,
+            )
+            .await
+        }
         Cmd::Identity { cmd } => identity(&ctx, cmd).await,
         Cmd::Wallet { cmd } => wallet(&ctx, cmd).await,
         Cmd::Message { cmd } => message(&ctx, cmd).await,
@@ -818,7 +892,7 @@ async fn identity(ctx: &Ctx, cmd: IdentityCmd) -> anyhow::Result<()> {
                 hex::encode(acct.device().map(|d| d.public_key()).unwrap_or_default())
             );
             println!();
-            println!("RECOVERY PHRASE — write it down now, it is shown once and never stored:");
+            println!("RECOVERY PHRASE â€” write it down now, it is shown once and never stored:");
             println!("  {mnemonic}");
             println!();
             if offline {
@@ -917,7 +991,7 @@ async fn identity(ctx: &Ctx, cmd: IdentityCmd) -> anyhow::Result<()> {
             platform,
         } => {
             let acct = ctx.account()?;
-            let chain = ctx.chain()?;
+            let chain = ctx.chain().await?;
             let key: [u8; 32] = hex::decode(pubkey)?
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("pubkey must be 32 bytes"))?;
@@ -943,7 +1017,7 @@ async fn identity(ctx: &Ctx, cmd: IdentityCmd) -> anyhow::Result<()> {
         }
         IdentityCmd::RemoveDevice { device_id } => {
             let acct = ctx.account()?;
-            let chain = ctx.chain()?;
+            let chain = ctx.chain().await?;
             let r = account::revoke_device_on_chain(&acct, &chain, &device_id).await?;
             println!(
                 "device {device_id} revoked in tx {} at height {}",
@@ -952,7 +1026,7 @@ async fn identity(ctx: &Ctx, cmd: IdentityCmd) -> anyhow::Result<()> {
             Ok(())
         }
         IdentityCmd::Devices { address } => {
-            let chain = ctx.chain()?;
+            let chain = ctx.chain().await?;
             let addr = match address {
                 Some(a) => a,
                 None => ctx.account()?.address().to_owned(),
@@ -990,7 +1064,7 @@ async fn identity(ctx: &Ctx, cmd: IdentityCmd) -> anyhow::Result<()> {
 }
 
 async fn register(ctx: &Ctx, acct: &Account, label: &str, platform: &str) -> anyhow::Result<()> {
-    let chain = ctx.chain()?;
+    let chain = ctx.chain().await?;
     let bal = chain.balance(acct.address()).await?;
     if bal == 0 {
         println!("the account has no HASH yet; fund {} and run `identity create` again with --offline omitted,", acct.address());
@@ -1006,7 +1080,7 @@ async fn register(ctx: &Ctx, acct: &Account, label: &str, platform: &str) -> any
 }
 
 async fn wallet(ctx: &Ctx, cmd: WalletCmd) -> anyhow::Result<()> {
-    let chain = ctx.chain()?;
+    let chain = ctx.chain().await?;
     match cmd {
         WalletCmd::Balance { address } => {
             let addr = match address {
@@ -1014,8 +1088,19 @@ async fn wallet(ctx: &Ctx, cmd: WalletCmd) -> anyhow::Result<()> {
                 None => ctx.account()?.address().to_owned(),
             };
             let bal = chain.balance(&addr).await?;
-            let v = serde_json::json!({ "address": addr, "uhash": bal.to_string(), "hash": format!("{}.{:06}", bal / 1_000_000, bal % 1_000_000) });
+            let verification = chain.verification();
+            let v = serde_json::json!({
+                "address": addr,
+                "uhash": bal.to_string(),
+                "hash": format!("{}.{:06}", bal / 1_000_000, bal % 1_000_000),
+                "transport": chain.transport().describe(),
+                "verified_by": verification.as_ref().map(|v| v.verified_by()),
+                "agreed": verification.as_ref().map(|v| v.agreed),
+                "single_operator": verification.as_ref().map(|v| v.single_operator),
+                "peers": verification.as_ref().map(|v| v.peers.clone()),
+            });
             ctx.out(&v, || format!("{addr}\n{}", fmt_hash(bal)));
+            ctx.note_verification(&chain);
             Ok(())
         }
         WalletCmd::Send { to, amount } => {
@@ -1126,7 +1211,7 @@ async fn message(ctx: &Ctx, cmd: MessageCmd) -> anyhow::Result<()> {
     let mut acct = ctx.account()?;
     let mut messaging = Messaging::open(&acct)?;
     let link = ctx.link().await?;
-    let chain = ctx.chain()?;
+    let chain = ctx.chain().await?;
     let result: anyhow::Result<()> = async {
         match cmd {
             MessageCmd::Send { to, text } => {
@@ -1239,7 +1324,7 @@ async fn group(ctx: &Ctx, cmd: GroupCmd) -> anyhow::Result<()> {
     let mut acct = ctx.account()?;
     let mut messaging = Messaging::open(&acct)?;
     let link = ctx.link().await?;
-    let chain = ctx.chain()?;
+    let chain = ctx.chain().await?;
     let result: anyhow::Result<()> = async {
         match cmd {
             GroupCmd::Create { name, members } => {
@@ -1421,7 +1506,7 @@ async fn blob_cmd(ctx: &Ctx, cmd: BlobCmd) -> anyhow::Result<()> {
             let c = hex::decode(&cid)?;
             let acct = ctx.account()?;
             let device = acct.device()?;
-            let chain = ctx.chain()?;
+            let chain = ctx.chain().await?;
             let (bytes, m, from) =
                 blob::download(&link, &c, Some((&chain, &ctx.network, &device))).await?;
             let bytes = match (key, nonce) {

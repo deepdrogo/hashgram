@@ -1,0 +1,59 @@
+# hashgram-mail-gateway configuration. Reference: docs/MAIL_GATEWAY.md § Config.
+#
+# The vault passphrase is NOT in this file: export HASHGRAM_GATEWAY_PASSPHRASE.
+
+[hashgram]
+# Directory for the bridge identity: keystore.json, local.redb, peerstore.json.
+home = "/var/lib/hashgram-mail-gateway/identity"
+# "mainnet" or "devnet". devnet requires genesis_hash.
+network = "mainnet"
+# genesis_hash = "…64 hex…"          # optional on mainnet (compiled-in pin)
+# chain_api = "https://api.hashgram.io" # optional REST API; default reads the chain via the P2P relay
+# bootstrap = ["/dns4/boot1.hashgram.io/tcp/4001/p2p/12D3Koo…"] # empty = compiled-in mainnet list
+connect_wait_secs = 10
+sync_interval_secs = 5
+# light_kdf = true                    # DEVNET ONLY
+
+[smtp]
+# Loopback and unprivileged by default: a fronting MTA/proxy terminates TLS on :25
+# and forwards here. Set allow_privileged = true only if this process really owns :25.
+listen = "127.0.0.1:2525"
+allow_privileged = false
+# hostname = "mx.hashgram.io"        # banner / EHLO name; defaults to domain.name
+max_message_bytes = 26214400          # 25 MiB
+connections_per_ip_per_minute = 60
+messages_per_ip_per_hour = 300
+max_recipients = 50
+idle_timeout_secs = 300
+max_connections = 200
+
+[domain]
+name = "hashgram.io"
+# Both or neither. Without them outbound mail is unsigned (and mostly rejected).
+dkim_selector = "s1"
+dkim_private_key_file = "/etc/hashgram-mail-gateway/dkim-s1.pem"
+
+[policy]
+# Refuse inbound mail whose Authentication-Results (from the fronting MTA) shows
+# neither spf=pass nor dkim=pass.
+require_spf_or_dkim = false
+# Refuse inbound mail with spam score above this (0..1000; 0 disables).
+reject_spam_score_over = 0
+# Relay outbound only for Hashgram users who are contacts of the bridge identity.
+allow_outbound_from_contacts_only = false
+
+[store]
+sqlite_path = "/var/lib/hashgram-mail-gateway/gateway.sqlite"
+
+[http]
+# /healthz and /metrics. Loopback only; empty string disables.
+listen = "127.0.0.1:9725"
+
+[outbound]
+per_user_per_hour = 100
+# Opportunistic STARTTLS by default; true bounces mail to MXs without valid TLS.
+require_tls = false
+smtp_timeout_secs = 60
+smtp_port = 25
+max_attempts = 12
+# smarthost = "smtp-relay.example.net:587"  # use instead of MX lookup when port 25 egress is blocked

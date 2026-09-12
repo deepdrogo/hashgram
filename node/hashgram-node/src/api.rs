@@ -19,7 +19,6 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use hashgram_proto::pb;
-use hashgram_proto::signing;
 use prometheus_client::registry::Registry;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -940,8 +939,10 @@ struct TurnRequest {
     /// Unix seconds, signed.
     timestamp: u64,
     /// Hex signature over the mailbox-fetch preimage with an empty cursor
-    /// and limit 0: reusing the fetch purpose proves the same thing, "I hold
-    /// this device key right now", without a new signing domain.
+    /// and `TURN_SENTINEL_LIMIT` as the limit: reusing the fetch purpose
+    /// proves the same thing, "I hold this device key right now", without a
+    /// new signing domain, and the sentinel keeps the preimage disjoint from
+    /// any real fetch (see `calls::verify_request`).
     signature: String,
 }
 
@@ -950,25 +951,14 @@ async fn turn_credentials(
     Json(r): Json<TurnRequest>,
 ) -> Result<Json<crate::calls::TurnCredential>, (StatusCode, Json<ApiError>)> {
     let secret = s.turn_secret.as_ref().ok_or_else(|| unsupported("call"))?;
-    let device_pubkey = hex::decode(&r.device_pubkey).map_err(|e| bad(e.to_string()))?;
-    let f = pb::MailboxFetch {
-        mailbox: signing::mailbox_for(&device_pubkey).to_vec(),
-        device_pubkey: device_pubkey.clone(),
-        cursor: vec![],
-        limit: 0,
+    let req = pb::TurnCredentialRequest {
+        device_pubkey: hex::decode(&r.device_pubkey).map_err(|e| bad(e.to_string()))?,
         timestamp: r.timestamp,
         signature: hex::decode(&r.signature).map_err(|e| bad(e.to_string()))?,
     };
-    hashgram_proto::validate::mailbox_fetch(&f, crate::store::now())
-        .map_err(|e| bad(e.to_string()))?;
-    signing::verify_mailbox_fetch(&s.shared.identity, &f).map_err(|e| bad(e.to_string()))?;
-    let label = hex::encode(&signing::mailbox_for(&device_pubkey)[..8]);
-    Ok(Json(crate::calls::issue(
-        secret,
-        &label,
-        &s.shared.config.turn_uris,
-        crate::store::now(),
-    )))
+    crate::calls::issue_for_request(&s.shared, secret, &req)
+        .map(Json)
+        .map_err(bad)
 }
 
 // -- chain pass-through -----------------------------------------------------------
@@ -979,14 +969,9 @@ async fn chain_passthrough(
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
     let chain = s.chain.as_ref().ok_or_else(|| unsupported("chain"))?;
     // Only read paths of the Hashgram and Cosmos modules are forwarded; this
-    // is a convenience for same-host clients, not a proxy.
-    if !(path.starts_with("hashgram/")
-        || path.starts_with("cosmos/bank/")
-        || path.starts_with("cosmos/auth/")
-        || path.starts_with("cosmos/base/"))
-    {
-        return Err(bad("only read queries under hashgram/, cosmos/bank/, cosmos/auth/ and cosmos/base/ are forwarded"));
-    }
+    // is a convenience for same-host clients, not a proxy. The rule is the
+    // one the P2P chain relay enforces, defined once in `chain_relay`.
+    let path = crate::chain_relay::allowed_read_path(&path).map_err(|why| bad(why.message()))?;
     chain.get_json(&path).await.map(Json).map_err(|e| {
         (
             StatusCode::BAD_GATEWAY,

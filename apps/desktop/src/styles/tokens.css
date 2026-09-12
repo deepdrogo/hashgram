@@ -1,0 +1,44 @@
+/*
+ * Hashgram design tokens — the single source of every colour in the UI chrome.
+ *
+ * Strict monochrome dark theme. Exactly seven colours exist:
+ *
+ *   #000000  bg          pure black background
+ *   #0D0D0D  surface     very dark grey (cards, rails)
+ *   #1A1A1A  surface-2   dark grey (inputs, hover)
+ *   #262626  border      medium dark grey (borders, dividers, pressed)
+ *   #404040  accent      medium grey (accents, focus rings, strong borders)
+ *   #808080  muted       light grey (secondary text, icons)
+ *   #FFFFFF  fg          pure white (primary text, primary buttons)
+ *
+ * Nothing else. No tints, no gradients, no saturation. User content (photos,
+ * videos, avatars) is the only colour on screen, and it is content, not
+ * chrome. A test (tests/palette.test.ts) scans every stylesheet and component
+ * for a colour outside this list and fails the build.
+ */
+@theme {
+  /* Wipe Tailwind's default palette so no other colour utility exists. */
+  --color-*: initial;
+
+  --color-bg: #000000;
+  --color-surface: #0d0d0d;
+  --color-surface-2: #1a1a1a;
+  --color-border: #262626;
+  --color-accent: #404040;
+  --color-muted: #808080;
+  --color-fg: #ffffff;
+
+  --font-sans: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  --shadow-none: none;
+
+  --ease-out-quick: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+}

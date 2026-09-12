@@ -1,0 +1,45 @@
+{
+  "name": "hashgram-desktop",
+  "private": true,
+  "version": "0.1.1",
+  "description": "Hashgram for Windows: wallet, messenger, social network, calls, identity and node — talking to the peer-to-peer network, never to one server.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kobalte/core": "^0.13.14",
+    "@solidjs/router": "^0.15.3",
+    "@tanstack/solid-virtual": "^3.13.38",
+    "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-autostart": "^2.5.1",
+    "@tauri-apps/plugin-clipboard-manager": "^2.3.3",
+    "@tauri-apps/plugin-deep-link": "^2.4.10",
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-notification": "^2.4.0",
+    "@tauri-apps/plugin-opener": "^2.5.5",
+    "@tauri-apps/plugin-process": "^2.3.1",
+    "@tauri-apps/plugin-updater": "^2.11.0",
+    "@tauri-apps/plugin-window-state": "^2.4.1",
+    "lucide-solid": "1.43.0",
+    "solid-js": "^1.9.15"
+  },
+  "devDependencies": {
+    "@solidjs/testing-library": "^0.8.10",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "^2.11.4",
+    "@types/node": "^22.20.2",
+    "jsdom": "^30.0.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.6",
+    "vite-plugin-solid": "^2.11.14",
+    "vitest": "^3.2.4"
+  }
+}

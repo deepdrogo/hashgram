@@ -1,0 +1,123 @@
+name: Desktop release (Windows)
+
+# Builds Hashgram for Windows with apps/desktop/release.ps1 — the same script
+# the owner runs locally — and publishes the installer, its minisign
+# signature and latest.json to the GitHub release for the pushed tag. The app
+# self-updates from <repo>/releases/latest/download/latest.json.
+#
+# Release procedure (owner):
+#   1. bump "version" in apps/desktop/src-tauri/tauri.conf.json and apps/desktop/package.json
+#   2. commit, then:  git tag vX.Y.Z && git push origin main vX.Y.Z
+#   3. this workflow builds, signs and uploads; installed apps pick it up.
+#
+# A tag whose release already carries latest.json (published by hand) is left
+# untouched so a local, tested build is never silently replaced.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Upload artefacts to the GitHub release of this ref (tags only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Build, sign, publish
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard — skip tags already published by hand
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $skip = "false"
+          if ("${{ github.ref }}".StartsWith("refs/tags/")) {
+            $tag = "${{ github.ref_name }}"
+            $conf = Get-Content apps/desktop/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
+            if ("v$($conf.version)" -ne $tag) {
+              Write-Host "::error::tag $tag does not match tauri.conf.json version $($conf.version)"
+              exit 1
+            }
+            $assets = gh release view $tag --json assets --jq '.assets[].name' 2>$null
+            if ($LASTEXITCODE -eq 0 -and ($assets -split "`n") -contains "latest.json") {
+              Write-Host "release $tag already has latest.json; nothing to do"
+              $skip = "true"
+            }
+          }
+          "skip=$skip" >> $env:GITHUB_OUTPUT
+
+      - uses: pnpm/action-setup@v4
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          version: 12
+
+      - uses: actions/setup-node@v4
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/desktop/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.guard.outputs.skip != 'true'
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          workspaces: node
+
+      - name: Build and sign (release.ps1)
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            Write-Host "::error::secret TAURI_SIGNING_PRIVATE_KEY is missing; an unsigned build cannot be an update"
+            exit 1
+          }
+          pwsh -File apps/desktop/release.ps1 -Repo "${{ github.repository }}"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Content dist/desktop/RELEASE_NOTES.txt
+
+      - uses: actions/upload-artifact@v4
+        if: steps.guard.outputs.skip != 'true'
+        with:
+          name: hashgram-windows-${{ github.ref_name }}
+          path: dist/desktop/*
+          if-no-files-found: error
+
+      - name: Publish to the GitHub release
+        if: steps.guard.outputs.skip != 'true' && startsWith(github.ref, 'refs/tags/') && (github.event_name == 'push' || inputs.publish)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "Hashgram for Windows $tag" --notes-file dist/desktop/RELEASE_NOTES.txt --verify-tag
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          $files = Get-ChildItem dist/desktop | Where-Object { $_.Name -ne "RELEASE_NOTES.txt" } | ForEach-Object { $_.FullName }
+          gh release upload $tag @files --clobber
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          Write-Host "published: https://github.com/${{ github.repository }}/releases/tag/$tag"

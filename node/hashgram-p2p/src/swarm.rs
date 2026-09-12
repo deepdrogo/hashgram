@@ -678,6 +678,44 @@ fn reason_code(err: &HandshakeError) -> ReasonCode {
     }
 }
 
+/// Most roles a handshake may claim.
+pub const MAX_HANDSHAKE_ROLES: usize = 16;
+/// Longest role name a handshake may claim, in bytes.
+pub const MAX_ROLE_BYTES: usize = 16;
+/// Longest operator address a handshake may carry, in bytes. A bech32
+/// `hash1…` address is 44 characters; 90 is the bech32 maximum.
+pub const MAX_OPERATOR_ADDRESS_BYTES: usize = 90;
+
+/// Checks the free-form claims in a peer's handshake: its roles and its
+/// operator address.
+///
+/// `verify_handshake` covers the identity parts. These two fields are not
+/// identity, but they are stored per peer (in `verified`, the peerstore, and
+/// every `PeerVerified` event) for as long as the peer is around, so an
+/// unbounded value is a memory grab a single connection can perform once per
+/// ban period. Role names are also used as map keys and log fields, hence
+/// the strict alphabet: lowercase ASCII, digits, `_` and `-`, which is what
+/// every known role already satisfies.
+pub fn validate_handshake_claims(roles: &[String], operator: &str) -> Result<(), &'static str> {
+    if roles.len() > MAX_HANDSHAKE_ROLES {
+        return Err("too many or malformed roles");
+    }
+    for r in roles {
+        if r.is_empty()
+            || r.len() > MAX_ROLE_BYTES
+            || !r
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+        {
+            return Err("too many or malformed roles");
+        }
+    }
+    if operator.len() > MAX_OPERATOR_ADDRESS_BYTES {
+        return Err("operator address too long");
+    }
+    Ok(())
+}
+
 fn to_wire(hs: &Handshake, roles: &[String], operator: &str) -> pb::Handshake {
     pb::Handshake {
         network_magic: hs.network_magic.to_vec(),
@@ -1065,12 +1103,22 @@ impl Runner {
                 step,
                 ..
             }) => {
+                // Answer the requester as soon as any providers are known
+                // rather than when the whole Kademlia walk finishes: on a
+                // small network a full walk runs to the 30 s query timeout,
+                // and every SDK caller unions the answer with its connected
+                // store peers anyway. The query keeps running to completion
+                // in the background so the routing table still benefits.
+                let mut done = step.last;
                 if let Some((found, _)) = self.pending_providers.get_mut(&id) {
                     if let Ok(kad::GetProvidersOk::FoundProviders { providers, .. }) = res {
                         found.extend(providers);
+                        if !found.is_empty() {
+                            done = true;
+                        }
                     }
                 }
-                if step.last {
+                if done {
                     if let Some((found, reply)) = self.pending_providers.remove(&id) {
                         let _ = reply.send(found.into_iter().collect());
                     }
@@ -1237,6 +1285,26 @@ impl Runner {
         );
         match self.identity.verify_handshake(&from_wire(hs)) {
             Ok(()) => {
+                // Identity agreed; now the claims we would store about it.
+                // Oversized claims are a malformed frame, not a fork, and
+                // are refused the same way a fork is: an ack that says why,
+                // then a disconnect.
+                if let Err(why) = validate_handshake_claims(&hs.roles, &hs.operator_address) {
+                    self.score(peer, ScoreEvent::MalformedFrame);
+                    let ack = pb::Response {
+                        body: Some(pb::response::Body::Handshake(pb::HandshakeAck {
+                            accepted: false,
+                            reason: why.to_owned(),
+                            identity: Some(ours),
+                        })),
+                    };
+                    let _ = self.swarm.behaviour_mut().rpc.send_response(channel, ack);
+                    self.pending_reject.insert(
+                        peer,
+                        (ReasonCode::Malformed, why.to_owned(), Instant::now()),
+                    );
+                    return;
+                }
                 let ack = pb::Response {
                     body: Some(pb::response::Body::Handshake(pb::HandshakeAck {
                         accepted: true,
@@ -1283,7 +1351,15 @@ impl Runner {
             return;
         };
         match self.identity.verify_handshake(&from_wire(&remote)) {
-            Ok(()) if ack.accepted => self.verify(peer, remote.roles, remote.operator_address),
+            Ok(()) if ack.accepted => {
+                if let Err(why) = validate_handshake_claims(&remote.roles, &remote.operator_address)
+                {
+                    self.score(peer, ScoreEvent::MalformedFrame);
+                    self.reject(peer, ReasonCode::Malformed, why);
+                    return;
+                }
+                self.verify(peer, remote.roles, remote.operator_address);
+            }
             Ok(()) => self.reject(
                 peer,
                 ReasonCode::Genesis,
@@ -1711,4 +1787,59 @@ fn is_dialable(addr: &Multiaddr) -> bool {
         }
     }
     has_transport
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn roles(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn known_role_sets_pass() {
+        validate_handshake_claims(&roles(&["store", "relay", "call", "media_2", "x-y"]), "")
+            .unwrap();
+        validate_handshake_claims(&[], "hash1qpzry9x8gf2tvdw0s3jn54khce6mua7lqqqqqqqq").unwrap();
+        let sixteen: Vec<String> = (0..MAX_HANDSHAKE_ROLES).map(|i| format!("r{i}")).collect();
+        validate_handshake_claims(&sixteen, "").unwrap();
+        let longest = "a".repeat(MAX_ROLE_BYTES);
+        validate_handshake_claims(&[longest], "").unwrap();
+    }
+
+    #[test]
+    fn too_many_roles_are_refused() {
+        let many: Vec<String> = (0..=MAX_HANDSHAKE_ROLES).map(|i| format!("r{i}")).collect();
+        assert_eq!(
+            validate_handshake_claims(&many, ""),
+            Err("too many or malformed roles")
+        );
+    }
+
+    #[test]
+    fn oversized_or_malformed_roles_are_refused() {
+        let long = "a".repeat(MAX_ROLE_BYTES + 1);
+        assert!(validate_handshake_claims(&[long], "").is_err());
+        // The 1 MiB role the audit described.
+        let huge = "z".repeat(1 << 20);
+        assert!(validate_handshake_claims(&[huge], "").is_err());
+        for bad in ["", "Store", "st ore", "st.ore", "stör", "rel/ay", "a\n"] {
+            assert!(
+                validate_handshake_claims(&roles(&[bad]), "").is_err(),
+                "{bad:?} should be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn operator_address_is_bounded() {
+        let at_limit = "h".repeat(MAX_OPERATOR_ADDRESS_BYTES);
+        validate_handshake_claims(&[], &at_limit).unwrap();
+        let over = "h".repeat(MAX_OPERATOR_ADDRESS_BYTES + 1);
+        assert_eq!(
+            validate_handshake_claims(&[], &over),
+            Err("operator address too long")
+        );
+    }
 }

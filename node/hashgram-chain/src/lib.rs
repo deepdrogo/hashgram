@@ -72,9 +72,13 @@ pub mod pb {
 pub mod client;
 pub mod identity;
 pub mod msgs;
+pub mod transport;
 pub mod wallet;
 
-pub use client::{Client, ClientError, TxResult};
+pub use client::{Client, ClientError, FeePreview, SignedTx, TxResult};
+pub use transport::{
+    ChainTransport, HttpTransport, SharedTransport, TransportResponse, Verification,
+};
 pub use wallet::{Wallet, WalletError, BECH32_PREFIX, DENOM};
 
 /// Re-exported for callers that build their own `Any`.

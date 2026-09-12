@@ -45,7 +45,50 @@ message Request {
     ReceiptDeliver receipt_deliver = 60;
 
     TurnCredentialRequest turn_credentials = 70;
+
+    ChainQuery chain_query = 80;
+    ChainBroadcast chain_broadcast = 81;
   }
+}
+
+// Chain relay: a read-only chain query forwarded by a `relay` or `bootstrap`
+// node to the REST gateway of its co-located chain node. This is what lets a
+// wallet with no HTTP endpoint of its own read balances through the same
+// peers it already talks to. The node forwards only an allow-list of read
+// paths (see docs/PROTOCOL.md "Chain relay"); everything else is refused
+// with `invalid`. Relaying is a public good like peer exchange: it earns no
+// service credit.
+message ChainQuery {
+  // Gateway path relative to the REST root, without a leading slash and
+  // without a query string, e.g. `cosmos/bank/v1beta1/balances/hash1.../by_denom`.
+  string path = 1;
+  // Raw query string without the `?`, e.g. `denom=uhash`. May be empty.
+  string query = 2;
+}
+
+// The gateway's answer, verbatim. `status` is the HTTP status; `body` is the
+// JSON as served (capped at 64 KiB, larger answers are refused with status
+// 413); `height` is the block height the gateway reported in
+// `grpc-metadata-x-cosmos-block-height`, 0 when absent. Clients compare
+// answers from two operators before trusting either.
+message ChainQueryResponse {
+  uint32 status = 1;
+  bytes body = 2;
+  uint64 height = 3;
+}
+
+// A signed transaction to broadcast: `POST /cosmos/tx/v1beta1/txs` in sync
+// mode. The relay never sees a key; it forwards bytes the client signed.
+message ChainBroadcast {
+  bytes tx_bytes = 1;
+}
+
+// The gateway's answer to a broadcast, verbatim (same shape rules as
+// ChainQueryResponse).
+message ChainBroadcastResult {
+  uint32 status = 1;
+  bytes body = 2;
+  uint64 height = 3;
 }
 
 // A refusal. Distinct from a transport error so the requester can tell "the
@@ -86,6 +129,9 @@ message Response {
     ReceiptDeliverResult receipt_deliver = 60;
 
     TurnCredentialResult turn_credentials = 70;
+
+    ChainQueryResponse chain_query = 80;
+    ChainBroadcastResult chain_broadcast = 81;
   }
 }
 

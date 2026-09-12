@@ -373,11 +373,42 @@ pub fn mailbox_fetch(f: &pb::MailboxFetch, now: u64) -> Result<u32, ValidationEr
     exact("signature", f.signature.len(), SIG_LEN)?;
     bound("cursor", f.cursor.len(), 64)?;
     fresh(f.timestamp, now)?;
+    // The sentinel is reserved for TURN credential requests so that a
+    // signature over one can never be presented as a fetch, and vice versa.
+    if f.limit == TURN_SENTINEL_LIMIT {
+        return Err(ValidationError::Rule(
+            "limit is the TURN credential sentinel, not a page size",
+        ));
+    }
     Ok(if f.limit == 0 {
         MAX_MAILBOX_PAGE
     } else {
         f.limit.min(MAX_MAILBOX_PAGE)
     })
+}
+
+/// Validates the `MailboxFetch` preimage a TURN credential request signs.
+///
+/// This is the mirror image of [`mailbox_fetch`]: the cursor must be empty
+/// and the limit must be exactly [`TURN_SENTINEL_LIMIT`], which
+/// [`mailbox_fetch`] refuses. Together the two functions guarantee that no
+/// signature is acceptable on both paths, so a store node that received a
+/// legitimate fetch cannot present it for TURN credentials.
+pub fn turn_credential_fetch(f: &pb::MailboxFetch, now: u64) -> Result<(), ValidationError> {
+    hash("mailbox", &f.mailbox)?;
+    hash("device_pubkey", &f.device_pubkey)?;
+    exact("signature", f.signature.len(), SIG_LEN)?;
+    if !f.cursor.is_empty() {
+        return Err(ValidationError::Rule(
+            "a TURN credential request carries no cursor",
+        ));
+    }
+    if f.limit != TURN_SENTINEL_LIMIT {
+        return Err(ValidationError::Rule(
+            "a TURN credential request must carry the sentinel limit",
+        ));
+    }
+    fresh(f.timestamp, now)
 }
 
 /// Validates a mailbox ack's structure.
@@ -679,6 +710,57 @@ mod tests {
         assert!(fresh(NOW - MAX_REQUEST_AGE_SECS - 1, NOW).is_err());
         assert!(fresh(NOW - 10, NOW).is_ok());
         assert!(fresh(NOW + MAX_FUTURE_SKEW_SECS + 1, NOW).is_err());
+    }
+
+    fn fetch_shape(limit: u32, cursor: Vec<u8>) -> pb::MailboxFetch {
+        pb::MailboxFetch {
+            mailbox: vec![1; 32],
+            device_pubkey: vec![2; 32],
+            cursor,
+            limit,
+            timestamp: NOW,
+            signature: vec![3; 64],
+        }
+    }
+
+    #[test]
+    fn mailbox_fetch_refuses_the_turn_sentinel() {
+        // A real fetch with the default limit is a page of MAX_MAILBOX_PAGE.
+        assert_eq!(
+            mailbox_fetch(&fetch_shape(0, vec![]), NOW).unwrap(),
+            MAX_MAILBOX_PAGE
+        );
+        assert_eq!(mailbox_fetch(&fetch_shape(7, vec![]), NOW).unwrap(), 7);
+        // The TURN sentinel is never a page size.
+        assert!(matches!(
+            mailbox_fetch(&fetch_shape(TURN_SENTINEL_LIMIT, vec![]), NOW),
+            Err(ValidationError::Rule(_))
+        ));
+    }
+
+    #[test]
+    fn turn_credential_fetch_requires_the_sentinel_and_no_cursor() {
+        turn_credential_fetch(&fetch_shape(TURN_SENTINEL_LIMIT, vec![]), NOW).unwrap();
+        // What a legitimate mailbox fetch looks like is refused on this path.
+        assert!(matches!(
+            turn_credential_fetch(&fetch_shape(0, vec![]), NOW),
+            Err(ValidationError::Rule(_))
+        ));
+        assert!(matches!(
+            turn_credential_fetch(&fetch_shape(MAX_MAILBOX_PAGE, vec![]), NOW),
+            Err(ValidationError::Rule(_))
+        ));
+        assert!(matches!(
+            turn_credential_fetch(&fetch_shape(TURN_SENTINEL_LIMIT, vec![9; 40]), NOW),
+            Err(ValidationError::Rule(_))
+        ));
+        // Freshness still applies.
+        let mut old = fetch_shape(TURN_SENTINEL_LIMIT, vec![]);
+        old.timestamp = NOW - MAX_REQUEST_AGE_SECS - 1;
+        assert!(matches!(
+            turn_credential_fetch(&old, NOW),
+            Err(ValidationError::Stale { .. })
+        ));
     }
 
     #[test]

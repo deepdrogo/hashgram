@@ -1,6 +1,8 @@
 syntax = "proto3";
 package hashgram.chat.v1;
 
+import "hashgram/app/v1/app.proto";
+
 option go_package = "github.com/hashgram/hashgram/pkg/chatpb;chatpb";
 
 // What travels inside an MLS application message.
@@ -32,6 +34,11 @@ enum ChatKind {
   CHAT_KIND_CALL = 9;
   // Voice message: an attachment that clients render as audio.
   CHAT_KIND_VOICE = 10;
+  // A Hashgram One application message (HashMail, HashDrive share, People,
+  // Circles, Spaces, device sync). The payload is `app`. Clients that
+  // predate it see an unknown kind and ignore the message, which is the
+  // intended behaviour: none of these are chat lines.
+  CHAT_KIND_APP = 11;
 }
 
 // A reference to an encrypted blob plus the key to open it. The blob is
@@ -98,4 +105,6 @@ message ChatMessage {
   uint32 disappear_after_secs = 10;
   GroupInfo group_info = 11;
   CallSignal call = 12;
+  // For CHAT_KIND_APP: the application envelope.
+  hashgram.app.v1.AppMessage app = 13;
 }

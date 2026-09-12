@@ -1,135 +1,107 @@
-# hashgram-node
+# node — the Rust off-chain layer
 
-The Rust peer-to-peer layer. **Phase 2, partially built.**
+Everything Hashgram does that is not consensus lives here: network identity
+and handshake, the libp2p swarm, store-and-forward mailboxes, content-
+addressed blobs, signed social events, the useful-service rewards agent, the
+Hashgram One application protocol, and the client SDK that ties them
+together. The chain itself (`hashgramd`, Go) is in the repository root.
 
-Read this before reading the code, because the gap between what is here and
-what the design calls for is large and stating it plainly is more useful than
-letting the crate names imply completeness.
+This is a Cargo workspace (`node/Cargo.toml`). Members outside this directory
+(`../sdk/rust/hashgram-sdk`, `../apps/desktop/*`) build against the same
+lock file.
 
-## What is implemented and tested
+## Crates
 
-| Crate | Module | State |
-| --- | --- | --- |
-| `hashgram-net` | `identity` | Network identity, signing domains, canonical preimages. **Byte-identical to Go**, verified against generated vectors. |
-| `hashgram-net` | `purpose` | The nine signature purposes and their wire strings. |
-| `hashgram-net` | `handshake` | The five-part peer handshake, including the genesis hash check CometBFT does not perform. |
-| `hashgram-p2p` | `score` | Peer scoring with proportional decay, graylisting and banning. |
-| `hashgram-p2p` | `limits` | Per-peer, per-subnet and global connection limits. |
-| `hashgram-p2p` | `config` | Configuration loading and validation. |
+| Crate | What it is |
+| --- | --- |
+| `hashgram-net` | Network identity (magic, network id, chain id, genesis hash), the 13 domain-separated signing purposes, canonical preimages, and the peer handshake. Byte-identical to the Go implementation, checked against generated vectors. |
+| `hashgram-proto` | Off-chain wire types generated from `proto/hashgram/{p2p,chat,app}/v1`, plus frame bounds (`limits`), structural validation (`validate`), signing helpers, CID and Merkle computation. |
+| `hashgram-chain` | REST/relay chain client, secp256k1 wallet, transaction messages, pluggable transport (HTTP or the P2P chain relay). |
+| `hashgram-identity` | Encrypted device vault: Argon2id + XChaCha20-Poly1305, atomic writes, zeroisation. |
+| `hashgram-mls` | OpenMLS (RFC 9420) wrapper with one ciphersuite; used by messaging, Mail, Circles and Spaces. |
+| `hashgram-p2p` | libp2p swarm (QUIC/TCP, Noise, Yamux), gossipsub, Kademlia, identify, autonat; handshake gate, peer scoring, per-peer and per-subnet connection limits, persistent peerstore, Prometheus metrics. |
+| `hashgram-node` | The node daemon: role-based services (`store`, `media`, `relay`, `bootstrap`, `call`), maintenance sweeps, rewards agent, local operator API. |
+| `hashgram-app` | Pure application protocol for Hashgram One: HashMail, HashDrive, People, Circles, Spaces. Message models and bounds, Drive encryption and manifest merge, capabilities, signed Space event log. No network or storage dependency. |
+| `hashgram-client` | Reference CLI over `hashgram-sdk`; the developer harness for identities, wallet, messaging, social, media and the Hashgram One commands. |
+| `hashgram-devtools` | Mock chain gateway for devnet only. |
+| `fuzz` | cargo-fuzz targets for every attacker-facing decoder (frames, handshake, envelopes, gossip, manifests, events, chat and MLS messages). |
 
-72 tests, `cargo clippy --all-targets --all-features` clean with the
-workspace's deny list.
+## The node daemon
 
-## What is not implemented
+`hashgram-node run` reads `/etc/hashgram/node.toml` and starts the services
+its roles call for:
 
-The libp2p swarm itself, and everything that rides on it:
+* **store / media** — mailboxes and one-time key packages (`mailbox.rs`),
+  content-addressed blobs with 1 MiB chunks, per-uploader quota and a
+  replication target of three (`blob.rs`).
+* **relay / bootstrap** — allow-listed chain reads and broadcast for wallets
+  without a gateway (`chain_relay.rs`), peer exchange, signed bootstrap
+  records.
+* **call** — TURN/SFU announcement and time-limited coturn credentials
+  (`calls.rs`). Present on the wire; not part of the Hashgram One desktop
+  surface.
+* Always: signed social events with device authority checked against the
+  chain (`social.rs`), signed content attestations from trusted attestors
+  (`safety.rs`), node announcements, and the rewards agent when an operator
+  key is present (`rewards.rs`: registration, storage challenges, receipt
+  batching, assignments).
 
-- Transport: QUIC and TCP, Noise, Yamux
-- Behaviours: Gossipsub, Kademlia, identify, autonat, circuit relay, ping
-- Bootstrap discovery: bundled peers, DHT, peer exchange, signed records
-- Persistent peerstore
-- OpenMLS end-to-end encrypted messaging
-- Store-and-forward envelope store
-- Signed social events and their partitioned topics
-- Content-addressed blob storage
-- Call discovery
-- The `hashgram-node` binary, which currently prints what is missing and exits
-  non-zero rather than pretending to run a node
+A 60 s maintenance tick sweeps expired envelopes and replay keys, drops
+uploads still incomplete after 24 h and releases their quota, runs a bounded
+replication pass, answers challenges and submits receipts.
 
-## Why the identity crate exists separately
+The operator API (loopback by default) serves `/metrics`, `/v1/health`,
+`/v1/status`, `/v1/peers`, `/v1/rewards`, and same-host endpoints for
+social events, blobs, mailbox hints, safety attestations, TURN credentials
+and a read-only chain pass-through.
 
-Network identity is a protocol fact used by the P2P handshake, by social event
-signing, by device certificates and by every client SDK. Those have very
-different dependency needs — a mobile SDK does not want libp2p — so identity
-lives in a crate with four small dependencies.
+## Security properties that shape the code
 
-## Cross-language parity
+* **Bounds before allocation.** Every frame and field limit in
+  `hashgram-proto::limits` is checked before bytes are decoded or stored.
+* **Panicking lints are denied.** `unwrap_used`, `panic`, `todo`,
+  `unimplemented` are compile errors outside tests; the daemon parses
+  attacker-controlled bytes and an unwrap is a remote denial of service.
+* **Fail-closed handshake.** All five identity parts are verified before any
+  application data; a same-chain-id fork with a different genesis is
+  refused, which CometBFT's own handshake does not do. Handshake claims
+  (roles, operator address) are bounded.
+* **Signed requests are fresh and served once.** Mailbox fetches and acks
+  bind a timestamp (±300 s) and the node refuses an exact request it has
+  already served inside that window. TURN credential requests use a reserved
+  sentinel limit so they can never be confused with a mailbox fetch.
+* **Local, decaying peer scores; per-subnet limits; reserved outbound
+  slots.** Reputation is never shared, so it cannot be weaponised; a /24
+  does not bypass a per-peer limit; an inbound flood cannot isolate the node.
 
-`hashgram-net` and Go's `app/params` must produce **byte-identical** signing
-preimages. A signature is only verifiable if the verifier builds the same
-preimage the signer built.
+## Building and testing
 
-The tests check against vectors generated from the Go implementation:
+```bash
+cd node
+cargo test -p hashgram-net -p hashgram-proto -p hashgram-p2p -p hashgram-node
+cargo clippy -p hashgram-node --all-targets
+cargo fmt --all -- --check
+```
+
+Cross-language parity vectors for `hashgram-net` are regenerated from the Go
+side and must match byte for byte:
 
 ```bash
 go run ./tools/signing-vectors > node/testdata/signing-vectors.json
 cd node && cargo test -p hashgram-net --test vectors
 ```
 
-That direction matters. The vectors come from the code the chain actually
-runs, so this is a parity test rather than a second reading of the
-specification: a specification can be misread twice in the same way, and a
-generated vector cannot.
-
-90 preimages and 90 digests are checked across both networks and all nine
-purposes. A framing change makes them fail, which is correct — such a change
-invalidates every signature ever produced and both implementations must adopt
-it deliberately.
-
-The mechanism was verified by breaking it on purpose: changing the outer
-length prefix from 64-bit to 32-bit made the parity tests fail immediately.
-
-## The gap this layer closes
-
-CometBFT's peer handshake compares chain ids. It does **not** hash the genesis
-file. That was verified rather than assumed: a fork keeping the real chain id
-and changing only the genesis was pointed at a four-validator testnet, and the
-transport connection opened. Consensus refused its blocks and the real chain
-was unaffected, but the connection happened.
-
-Three layers turn a fork away today: the CometBFT handshake for a different
-chain id, consensus for a same-chain-id fork, and `hashgramctl join-mainnet`
-for an operator handed the wrong file. **None of them stops a same-chain-id
-fork from opening a socket.**
-
-`hashgram-net::Handshake` closes that gap by verifying all five identity
-parts before any application data is exchanged, and returns a distinct error
-per part so an operator sees which one disagreed.
-
-## Design notes worth knowing
-
-**The panicking lints are denied, not warned.** This daemon parses
-attacker-controlled bytes, so an `unwrap` on a malformed frame is a remote
-denial of service. `unwrap_used`, `panic`, `todo` and `unimplemented` are
-compile errors in non-test code. Test crates opt out at their own crate root,
-because a test that unwraps a fixture it just built is a different situation.
-
-**Peer scores are local, private and decaying.** A shared reputation system is
-one an attacker can use to get honest peers banned, so every node forms its
-own view from its own observations. Scores decay proportionally toward zero, so
-recent behaviour dominates and a briefly broken node recovers. They are bounded
-in both directions, so a long-lived peer cannot bank enough credit to
-misbehave freely — there is a test for exactly that.
-
-**Connection limits are per-subnet, not only per-peer.** A per-peer limit is
-bypassed by an attacker with a /24: 256 addresses, each within the limit.
-Grouping by /24 for IPv4 and /64 for IPv6 raises the cost to addresses in many
-networks. The /64 choice matters: a single host is routinely handed a whole
-/64, so grouping by full address would be no limit at all.
-
-**Outbound slots are reserved.** Inbound connections are attacker-controlled;
-outbound are ours. A flood filling the inbound table must not stop this node
-reaching the peers it chose, or isolation becomes cheap.
-
-## Building
-
-```bash
-cd node
-cargo test --all
-cargo clippy --all-targets --all-features
-cargo fmt --all -- --check
-```
-
 ## Configuration
 
-`/etc/hashgram/node.toml`. Only two fields have no sensible default:
+`/etc/hashgram/node.toml`. Two fields have no default and the node refuses to
+start without them:
 
 ```toml
 network      = "mainnet"
 genesis_hash = "…64 hex characters…"
 ```
 
-Copy the hash from `/etc/hashgram/network.json`, which `hashgramctl
-join-mainnet` writes after verifying it. A node with no pinned genesis is
-refused at startup rather than at first handshake, because an unpinned node
-would join whichever network reached it first.
+`hashgramctl join-mainnet` writes the verified hash to
+`/etc/hashgram/network.json`; copy it from there. Roles, listen address,
+storage quota, chain API, TURN and rewards settings are documented in
+`hashgram-p2p/src/config.rs` and validated by `hashgram-node check-config`.

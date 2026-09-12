@@ -1,0 +1,21 @@
+# Every text file is LF in the working tree on every platform. Two things
+# depend on it: the embedded genesis.json is hashed byte for byte against
+# the compile-time pin (node/hashgram-net/src/mainnet.rs), and the shell
+# scripts must run under Git Bash on Windows without CRLF breakage.
+* text=auto eol=lf
+
+# Hash-pinned artefacts: never touched by any conversion.
+app/params/mainnet/genesis.json -text
+node/testdata/*.json -text
+
+# Windows-native files keep CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+*.bundle binary

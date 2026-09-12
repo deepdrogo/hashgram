@@ -15,6 +15,8 @@ hashgram-chain = { path = "../../../node/hashgram-chain" }
 hashgram-identity = { path = "../../../node/hashgram-identity" }
 hashgram-p2p = { path = "../../../node/hashgram-p2p" }
 hashgram-mls = { path = "../../../node/hashgram-mls" }
+hashgram-app = { path = "../../../node/hashgram-app" }
+redb.workspace = true
 tokio.workspace = true
 prometheus-client.workspace = true
 prost.workspace = true
@@ -27,6 +29,10 @@ chacha20poly1305 = "0.10"
 getrandom.workspace = true
 blake3.workspace = true
 toml.workspace = true
+async-trait = "0.1"
+argon2 = "0.5"
+zeroize = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 [lints]
 workspace = true

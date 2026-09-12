@@ -73,6 +73,20 @@ pub const MAX_MULTIADDR_BYTES: usize = 256;
 /// Most envelopes returned per mailbox fetch page.
 pub const MAX_MAILBOX_PAGE: u32 = 100;
 
+/// The `limit` a TURN credential request carries in the `MailboxFetch`
+/// preimage it signs under the `mailbox-fetch` purpose.
+///
+/// Reusing the fetch purpose proves "I hold this device key right now"
+/// without a fourteenth signing domain (a cross-language change). The price
+/// is that the two preimages must never coincide: a real fetch with an empty
+/// cursor and the default limit was byte-identical to a credential request,
+/// so a store node could replay a fetch it had legitimately received to
+/// obtain TURN credentials labelled with the victim's device. `u32::MAX` is
+/// never a meaningful page size, so [`crate::validate::mailbox_fetch`]
+/// refuses it outright and the TURN path requires it, which makes the two
+/// preimage sets disjoint.
+pub const TURN_SENTINEL_LIMIT: u32 = u32::MAX;
+
 /// Most events returned per fetch.
 pub const MAX_EVENT_PAGE: u32 = 200;
 

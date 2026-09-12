@@ -1,0 +1,77 @@
+[package]
+name = "hashgram-desktop"
+workspace = "../../../node"
+description = "Hashgram for Windows: wallet, messenger, social network, calls, identity and node, talking to the peer-to-peer network"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lib]
+name = "hashgram_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# In-repo: the SDK is the client; the app is pixels and glue.
+hashgram-sdk = { path = "../../../sdk/rust/hashgram-sdk" }
+hashgram-chain = { path = "../../../node/hashgram-chain" }
+hashgram-net = { path = "../../../node/hashgram-net" }
+hashgram-identity = { path = "../../../node/hashgram-identity" }
+hashgram-p2p = { path = "../../../node/hashgram-p2p" }
+hashgram-proto = { path = "../../../node/hashgram-proto" }
+
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
+tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-os = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-deep-link = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-dialog = "2"
+
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+hex.workspace = true
+blake3.workspace = true
+sha2.workspace = true
+getrandom.workspace = true
+prost.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+chacha20poly1305 = "0.10"
+zeroize = { version = "1", features = ["derive"] }
+qrcode = { version = "0.14", default-features = false }
+bech32.workspace = true
+time = { version = "0.3", features = ["formatting", "parsing"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+axum.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Security_Cryptography",
+    "Win32_Foundation",
+    "Win32_System_Memory",
+    "Win32_System_WinRT",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+    "Security_Credentials",
+    "Storage_Streams",
+    "Foundation",
+] }
+
+[lints]
+workspace = true

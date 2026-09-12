@@ -18,6 +18,7 @@
 //!   records on chain which providers hold which blobs, which is what turns
 //!   replicated bytes into paid byte-hours.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -28,6 +29,8 @@ use hashgram_net::{NetworkIdentity, SigningPurpose};
 use hashgram_p2p::{NodeConfig, PeerId};
 use hashgram_proto::pb;
 use hashgram_proto::{merkle, signing, Ed25519Signer};
+use prometheus_client::metrics::counter::Counter;
+use prometheus_client::registry::Registry;
 use prost::Message;
 use redb::{Database, ReadableDatabase, ReadableTable, ReadableTableMetadata, TableDefinition};
 use serde::Deserialize;
@@ -46,6 +49,15 @@ const ASSIGNED: TableDefinition<(&[u8], &str), u32> = TableDefinition::new("assi
 /// Most receipts per submission transaction.
 const BATCH: usize = 100;
 
+/// Most receipts held waiting for submission. Receipts arrive from anyone
+/// this node serves, each is verified but a flood of valid ones from many
+/// client keys is cheap to produce; the table is on disk and would otherwise
+/// grow without bound. At the cap the lowest key `(epoch, client, nonce)`
+/// is dropped first, which is the oldest epoch and therefore the receipt
+/// closest to being unsubmittable anyway. 50,000 is 500 batches, a day of
+/// submissions at one per minute, far more than one node earns in an epoch.
+pub const MAX_PENDING_RECEIPTS: u64 = 50_000;
+
 /// Pending-receipt key: (epoch, client key, nonce).
 type PendingKey = (u64, Vec<u8>, u64);
 
@@ -60,6 +72,10 @@ pub struct RewardsAgent {
     epoch: Mutex<(u64, Instant)>,
     is_assigner: Mutex<(Option<bool>, Instant)>,
     stats: Mutex<AgentStats>,
+    /// Pending receipts evicted to make room at the cap.
+    receipts_dropped: Counter,
+    /// The cap in force: [`MAX_PENDING_RECEIPTS`], lowered only by tests.
+    pending_cap: AtomicU64,
 }
 
 /// Counters for the operator API.
@@ -73,6 +89,8 @@ pub struct AgentStats {
     pub receipts_settled: u64,
     /// Receipts the chain rejected.
     pub receipts_rejected: u64,
+    /// Pending receipts dropped unsubmitted because the table was full.
+    pub receipts_dropped: u64,
     /// Challenges answered since start.
     pub challenges_answered: u64,
     /// Challenges we could not answer (blob not held).
@@ -184,7 +202,18 @@ impl RewardsAgent {
             epoch: Mutex::new((0, Instant::now() - Duration::from_secs(3600))),
             is_assigner: Mutex::new((None, Instant::now() - Duration::from_secs(3600))),
             stats: Mutex::new(AgentStats::default()),
+            receipts_dropped: Counter::default(),
+            pending_cap: AtomicU64::new(MAX_PENDING_RECEIPTS),
         }))
+    }
+
+    /// Registers this agent's metrics: `hashgram_receipts_dropped_total`.
+    pub fn register_metrics(&self, registry: &mut Registry) {
+        registry.register(
+            "hashgram_receipts_dropped",
+            "Pending service receipts evicted unsubmitted because the pending table was at its cap",
+            self.receipts_dropped.clone(),
+        );
     }
 
     /// The operator address.
@@ -335,19 +364,46 @@ impl RewardsAgent {
                 r.epoch
             ));
         }
+        if let Err(why) = self.insert_pending(r) {
+            return refuse(why);
+        }
+        self.stat(|s| s.receipts_accepted += 1);
+        debug!(%from, units = r.units, role = r.role, "receipt accepted");
+        Ok(())
+    }
+
+    /// Stores a verified receipt in the pending table, making room at the
+    /// cap by dropping the lowest keys first. Refuses a duplicate nonce.
+    fn insert_pending(&self, r: &pb::ServiceReceipt) -> Result<(), String> {
         let txn = self.db.begin_write().map_err(|e| e.to_string())?;
+        let mut dropped = 0u64;
         {
             let mut t = txn.open_table(PENDING).map_err(|e| e.to_string())?;
             let key = (r.epoch, r.client_pubkey.as_slice(), r.nonce);
             if t.get(key).map_err(|e| e.to_string())?.is_some() {
-                return refuse("duplicate nonce".into());
+                return Err("duplicate nonce".into());
+            }
+            // Keys sort by (epoch, client, nonce), so the first entry is in
+            // the oldest epoch: the one the chain is soonest to refuse.
+            let cap = self.pending_cap.load(Ordering::Relaxed);
+            while t.len().map_err(|e| e.to_string())? >= cap {
+                if t.pop_first().map_err(|e| e.to_string())?.is_none() {
+                    break;
+                }
+                dropped += 1;
             }
             t.insert(key, r.encode_to_vec().as_slice())
                 .map_err(|e| e.to_string())?;
         }
         txn.commit().map_err(|e| e.to_string())?;
-        self.stat(|s| s.receipts_accepted += 1);
-        debug!(%from, units = r.units, role = r.role, "receipt accepted");
+        if dropped > 0 {
+            self.receipts_dropped.inc_by(dropped);
+            self.stat(|s| s.receipts_dropped += dropped);
+            warn!(
+                dropped,
+                "pending receipt table full; oldest dropped unsubmitted"
+            );
+        }
         Ok(())
     }
 
@@ -729,6 +785,98 @@ mod tests {
         ]);
         assert_eq!(r, vec![1, 2, 4]);
         assert!(role_ids(&["indexer".into()]).is_empty());
+    }
+
+    fn agent() -> Arc<RewardsAgent> {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = std::env::temp_dir().join(format!(
+            "hg-rewards-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        let db = crate::store::open(&dir, "rewards").unwrap();
+        let cfg: NodeConfig = toml::from_str("").unwrap();
+        let network = NetworkIdentity::devnet(
+            "9348af00681eecefb8d6329d5ba101c13bc3c8943f2c610295026f6503654287",
+        );
+        RewardsAgent::open(
+            db,
+            cfg,
+            network,
+            &[7u8; 32],
+            Ed25519Signer::generate().unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn receipt(epoch: u64, client: u8, nonce: u64) -> pb::ServiceReceipt {
+        pb::ServiceReceipt {
+            epoch,
+            client_pubkey: vec![client; 32],
+            nonce,
+            units: 1,
+            ..Default::default()
+        }
+    }
+
+    fn pending_keys(a: &RewardsAgent) -> Vec<PendingKey> {
+        let txn = a.db.begin_read().unwrap();
+        let t = txn.open_table(PENDING).unwrap();
+        t.iter()
+            .unwrap()
+            .map(|r| {
+                let (k, _) = r.unwrap();
+                let (e, c, n) = k.value();
+                (e, c.to_vec(), n)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pending_receipts_are_capped_oldest_epoch_first() {
+        let a = agent();
+        a.pending_cap.store(3, Ordering::Relaxed);
+        // Insert out of order so the drop is by key, not by arrival.
+        a.insert_pending(&receipt(12, 2, 1)).unwrap();
+        a.insert_pending(&receipt(10, 9, 5)).unwrap();
+        a.insert_pending(&receipt(11, 1, 7)).unwrap();
+        assert_eq!(a.pending_count(), 3);
+        assert_eq!(a.receipts_dropped.get(), 0);
+
+        // At the cap: the lowest key (epoch 10) goes, the new one stays.
+        a.insert_pending(&receipt(12, 3, 2)).unwrap();
+        assert_eq!(a.pending_count(), 3);
+        assert_eq!(a.receipts_dropped.get(), 1);
+        assert_eq!(a.stats.lock().unwrap().receipts_dropped, 1);
+        let keys = pending_keys(&a);
+        assert_eq!(keys[0], (11, vec![1; 32], 7));
+        assert!(keys.iter().all(|k| k.0 >= 11));
+
+        // A duplicate nonce is refused without evicting anything.
+        assert_eq!(
+            a.insert_pending(&receipt(12, 3, 2)),
+            Err("duplicate nonce".to_owned())
+        );
+        assert_eq!(a.pending_count(), 3);
+        assert_eq!(a.receipts_dropped.get(), 1);
+
+        // Within an epoch the lowest client key goes first.
+        a.insert_pending(&receipt(12, 4, 0)).unwrap();
+        assert_eq!(pending_keys(&a)[0], (12, vec![2; 32], 1));
+        assert_eq!(a.receipts_dropped.get(), 2);
+    }
+
+    #[test]
+    fn the_default_cap_is_the_documented_constant() {
+        let a = agent();
+        assert_eq!(a.pending_cap.load(Ordering::Relaxed), MAX_PENDING_RECEIPTS);
+        assert_eq!(MAX_PENDING_RECEIPTS, 50_000);
+        // Under the cap nothing is dropped.
+        for n in 0..10 {
+            a.insert_pending(&receipt(1, 1, n)).unwrap();
+        }
+        assert_eq!(a.pending_count(), 10);
+        assert_eq!(a.receipts_dropped.get(), 0);
     }
 
     #[test]

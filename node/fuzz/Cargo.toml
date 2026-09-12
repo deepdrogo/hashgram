@@ -12,6 +12,7 @@ libfuzzer-sys = "0.4"
 hashgram-proto = { path = "../hashgram-proto" }
 hashgram-net = { path = "../hashgram-net" }
 hashgram-mls = { path = "../hashgram-mls" }
+hashgram-app = { path = "../hashgram-app" }
 prost = "0.14"
 
 # Not a workspace member: cargo-fuzz wants its own profile and nightly.
@@ -69,6 +70,13 @@ bench = false
 [[bin]]
 name = "chat_message"
 path = "fuzz_targets/chat_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "app_message"
+path = "fuzz_targets/app_message.rs"
 test = false
 doc = false
 bench = false

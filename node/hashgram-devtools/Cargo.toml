@@ -1,0 +1,27 @@
+[package]
+name = "hashgram-devtools"
+description = "DEVNET ONLY developer tools: a mock chain REST gateway for exercising the P2P chain relay without a chain node"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "mock-gateway"
+path = "src/bin/mock_gateway.rs"
+
+[dependencies]
+tokio.workspace = true
+axum.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+serde.workspace = true
+sha2.workspace = true
+hex.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

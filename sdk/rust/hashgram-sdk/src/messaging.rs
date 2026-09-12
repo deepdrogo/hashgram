@@ -46,6 +46,10 @@ pub const VAULT_MLS_KEY: &str = "mls_state";
 pub const VAULT_CURSOR_KEY: &str = "mailbox_cursors";
 /// Key for recently processed envelope ids.
 pub const VAULT_SEEN_KEY: &str = "seen_envelopes";
+/// Attempts before an envelope that never processes is acknowledged away.
+pub const FAILED_ATTEMPTS_CAP: u32 = 5;
+/// Key for envelope failure counts.
+pub const VAULT_FAILED_KEY: &str = "failed_envelopes";
 /// How many processed envelope ids to remember. An envelope stored on
 /// several store nodes arrives several times; MLS refuses the second copy
 /// (secret reuse), so the copies are recognised here first.
@@ -83,6 +87,10 @@ pub struct Received {
     pub sender_device: String,
     /// The message.
     pub message: ChatView,
+    /// The message as decoded, with everything the view drops (attachment
+    /// keys and nonces, reply target, disappearing timer) for applications
+    /// that store and open attachments.
+    pub raw: chat::ChatMessage,
 }
 
 /// A chat message for display.
@@ -166,6 +174,8 @@ pub struct Messaging {
     cursors: HashMap<String, Vec<u8>>,
     /// Recently processed envelope ids, hex, oldest first.
     seen: Vec<String>,
+    /// Envelopes that failed to process, with attempt counts.
+    failed: HashMap<String, u32>,
 }
 
 impl Messaging {
@@ -199,12 +209,20 @@ impl Messaging {
             .and_then(|h| hex::decode(h).ok())
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
+        let failed = account
+            .contents
+            .extra
+            .get(VAULT_FAILED_KEY)
+            .and_then(|h| hex::decode(h).ok())
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
         Ok(Self {
             mls,
             device,
             address: account.address().to_owned(),
             cursors,
             seen,
+            failed,
         })
     }
 
@@ -225,13 +243,45 @@ impl Messaging {
             .contents
             .extra
             .insert(VAULT_SEEN_KEY.into(), hex::encode(seen));
+        let failed = serde_json::to_vec(&self.failed).unwrap_or_default();
+        account
+            .contents
+            .extra
+            .insert(VAULT_FAILED_KEY.into(), hex::encode(failed));
         Ok(())
+    }
+
+    fn mark_seen(&mut self, id_hex: String) {
+        self.seen.push(id_hex);
+        if self.seen.len() > SEEN_CAP {
+            let excess = self.seen.len() - SEEN_CAP;
+            self.seen.drain(..excess);
+        }
     }
 
     /// The MLS client.
     #[must_use]
     pub fn mls(&self) -> &MlsClient {
         &self.mls
+    }
+
+    /// Mutable MLS client, for group operations the higher layers drive
+    /// directly (device reconciliation, single-member Space groups).
+    pub fn mls_mut(&mut self) -> &mut MlsClient {
+        &mut self.mls
+    }
+
+    /// Delivers raw MLS bytes to one device's mailbox (see [`Self::deliver`]).
+    pub async fn deliver_raw(
+        &self,
+        link: &Link,
+        network: &NetworkIdentity,
+        device_pubkey: &[u8],
+        kind: pb::EnvelopeKind,
+        ciphertext: &[u8],
+    ) -> Result<(), SdkError> {
+        self.deliver(link, network, device_pubkey, kind, ciphertext)
+            .await
     }
 
     /// Publishes key packages to every store peer, and so registers this
@@ -660,31 +710,73 @@ impl Messaging {
                     .map(|e| e.ciphertext.len() as u64)
                     .sum::<u64>();
                 let mut acked = Vec::new();
-                for env in &page.envelopes {
+                // Welcomes first: a page routinely holds a Welcome and the
+                // first application message of the same group with the same
+                // second-resolution timestamp, and the message can only be
+                // processed once the group exists.
+                let mut ordered: Vec<&pb::Envelope> = page.envelopes.iter().collect();
+                ordered.sort_by_key(|e| {
+                    (
+                        e.kind != pb::EnvelopeKind::MlsWelcome as i32,
+                        e.created_at,
+                        e.id.clone(),
+                    )
+                });
+                // Envelopes that fail are retried within the page after the
+                // others (a Welcome may arrive later in the same page than
+                // its message would suggest) and are NOT acknowledged, so
+                // the store keeps them for the next sync. After
+                // FAILED_ATTEMPTS_CAP tries an envelope is given up and
+                // acknowledged so a permanently undecryptable one does not
+                // stay forever (it would expire on the node anyway).
+                let mut retry: Vec<&pb::Envelope> = Vec::new();
+                for env in ordered {
                     let id_hex = hex::encode(&env.id);
                     if self.seen.contains(&id_hex) {
                         acked.push(env.id.clone());
                         continue;
                     }
-                    self.seen.push(id_hex);
-                    if self.seen.len() > SEEN_CAP {
-                        let excess = self.seen.len() - SEEN_CAP;
-                        self.seen.drain(..excess);
-                    }
                     match self.process_envelope(env) {
                         Ok(Some(r)) => {
+                            self.mark_seen(id_hex);
                             out.push(r);
                             acked.push(env.id.clone());
                         }
-                        Ok(None) => acked.push(env.id.clone()),
-                        Err(e) => {
-                            // Leave it in the mailbox: another device of
-                            // ours, or a welcome that arrives before the
-                            // key package is ready. It expires eventually.
-                            debug!(error = %e, "envelope not processed");
+                        Ok(None) => {
+                            self.mark_seen(id_hex);
                             acked.push(env.id.clone());
                         }
+                        Err(_) => retry.push(env),
                     }
+                }
+                for env in retry {
+                    let id_hex = hex::encode(&env.id);
+                    match self.process_envelope(env) {
+                        Ok(Some(r)) => {
+                            self.mark_seen(id_hex);
+                            out.push(r);
+                            acked.push(env.id.clone());
+                        }
+                        Ok(None) => {
+                            self.mark_seen(id_hex);
+                            acked.push(env.id.clone());
+                        }
+                        Err(e) => {
+                            let n = self.failed.entry(id_hex.clone()).or_insert(0);
+                            *n += 1;
+                            if *n >= FAILED_ATTEMPTS_CAP {
+                                warn!(error = %e, attempts = *n, "envelope given up after repeated failures");
+                                self.failed.remove(&id_hex);
+                                self.mark_seen(id_hex);
+                                acked.push(env.id.clone());
+                            } else {
+                                debug!(error = %e, attempts = *n, "envelope not processed yet; left in the mailbox");
+                            }
+                        }
+                    }
+                }
+                if self.failed.len() > SEEN_CAP {
+                    self.failed.clear();
                 }
                 let mut ack = pb::MailboxAck {
                     envelope_ids: acked,
@@ -776,7 +868,8 @@ impl Messaging {
                         group_id: hex::encode(group_id),
                         sender: addr,
                         sender_device: hex::encode(sender_key),
-                        message: msg.into(),
+                        message: msg.clone().into(),
+                        raw: msg,
                     }))
                 }
                 Inbound::Commit { .. } | Inbound::Proposal { .. } | Inbound::Joined { .. } => {

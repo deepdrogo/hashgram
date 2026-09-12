@@ -1,8 +1,7 @@
 # hashgram.io — one prompt: live explorer, network dashboard, documentation
 
 Copy everything below the line into an AI coding agent opened on a clone of
-this repository (`git clone https://github.com/deepdrogo/hashgram`) on a
-**fresh, separate VPS** — the "explorer VPS". That
+this repository on a **fresh, separate VPS** — the "explorer VPS". That
 machine runs its **own full node** of the chain (not a validator), its own
 indexer and PostgreSQL, the API at `hashgram.io/api/v1/…`, the website at
 `hashgram.io`, and Caddy in front. It follows the network like any other
