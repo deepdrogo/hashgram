@@ -98,6 +98,36 @@ and [HASHGRAM_ONE_AI_HANDOFF.md](docs/HASHGRAM_ONE_AI_HANDOFF.md).
 
 ---
 
+## Hashgram One for Windows
+
+The complete desktop client is now public:
+**[Hashgram One v0.2.0 for Windows](https://github.com/deepdrogo/hashgram_windows/releases/tag/v0.2.0)**.
+It ships Mail, Drive, People, Feed, private Circles, role-based Spaces, Earn,
+Wallet, Network and Settings over this repository's `HashgramOne` SDK.
+
+<table>
+<tr>
+<td width="50%"><img src="assets/desktop/mail.png" alt="Hashgram One Mail"><br><sub><b>Mail</b> — encrypted inbox, requests, attachments and local drafts</sub></td>
+<td width="50%"><img src="assets/desktop/drive.png" alt="Hashgram One Drive"><br><sub><b>Drive</b> — encrypted files, versions and capability-based sharing</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="assets/desktop/wallet.png" alt="Hashgram One Wallet"><br><sub><b>Wallet</b> — HASH, staking, usernames and devices</sub></td>
+<td width="50%"><img src="assets/desktop/network.png" alt="Hashgram One Network"><br><sub><b>Network</b> — connected/rejected peers, pinned genesis and supply</sub></td>
+</tr>
+</table>
+
+The application is **Tauri 2 + SolidJS + Rust**, runs on Windows 10/11 x64,
+keeps cryptographic material behind typed Tauri commands, seals local state,
+and updates from minisign-verified GitHub Release artefacts. The v0.2.0
+preview is not Authenticode-signed yet, so the release page publishes
+SHA-256 checksums and states the SmartScreen limitation explicitly.
+
+[Product README](https://github.com/deepdrogo/hashgram_windows) ·
+[Download](https://github.com/deepdrogo/hashgram_windows/releases/latest) ·
+[Desktop architecture](https://github.com/deepdrogo/hashgram_windows/tree/main/apps/desktop)
+
+---
+
 ## Mainnet at a glance
 
 | | |
@@ -471,7 +501,7 @@ node/                   Rust workspace
 sdk/rust/hashgram-sdk/  the client SDK — HashgramOne facade, mail, drive, people, feed, circles, spaces,
                         devices, sync engine, wallet, provider, network, encrypted store, backup, leases, ai
 services/mail-gateway/  external SMTP compatibility gateway
-apps/desktop/           the previous Windows app (v0.1.1, Tauri 2 + SolidJS); superseded by docs/DESKTOP_APP_MASTER_PROMPT.md
+apps/desktop/           legacy in-tree Windows app; current Hashgram One v0.2.0 lives in deepdrogo/hashgram_windows
 deploy/                 hardened systemd units, Prometheus rules, Grafana dashboards
 scripts/                install/ · launch/ · testnet/ · dev/ (check-docs.sh keeps docs honest)
 docs/                   written from the code; says "not built" where it is not
@@ -488,7 +518,7 @@ The SDK is Rust and has no UI. Everything a client needs is behind
 
 | | |
 | --- | --- |
-| **Hashgram One desktop (Windows first)** — the complete, standalone build prompt describing the SDK as it exists: screens, commands, security tests, release | [docs/DESKTOP_APP_MASTER_PROMPT.md](docs/DESKTOP_APP_MASTER_PROMPT.md) · [checklist](docs/DESKTOP_APP_IMPLEMENTATION_CHECKLIST.md) |
+| **Hashgram One desktop for Windows** — public v0.2.0 application, screenshots, installer, security boundaries and signed updater | [deepdrogo/hashgram_windows](https://github.com/deepdrogo/hashgram_windows) · [latest release](https://github.com/deepdrogo/hashgram_windows/releases/latest) |
 | Reference CLI exercising every flow | [`node/hashgram-client/src/one.rs`](node/hashgram-client/src/one.rs) |
 | SDK reference | [`sdk/rust/hashgram-sdk/src/app.rs`](sdk/rust/hashgram-sdk/src/app.rs) and module docs |
 | Sync model a client must implement | [docs/SYNC_ENGINE.md](docs/SYNC_ENGINE.md) |
