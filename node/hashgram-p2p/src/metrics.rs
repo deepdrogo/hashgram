@@ -244,7 +244,7 @@ pub fn request_kind(req: &hashgram_proto::pb::Request) -> RequestKind {
         Some(B::Handshake(_)) => RequestKind::Handshake,
         Some(B::MailboxPut(_) | B::MailboxFetch(_) | B::MailboxAck(_)) => RequestKind::Mailbox,
         Some(B::KeyPackagePublish(_) | B::KeyPackageFetch(_)) => RequestKind::KeyPackage,
-        Some(B::EventFetch(_) | B::EventPublish(_)) => RequestKind::Event,
+        Some(B::EventFetch(_) | B::EventPublish(_) | B::SocialDigest(_)) => RequestKind::Event,
         Some(
             B::BlobGetManifest(_)
             | B::BlobGetChunk(_)

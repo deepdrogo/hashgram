@@ -1,8 +1,8 @@
 {
   "name": "hashgram-desktop",
   "private": true,
-  "version": "0.1.1",
-  "description": "Hashgram for Windows: wallet, messenger, social network, calls, identity and node — talking to the peer-to-peer network, never to one server.",
+  "version": "0.3.1",
+  "description": "Hashgram One for Windows: one identity, one inbox, one vault, one network. End-to-end encrypted Mail, Drive, People, Feed and Spaces on the Hashgram peer-to-peer network.",
   "type": "module",
   "scripts": {
     "dev": "vite",

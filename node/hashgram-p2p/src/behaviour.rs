@@ -118,7 +118,10 @@ impl Behaviour {
                 .with_interval(Duration::from_secs(300)),
         );
 
-        let ping = ping::Behaviour::new(ping::Config::new().with_interval(Duration::from_secs(30)));
+        // 15 s: a consumer NAT forgets an idle UDP mapping in about 30 s, so
+        // a 30 s ping left QUIC connections dying between probes; this also
+        // detects a dead peer in 45 s instead of 90.
+        let ping = ping::Behaviour::new(ping::Config::new().with_interval(Duration::from_secs(15)));
 
         let autonat = autonat::Behaviour::new(
             peer_id,

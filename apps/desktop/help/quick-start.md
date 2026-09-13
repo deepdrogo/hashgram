@@ -1,46 +1,46 @@
 # Quick start
 
-Hashgram for Windows is your wallet, messenger, social network, calls and
-identity in one application. It talks **directly to the Hashgram network of
-nodes** — never to a single server — so it keeps working when any one
-machine disappears.
+Hashgram One is **one identity, one inbox, one vault, one network**: Mail,
+Drive, Feed, People and Spaces on top of a peer-to-peer network of nodes.
+Nothing here talks to a single server, and nothing you write or store is
+readable by any node.
 
-## 1. Create or restore an account
+## 1. Create or restore your identity
 
-An account **is** a key. There is no sign-up, no email, no phone number and
-no password database anywhere.
+An identity **is** a key. There is no sign-up, no e-mail, no phone number.
 
-- **Create wallet** generates 24 words. Write them down, in order, on paper.
-  They are the only way to get your account back. The app shows them once
-  and asks you to re-type three of them.
-- **Restore** takes 24 words you already have and shows the address they
-  produce so you can confirm it is yours.
+- **Create identity** generates 24 words. Write them down, in order, on
+  paper. They are shown once; the app asks you to re-type three of them.
+- **Restore from 24 words** gives the same identity on any PC.
+- **Restore from a backup file** imports an encrypted vault backup made
+  from Settings → Security on another PC.
 
-Then you set a local passphrase (and optionally Windows Hello) to unlock
-the app day to day. The 24 words are never asked for again and never
-stored in plain text.
+Then set a passphrase for this PC (10 characters or more) and, if you
+like, Windows Hello for day-to-day unlocking.
 
-## 2. Your address
+## 2. Register on chain
 
-Your address starts with `hash1…`. People find you by it (or by an optional
-`@username` registered on chain). Share it from **Wallet → Receive**: as
-text, as a QR code, or as a `hashgram://` link.
+To send and receive mail, your identity and this device's key must be on
+chain. That is one transaction and needs a small amount of HASH for the
+fee. Until your account holds HASH the app says so honestly and shows
+your address as a QR code so someone can send you some. Drive, drafts and
+settings work before registration.
 
-## 3. Connecting
+## 3. Mail is home
 
-The status bar shows how many nodes the app is connected to and how the
-last chain read was verified. The app reads the chain through **two nodes
-run by different operators** and compares their answers. When only one
-operator is reachable it says so — that is a warning, not a badge.
+Mail opens first. Mail from people you know lands in **Inbox**; mail from
+strangers lands in **Requests**, where you accept, block or delete. Every
+message shows the sender as the network *authenticated* it, not as the
+message claims.
 
-## 4. Sending
+## 4. Sync
 
-**Wallet → Send**: paste an address or type an `@username`, enter the
-amount, review the fee, confirm. Transfers are untaxed: 100 HASH sent is
-100 HASH received.
+The dot in the top bar tells you where you are: synced, connecting, or
+offline showing what is on this device. Nothing is lost offline; the next
+sync round sends and receives what waited.
 
 ## Keyboard
 
-- `Ctrl+K` — search: address, `@username`, transaction hash, `#hashtag`, channel
-- `Ctrl+L` — lock
-- `Ctrl+Shift+P` — performance panel
+- `Ctrl+K` search Mail, Drive and People · `Ctrl+L` lock
+- Mail: `c` compose, `r` reply, `a` reply all, `f` forward, `e` archive,
+  `#` trash, `s` star, `j`/`k` move, `/` search, `Ctrl+Enter` send

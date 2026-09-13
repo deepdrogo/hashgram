@@ -1,8 +1,15 @@
 /* @refresh reload */
 import { render } from "solid-js/web";
-import { invoke } from "@tauri-apps/api/core";
 import "./styles/app.css";
-import { App } from "./App";
+
+// Development only: a fake IPC when the page runs in a plain browser.
+if (import.meta.env.DEV) {
+  const { installDevShim } = await import("./lib/devshim");
+  installDevShim();
+}
+
+const { invoke } = await import("@tauri-apps/api/core");
+const { App } = await import("./App");
 
 // Uncaught errors go to the Rust log (and the dev console). Messages are
 // ours; no secret ever passes through here.
@@ -16,7 +23,7 @@ const root = document.getElementById("root");
 if (root) {
   // No context menu in the chrome (content areas opt in), no zoom.
   window.addEventListener("contextmenu", (e) => {
-    if (!(e.target as HTMLElement | null)?.closest("input, textarea, .selectable")) e.preventDefault();
+    if (!(e.target as HTMLElement | null)?.closest("input, textarea, .selectable, [data-allow-context]")) e.preventDefault();
   });
   render(() => <App />, root);
 }

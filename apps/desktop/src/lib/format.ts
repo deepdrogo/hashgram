@@ -1,4 +1,7 @@
 // Formatting. Amounts are strings of uhash; never a float in arithmetic.
+// `formatHashSdk` mirrors hashgram_sdk::wallet::format_hash exactly
+// (tests/format.test.ts checks parity); `formatHash` is the UI variant with
+// thousands separators and trimmed decimals.
 
 export const UHASH_PER_HASH = 1_000_000n;
 
@@ -9,6 +12,12 @@ export function toBig(uhash: string | number | bigint | null | undefined): bigin
   } catch {
     return 0n;
   }
+}
+
+/** Exactly `hashgram_sdk::wallet::format_hash`: "x.yyyyyy HASH". */
+export function formatHashSdk(uhash: string | bigint | number): string {
+  const v = toBig(uhash);
+  return `${v / UHASH_PER_HASH}.${(v % UHASH_PER_HASH).toString().padStart(6, "0")} HASH`;
 }
 
 /** "1,234.56" style; trims trailing zeros to at least `minFrac`. */
@@ -28,18 +37,34 @@ export function formatUhash(uhash: string | bigint | number | null | undefined):
   return toBig(uhash).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",") + " uhash";
 }
 
-/** Parses a typed HASH amount into uhash; null when invalid. */
-export function parseHashInput(input: string): bigint | null {
-  const t = input.trim().replace(/[,_\s]/g, "");
+/** Exactly `hashgram_sdk::wallet::parse_amount`: "1.5" / "1.5 HASH" /
+ *  "1500000uhash" → uhash; null when invalid. */
+export function parseAmount(input: string): bigint | null {
+  let t = input.trim().toLowerCase();
   if (!t) return null;
-  if (!/^\d*(\.\d{0,6})?$/.test(t) || t === ".") return null;
-  const [w = "0", f = ""] = t.split(".");
-  return BigInt(w || "0") * UHASH_PER_HASH + BigInt((f + "000000").slice(0, 6));
+  if (t.endsWith("uhash")) {
+    const u = t.slice(0, -5).trim();
+    return /^\d+$/.test(u) ? BigInt(u) : null;
+  }
+  if (t.endsWith("hash")) t = t.slice(0, -4).trim();
+  const [whole = "", frac = ""] = t.split(".", 2);
+  if (t.split(".").length > 2) return null;
+  if (frac.length > 6 || (whole === "" && frac === "")) return null;
+  if (whole !== "" && !/^\d+$/.test(whole)) return null;
+  if (frac !== "" && !/^\d+$/.test(frac)) return null;
+  return BigInt(whole || "0") * UHASH_PER_HASH + BigInt((frac + "000000").slice(0, 6));
 }
 
 export function truncateMiddle(s: string, head = 10, tail = 6): string {
   if (!s || s.length <= head + tail + 1) return s ?? "";
   return `${s.slice(0, head)}…${s.slice(-tail)}`;
+}
+
+/** A short handle for an address: @name when known, else hash1abc…wxyz. */
+export function handle(address: string, username?: string | null, displayName?: string | null): string {
+  if (displayName && displayName.trim()) return displayName.trim();
+  if (username && username.trim()) return `@${username.trim()}`;
+  return truncateMiddle(address, 9, 4);
 }
 
 export function isHashAddress(s: string): boolean {
@@ -54,38 +79,53 @@ export function isTxHash(s: string): boolean {
   return /^[0-9a-fA-F]{64}$/.test(s.trim());
 }
 
+export function isHex(s: string, bytes?: number): boolean {
+  const t = s.trim();
+  if (!/^[0-9a-fA-F]*$/.test(t) || t.length % 2) return false;
+  return bytes ? t.length === bytes * 2 : t.length > 0;
+}
+
+const dateFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+const timeFmt = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-digit" });
+const dayFmt = new Intl.DateTimeFormat(undefined, { month: "short", day: "2-digit" });
+const yearFmt = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "short", day: "2-digit" });
+
 export function formatTime(unixSecs: number | string | null | undefined): string {
   if (!unixSecs) return "—";
   const n = typeof unixSecs === "string" ? Number(unixSecs) : unixSecs;
   if (!Number.isFinite(n) || n <= 0) return "—";
-  return new Date(n * 1000).toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return dateFmt.format(new Date(n * 1000));
+}
+
+export function formatMs(ms: number | null | undefined): string {
+  if (!ms) return "—";
+  return dateFmt.format(new Date(ms));
+}
+
+/** Mail-list style: time today, day this year, date otherwise. */
+export function shortWhen(ms: number): string {
+  if (!ms) return "";
+  const d = new Date(ms);
+  const now = new Date();
+  if (d.toDateString() === now.toDateString()) return timeFmt.format(d);
+  if (d.getFullYear() === now.getFullYear()) return dayFmt.format(d);
+  return yearFmt.format(d);
 }
 
 export function formatIso(iso: string | null | undefined): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return dateFmt.format(d);
 }
 
 export function relTime(unixSecs: number): string {
   const d = Math.max(0, Math.floor(Date.now() / 1000) - unixSecs);
-  if (d < 60) return `${d}s ago`;
-  if (d < 3600) return `${Math.floor(d / 60)}m ago`;
-  if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
-  return `${Math.floor(d / 86400)}d ago`;
+  if (d < 5) return "just now";
+  if (d < 60) return `${d} s ago`;
+  if (d < 3600) return `${Math.floor(d / 60)} min ago`;
+  if (d < 86400) return `${Math.floor(d / 3600)} h ago`;
+  return `${Math.floor(d / 86400)} d ago`;
 }
 
 export function formatDuration(secs: number): string {
@@ -119,22 +159,14 @@ export function pct(part: bigint, whole: bigint): string {
   return `${p.toFixed(2)} %`;
 }
 
-export function sourceLabel(s: { kind: string; url?: string } | null | undefined): string {
-  if (!s) return "no source";
-  if (s.kind === "local_node") return "node on this PC";
-  if (s.kind === "p2p_relay") return "P2P relay";
-  if (s.kind === "https") return s.url ?? "HTTPS";
-  return s.kind;
+export function roleName(role: number): string {
+  return ["—", "Guest", "Member", "Admin", "Owner"][role] ?? "—";
 }
 
-/** The sentence under a balance. */
-export function verificationLabel(v: { agreed: boolean; single_operator: boolean; peers: string[] } | null | undefined, source?: { kind: string } | null): string {
-  if (!v) {
-    if (source?.kind === "local_node") return "from the node on this PC";
-    if (source?.kind === "https") return "from a REST endpoint you configured";
-    return "not verified";
-  }
-  if (v.agreed) return `verified by ${v.peers.length} nodes`;
-  if (v.single_operator) return "verified by 1 node · single operator on network";
-  return `verified by ${v.peers.length} node · no second operator answered`;
+/** Splits comma/semicolon/space-separated recipients as typed. */
+export function splitRecipients(s: string): string[] {
+  return s
+    .split(/[,;\n]+|\s{2,}/)
+    .map((x) => x.trim())
+    .filter(Boolean);
 }

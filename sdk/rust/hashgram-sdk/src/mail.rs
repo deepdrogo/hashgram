@@ -53,6 +53,19 @@ const NS_MSG: &str = "mail/msg";
 const NS_META: &str = "mail/meta";
 const NS_DRAFT: &str = "mail/draft";
 
+/// Most non-contact recipients one message copy carries postage for.
+const MAX_STAMPS_PER_MESSAGE: usize = 8;
+
+/// Appends labels while staying inside the message's label bound.
+fn push_labels(msg: &mut app::MailMessage, labels: Vec<String>) {
+    for l in labels {
+        if msg.labels.len() >= m::MAX_LABELS {
+            break;
+        }
+        msg.labels.push(l);
+    }
+}
+
 /// A stored message with its local state.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MailRecord {
@@ -282,7 +295,8 @@ impl<'a> Mail<'a> {
     /// overwritten with our authenticated address.
     pub async fn send(&mut self, mut draft: m::Draft) -> Result<String, SdkError> {
         draft.from = self.my_address().await;
-        let out = draft.build_all()?;
+        let mut out = draft.build_all()?;
+        self.stamp_first_contacts(&mut out).await;
         let id = self.send_built(out.main, out.bcc_copies).await?;
         // Live Drive attachments: remember the group so updates flow.
         for a in &draft.attachments {
@@ -293,6 +307,71 @@ impl<'a> Mail<'a> {
             }
         }
         Ok(id)
+    }
+
+    /// Attaches postage stamps (`hashgram_app::spam`) for recipients who
+    /// are not our contacts: a proof of work bound to each such recipient
+    /// and this message id, which their client scores as trust. Contacts
+    /// need none (they file us to Inbox regardless). Bounded to
+    /// [`MAX_STAMPS_PER_MESSAGE`] recipients per copy so a wide send stays
+    /// cheap and a bulk sender gains nothing from it. Never fails: a stamp
+    /// that cannot be minted is simply absent.
+    async fn stamp_first_contacts(&self, out: &mut m::Outgoing) {
+        let me = self.one.account.address().to_owned();
+        let needs_stamp = |addr: &str| -> bool {
+            addr != me
+                && addr.starts_with("hash1")
+                && !self.one.people_state.contacts.sender_facts(addr).is_contact
+        };
+        let mut jobs: Vec<(Vec<String>, Vec<u8>)> = Vec::new();
+        if let Some(main) = &out.main {
+            let strangers: Vec<String> = main
+                .to
+                .iter()
+                .chain(main.cc.iter())
+                .map(|a| a.address.clone())
+                .filter(|a| needs_stamp(a))
+                .take(MAX_STAMPS_PER_MESSAGE)
+                .collect();
+            jobs.push((strangers, main.message_id.clone()));
+        }
+        for (recipient, copy) in &out.bcc_copies {
+            let list = if needs_stamp(&recipient.address) {
+                vec![recipient.address.clone()]
+            } else {
+                Vec::new()
+            };
+            jobs.push((list, copy.message_id.clone()));
+        }
+        if jobs.iter().all(|(r, _)| r.is_empty()) {
+            return;
+        }
+        // CPU work off the async runtime.
+        let minted = tokio::task::spawn_blocking(move || {
+            jobs.into_iter()
+                .map(|(recipients, id)| {
+                    recipients
+                        .iter()
+                        .filter_map(|r| {
+                            spam::mint_postage(r, &id, spam::POSTAGE_BITS, spam::POSTAGE_MAX_ITERS)
+                        })
+                        .collect::<Vec<String>>()
+                })
+                .collect::<Vec<Vec<String>>>()
+        })
+        .await
+        .unwrap_or_default();
+        let mut it = minted.into_iter();
+        if let Some(main) = &mut out.main {
+            if let Some(labels) = it.next() {
+                push_labels(main, labels);
+            }
+        }
+        for (_, copy) in &mut out.bcc_copies {
+            if let Some(labels) = it.next() {
+                push_labels(copy, labels);
+            }
+        }
     }
 
     /// Delivers already-built copies of one message: the To+CC copy to its
@@ -547,6 +626,8 @@ impl<'a> Mail<'a> {
             // Impersonation of another address is dropped outright.
             facts.is_blocked = true;
         }
+        // Work the sender spent addressing *us* specifically.
+        facts.postage_bits = spam::postage_bits(msg, &me);
         let score = spam::trust_score(&facts, msg);
         let now = hashgram_app::ids::now_secs();
         let disposition = spam::dispose(&facts, msg, &mut self.one.mail_state.window, now);

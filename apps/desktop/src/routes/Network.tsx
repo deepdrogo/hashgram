@@ -1,205 +1,172 @@
-// The Connected-nodes panel in full: peers with roles, operator, latency,
-// transport, discovery layer, who served the last read and whether they
-// agreed; wrong-network peers greyed with the reason; own NAT status;
-// chain source precedence with health dots; genesis pin; seeds; peerstore;
-// forget peers; diagnostics export with no IPs of other peers.
-import { createResource, createSignal, For, Show } from "solid-js";
-import { save } from "@tauri-apps/plugin-dialog";
-import { Card, Button, Notice, Skeleton, Badge, Stat } from "~/components/ui";
-import { Mono, HealthDot } from "~/components/identity";
-import { ipc, pick, str } from "~/lib/ipc";
+// Network: peers with roles and operator, rejected peers greyed with the
+// reason, chain height and verification, supply and reserve, indexer
+// leaderboards labelled as such, diagnostics export.
+import { For, Show, createResource, createSignal } from "solid-js";
+import { RefreshCw, Download, Network as NetIcon, ShieldCheck, ShieldAlert } from "lucide-solid";
+import { Button, Card, Notice, Stat, Badge, Skeleton, Tabs } from "~/components/ui";
+import { ErrorState } from "~/components/States";
+import { Mono } from "~/components/identity";
+import { ipc, errText, type NetworkOverview } from "~/lib/ipc";
 import { store } from "~/lib/store";
-import { formatDuration, sourceLabel, verificationLabel } from "~/lib/format";
-import { useChain } from "~/lib/chain";
+import { t } from "~/lib/i18n";
+import { formatHash } from "~/lib/format";
+import { pick, str, arr, coin } from "~/lib/chain";
+import { pickSavePath } from "~/lib/dialogs";
 
-export function Network() {
-  const net = store.net;
-  const [health, { refetch: reprobe }] = createResource(() => ipc.chainHealth(false).catch(() => null));
-  const [info] = useChain(() => "hashgram/network/v1/info");
-  const [fork] = useChain(() => "hashgram/network/v1/fork_isolation");
-  const [latest] = useChain(() => "cosmos/base/tendermint/v1beta1/blocks/latest");
-  const [busy, setBusy] = createSignal<string | null>(null);
-
-  const act = async (name: string, f: () => Promise<unknown>) => {
-    setBusy(name);
+export function NetworkRoute() {
+  const [ov, { refetch }] = createResource(
+    () => store.ticks().network,
+    () => ipc.networkOverview(),
+  );
+  const [supply] = createResource(
+    () => (store.locked() ? null : store.ticks().network),
+    () => ipc.networkSupply().catch(() => null),
+  );
+  const [board, setBoard] = createSignal<"holders" | "validators" | "providers" | "earners">("holders");
+  const [top] = createResource(
+    () => ({ b: board(), on: ov()?.indexer_configured ?? false, locked: store.locked() }),
+    (k) => (k.on && !k.locked ? ipc.networkTop(k.b, 25).catch(() => null) : Promise.resolve(null)),
+  );
+  const [stats] = createResource(
+    () => ({ on: ov()?.indexer_configured ?? false, locked: store.locked() }),
+    (k) => (k.on && !k.locked ? ipc.networkStats().catch(() => null) : Promise.resolve(null)),
+  );
+  const [busy, setBusy] = createSignal(false);
+  const exportDiag = async () => {
+    setBusy(true);
     try {
-      await f();
-      await store.refreshNet();
-      await reprobe();
+      const text = await ipc.diagnosticsExport();
+      const p = await pickSavePath("hashgram-diagnostics.txt");
+      if (p) {
+        await ipc.saveTextFile(p, text);
+        store.toast("Diagnostics saved (no IP addresses, no contact addresses)");
+      }
     } catch (e) {
-      store.toast(String(e), "error");
+      store.toast(errText(e), "error");
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
-  const exportDiag = () =>
-    act("diag", async () => {
-      const text = await ipc.diagnosticsExport();
-      const path = await save({ defaultPath: "hashgram-diagnostics.txt", filters: [{ name: "Text", extensions: ["txt"] }] });
-      if (path) {
-        await ipc.saveTextFile(path, text);
-        store.toast("Diagnostics exported (no peer IP addresses included)");
-      }
-    });
-  const height = () => str(pick(latest()?.ok ? (latest() as { value: unknown }).value : null, "block.header.height"), "—");
-  const blockTime = () => str(pick(latest()?.ok ? (latest() as { value: unknown }).value : null, "block.header.time"), "");
-  const genesisPinned = () => net()?.genesis_hash === "e322bc2319f6e0173286fa526dab5a8ff8ad0797c7b80dd03e7c9d98621d5e4d";
-
+  const rows = () => arr(pick(top(), "rows") ?? pick(top(), "items") ?? top());
   return (
-    <div class="page flex flex-col gap-4">
-      <div class="flex items-center justify-between">
-        <h1 class="page-title">Network</h1>
-        <div class="flex gap-2">
-          <Button size="sm" variant="secondary" loading={busy() === "latency"} onClick={() => act("latency", () => ipc.netMeasureLatency())}>
-            Measure latency
-          </Button>
-          <Button size="sm" variant="secondary" loading={busy() === "probe"} onClick={() => act("probe", () => ipc.chainHealth(true))}>
-            Re-check sources
-          </Button>
-          <Button size="sm" variant="secondary" loading={busy() === "diag"} onClick={exportDiag}>
-            Export diagnostics
-          </Button>
+    <div class="h-full overflow-auto">
+      <div class="page flex flex-col gap-4">
+        <div class="flex items-center justify-between">
+          <h1 class="page-title">{t("nav_network")}</h1>
+          <div class="flex gap-2">
+            <Button variant="secondary" size="sm" onClick={() => void ipc.netReconnect().then(() => store.toast("Reconnecting…"))}>
+              <RefreshCw size={12} /> Reconnect
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => void ipc.netForgetPeers().then(() => store.toast("Peers forgotten; dialling the built-in list"))}>
+              Forget peers
+            </Button>
+            <Button variant="ghost" size="sm" onClick={exportDiag} loading={busy()}>
+              <Download size={12} /> Export diagnostics
+            </Button>
+          </div>
         </div>
-      </div>
-
-      <div class="grid grid-cols-4 gap-3">
-        <Stat label="Connected nodes" value={`${net()?.verified ?? 0}`} sub={`${net()?.peers.length ?? 0} connections · ${net()?.kad_peers ?? 0} in DHT`} />
-        <Stat label="Chain height" value={height()} sub={blockTime() ? new Date(blockTime()).toLocaleTimeString() : "from relayed reads"} />
-        <Stat label="Genesis pin" mono={false} value={<span class="flex items-center gap-2">{genesisPinned() ? "✓ Mainnet" : net()?.network === "devnet" ? "DEVNET" : "—"}</span>} sub={<Mono text={net()?.genesis_hash ?? ""} head={12} tail={8} copy class="text-xs" />} />
-        <Stat label="Your NAT" mono={false} value={net()?.nat ?? "unknown"} sub={`peer id ${net()?.own_peer_id.slice(0, 12) ?? ""}… (ephemeral)`} />
-      </div>
-
-      <Card title="Chain sources (precedence order)">
-        <Show when={health()} fallback={<div class="p-4"><Skeleton lines={3} /></div>}>
-          <ul>
-            <For each={health()!.sources}>
-              {(s) => (
-                <li class="flex items-center gap-3 border-b border-border px-4 py-2 text-sm last:border-0">
-                  <HealthDot state={s.ok ? "ok" : s.detail.includes("wrong network") ? "bad" : "warn"} title={s.detail} />
-                  <span class="w-40 shrink-0">{sourceLabel(s.source)}</span>
-                  <span class="min-w-0 flex-1 truncate text-xs text-muted">{s.detail}</span>
-                  <span class="mono text-xs text-muted">{s.latency_ms} ms</span>
-                  <Show when={s.active}>
-                    <Badge strong>active</Badge>
-                  </Show>
-                </li>
-              )}
-            </For>
-          </ul>
-          <p class="px-4 py-2 text-xs text-muted">
-            Last read: {verificationLabel(net()?.last_read, health()?.active)} · relay operators reachable: {health()!.relay_operators}. A source on another chain id is "wrong network" and never used.
-          </p>
-        </Show>
-      </Card>
-
-      <Card title="Connected nodes">
-        <Show when={net()} fallback={<div class="p-4"><Skeleton lines={3} /></div>}>
-          <Show when={net()!.peers.length} fallback={<p class="p-4 text-xs text-muted">No connections yet. Allow outbound UDP and TCP 26670 in Windows Firewall if this persists.</p>}>
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>Peer</th>
-                  <th>Operator</th>
-                  <th>Roles</th>
-                  <th>Latency</th>
-                  <th>Transport</th>
-                  <th>Found via</th>
-                  <th>Last read</th>
-                </tr>
-              </thead>
-              <tbody>
-                <For each={net()!.peers}>
-                  {(p) => (
-                    <tr class={p.verified ? "" : "opacity-50"}>
-                      <td>
-                        <Mono text={p.peer_id} head={10} tail={6} copy />
-                        <Show when={!p.verified}>
-                          <Badge class="ml-2">handshaking</Badge>
-                        </Show>
-                      </td>
-                      <td>{p.operator ? <Mono text={p.operator} head={10} tail={4} /> : <span class="text-muted">—</span>}</td>
-                      <td>
-                        <span class="flex flex-wrap gap-1">
-                          <For each={p.roles}>{(r) => <Badge strong={r === "relay" || r === "bootstrap"}>{r}</Badge>}</For>
-                        </span>
-                      </td>
-                      <td class="mono">{p.latency_ms !== null ? `${p.latency_ms} ms` : "—"}</td>
-                      <td>
-                        {p.transport} <span class="text-xs text-muted">{p.direction}</span>
-                      </td>
-                      <td class="text-xs">{p.discovery}</td>
-                      <td class="text-xs">
-                        <Show when={p.served_last_read} fallback={p.agreed === false ? <Badge strong>disputed</Badge> : <span class="text-muted">—</span>}>
-                          <Badge strong={p.agreed === true}>{p.agreed === true ? "served · agreed" : p.agreed === false ? "served · disputed" : "served"}</Badge>
-                        </Show>
-                      </td>
-                    </tr>
+        <Show when={!ov.error} fallback={<ErrorState error={ov.error} onRetry={() => void refetch()} />}>
+          <Show when={ov()} fallback={<Skeleton lines={4} />}>
+            {(n: () => NetworkOverview) => (
+              <>
+                <div class="grid grid-cols-4 gap-3">
+                  <Stat label={t("network_peers")} value={String(n().peers.length)} sub={`${n().store_peers} store · ${n().relay_peers} relay · ${n().operators} operator${n().operators === 1 ? "" : "s"}`} />
+                  <Stat label="Chain height" value={n().height?.toLocaleString() ?? "—"} sub={n().verification ?? (store.locked() ? "unlock to read the chain" : "no read yet")} />
+                  <Stat label="Chain" mono={false} value={n().chain_id} sub={n().network_id} />
+                  <Stat label="Genesis" mono={false} value={<Mono text={n().genesis_hash} head={10} tail={8} copy />} sub="pinned at build time" />
+                </div>
+                <Show when={!n().link_up}>
+                  <Notice strong title="The network link is not up">{n().link_error ?? "starting…"} The app keeps retrying with a growing pause.</Notice>
+                </Show>
+                <Show when={n().link_up && n().operators === 1}>
+                  <Notice>Only one operator is reachable. Chain reads are cross-checked between nodes when two operators answer; with one, the note says so. That is a warning, not a badge.</Notice>
+                </Show>
+                <div class="grid grid-cols-2 gap-4">
+                  <Card title={t("network_peers")}>
+                    <ul>
+                      <For each={n().peers} fallback={<li class="p-4 text-xs text-muted">No verified peer yet. Nodes appear as they complete the handshake.</li>}>
+                        {(p) => (
+                          <li class="flex items-center gap-2 border-b border-border px-3 py-2 text-xs last:border-0">
+                            <ShieldCheck size={12} class="text-brand" />
+                            <Mono text={p.peer} head={10} tail={6} class="flex-1" />
+                            <span class="text-muted">{p.roles.join(", ")}</span>
+                            <Show when={p.operator}>
+                              <Mono text={p.operator} head={8} tail={4} class="text-muted" />
+                            </Show>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Card>
+                  <Card title={t("network_rejected")}>
+                    <ul>
+                      <For each={n().rejected} fallback={<li class="p-4 text-xs text-muted">No peer was rejected.</li>}>
+                        {([peer, reason]) => (
+                          <li class="flex items-center gap-2 border-b border-border px-3 py-2 text-xs text-muted opacity-70 last:border-0">
+                            <ShieldAlert size={12} />
+                            <Mono text={peer} head={10} tail={6} class="flex-1" />
+                            <span>{reason}</span>
+                          </li>
+                        )}
+                      </For>
+                    </ul>
+                  </Card>
+                </div>
+                <Show when={supply()}>
+                  {(s) => (
+                    <div class="grid grid-cols-3 gap-3">
+                      <Stat label="Total supply" value={`${formatHash(coin(pick(s(), "supply.amount")), 0, 0)} HASH`} sub="fixed" />
+                      <Stat label="Service reserve" value={`${formatHash(coin(pick(s(), "service_reserve.reserve") ?? pick(s(), "service_reserve")) || "0", 0, 0)} HASH`} sub="pays providers for proven work" />
+                      <Stat label="Founder revenue (paid)" value={`${formatHash(coin(pick(s(), "founder_revenue.total_paid") ?? pick(s(), "founder_revenue.paid")) || "0")} HASH`} sub="1 % of protocol fees" />
+                    </div>
                   )}
-                </For>
-              </tbody>
-            </table>
+                </Show>
+                <Card
+                  title="Leaderboards"
+                  actions={<span class="text-[11px] text-muted">{n().indexer_configured ? "from the indexer you configured" : "needs an indexer URL (Settings → Network)"}</span>}
+                >
+                  <Show when={n().indexer_configured} fallback={<p class="p-4 text-xs text-muted">Top holders, validators and providers come from a public indexer — a read model, not an authority. None is configured.</p>}>
+                    <Tabs class="px-3" value={board()} onChange={(v) => setBoard(v as "holders" | "validators" | "providers" | "earners")} tabs={[{ id: "holders", label: "Holders" }, { id: "validators", label: "Validators" }, { id: "providers", label: "Providers" }, { id: "earners", label: "Earners" }]} />
+                    <table class="table">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Address</th>
+                          <th class="text-right">Amount</th>
+                          <th>Kind</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <For each={rows()} fallback={<tr><td colSpan={4} class="text-center text-xs text-muted">{top.loading ? t("loading") : "The indexer returned nothing."}</td></tr>}>
+                          {(r) => (
+                            <tr>
+                              <td class="tnum">{str(pick(r, "rank"))}</td>
+                              <td class="flex items-center gap-2">
+                                <Mono text={str(pick(r, "address") ?? pick(r, "operator") ?? pick(r, "validator"))} head={12} tail={6} copy />
+                                <Show when={pick(r, "verified") === true && str(pick(r, "username"))}>
+                                  <Badge brand title="registered on chain by this address">@{str(pick(r, "username"))}</Badge>
+                                </Show>
+                              </td>
+                              <td class="tnum text-right">{formatHash(str(pick(r, "amount") ?? pick(r, "tokens") ?? pick(r, "total_paid"), "0"))}</td>
+                              <td class="text-xs text-muted">{str(pick(r, "kind"))}</td>
+                            </tr>
+                          )}
+                        </For>
+                      </tbody>
+                    </table>
+                    <Show when={stats()}>
+                      <pre class="mono border-t border-border p-3 text-[11px] text-muted selectable">{JSON.stringify(stats(), null, 1).slice(0, 2000)}</pre>
+                    </Show>
+                  </Show>
+                </Card>
+                <p class="flex items-center gap-1 text-[11px] text-muted">
+                  <NetIcon size={11} /> Bootstrap peers are compiled into the app from the Mainnet parameter set; the peerstore remembers nodes it met. Nothing is pinned to one server.
+                </p>
+              </>
+            )}
           </Show>
         </Show>
-      </Card>
-
-      <Show when={net()?.rejected.length}>
-        <Card title="Rejected peers (never retried silently)">
-          <ul>
-            <For each={net()!.rejected}>
-              {(r) => (
-                <li class="flex items-center gap-3 border-b border-border px-4 py-2 text-sm opacity-60 last:border-0">
-                  <Mono text={r.peer_id} head={10} tail={6} />
-                  <Badge strong={r.label === "wrong network"}>{r.label}</Badge>
-                  <span class="text-xs text-muted">{r.reason}</span>
-                </li>
-              )}
-            </For>
-          </ul>
-        </Card>
-      </Show>
-
-      <div class="grid grid-cols-2 gap-3">
-        <Card title="Protocol facts">
-          <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 p-4 text-xs">
-            <dt class="text-muted">Chain id</dt>
-            <dd class="mono">{net()?.chain_id}</dd>
-            <dt class="text-muted">Network</dt>
-            <dd>{net()?.network}</dd>
-            <Show when={info()?.ok}>
-              <dt class="text-muted">Info</dt>
-              <dd class="mono break-all">{JSON.stringify(pick((info() as { value: unknown }).value, "info") ?? (info() as { value: unknown }).value)}</dd>
-            </Show>
-            <Show when={fork()?.ok}>
-              <dt class="text-muted">Fork isolation</dt>
-              <dd class="mono break-all">{JSON.stringify((fork() as { value: unknown }).value)}</dd>
-            </Show>
-            <dt class="text-muted">Link uptime</dt>
-            <dd>{formatDuration(net()?.uptime_secs ?? 0)}</dd>
-          </dl>
-        </Card>
-        <Card title="Discovery">
-          <div class="flex flex-col gap-3 p-4 text-xs">
-            <div>
-              <p class="mb-1 text-muted">Built-in seeds (compiled into this app)</p>
-              <ul class="mono space-y-0.5">
-                <For each={net()?.builtin_seeds ?? []}>{(s) => <li class="truncate">{s}</li>}</For>
-              </ul>
-            </div>
-            <p class="text-muted">
-              Peerstore: {net()?.peerstore_size ?? 0} remembered peer(s). After the first run the peerstore comes first; the built-in list is the fallback.
-            </p>
-            <div class="flex gap-2">
-              <Button size="sm" variant="secondary" loading={busy() === "reconnect"} onClick={() => act("reconnect", () => ipc.netReconnect())}>
-                Reconnect
-              </Button>
-              <Button size="sm" variant="ghost" loading={busy() === "forget"} onClick={() => act("forget", () => ipc.netForgetPeers())}>
-                Forget peers
-              </Button>
-            </div>
-          </div>
-        </Card>
       </div>
-      <Notice>No IP geolocation is computed or shown. The diagnostics export contains your own addresses and the peer ids you are connected to, never other peers' IP addresses.</Notice>
     </div>
   );
 }

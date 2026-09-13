@@ -1,14 +1,12 @@
-//! A loopback REST gateway backed by the app's chain access.
+//! A loopback REST gateway backed by the app's P2P chain relay.
 //!
 //! A node running on this PC (Earn → Run a node) needs a chain REST API for
 //! device authorisation and for submitting its receipts. A home PC has no
-//! `hashgramd`; what it has is this app, which already reads the chain
-//! through the peer-to-peer relay with cross-checking and can broadcast.
-//! This server exposes exactly that on `127.0.0.1:26680`: allow-listed GET
-//! reads and `POST /cosmos/tx/v1beta1/txs`. Nothing else, no other
-//! interface, no authentication needed because loopback is the boundary.
-//! `hashgram-client configure --chain-api http://127.0.0.1:26680` works
-//! too.
+//! `hashgramd`; what it has is this app, which reads the chain through the
+//! peer-to-peer relay with cross-checking and can broadcast. This server
+//! exposes exactly that on `127.0.0.1:26680`: allow-listed GET reads and
+//! `POST /cosmos/tx/v1beta1/txs`. Loopback is the boundary. It works while
+//! the vault is locked: the link outlives the session.
 
 use std::sync::Arc;
 
@@ -30,22 +28,23 @@ pub fn url() -> String {
     format!("http://127.0.0.1:{PORT}")
 }
 
-async fn read(
-    State(st): State<Arc<AppState>>,
-    Path(path): Path<String>,
-    RawQuery(q): RawQuery,
-) -> Response {
+async fn client(st: &AppState) -> Result<hashgram_sdk::ChainClient, String> {
+    let settings = st.settings.read().await.clone();
+    let identity = crate::session::network_identity(&settings).map_err(|e| e.message)?;
+    let chain_api = settings.network.chain_api.trim().to_owned();
+    if !chain_api.is_empty() {
+        return hashgram_sdk::ChainClient::new(&chain_api, &identity.chain_id).map_err(|e| e.to_string());
+    }
+    let link = st.link.read().await.clone().ok_or_else(|| "network link not up".to_owned())?;
+    Ok(hashgram_sdk::chain_client_over_link(link, &identity.chain_id))
+}
+
+async fn read(State(st): State<Arc<AppState>>, Path(path): Path<String>, RawQuery(q): RawQuery) -> Response {
     let full = match q {
         Some(q) if !q.is_empty() => format!("{path}?{q}"),
         _ => path,
     };
-    let s = st.settings.read().await.clone();
-    let link = st.net.link().await;
-    let client = st
-        .chain
-        .client(link, &s.network.local_node_api, &s.network.https_endpoints)
-        .await;
-    let (_, client) = match client {
+    let client = match client(&st).await {
         Ok(c) => c,
         Err(e) => return (StatusCode::BAD_GATEWAY, e).into_response(),
     };
@@ -58,8 +57,7 @@ async fn read(
                 .insert("content-type", HeaderValue::from_static("application/json"));
             if r.height > 0 {
                 if let Ok(v) = HeaderValue::from_str(&r.height.to_string()) {
-                    resp.headers_mut()
-                        .insert("grpc-metadata-x-cosmos-block-height", v);
+                    resp.headers_mut().insert("grpc-metadata-x-cosmos-block-height", v);
                 }
             }
             if let Some(v) = client.verification() {
@@ -92,16 +90,10 @@ async fn broadcast(State(st): State<Arc<AppState>>, body: Bytes) -> Response {
         Ok(b) => b,
         Err(e) => return (StatusCode::BAD_REQUEST, format!("bad body: {e}")).into_response(),
     };
-    let Some(tx) = base64_decode(&b.tx_bytes) else {
+    let Some(tx) = crate::util::base64_decode(&b.tx_bytes) else {
         return (StatusCode::BAD_REQUEST, "tx_bytes is not base64").into_response();
     };
-    let s = st.settings.read().await.clone();
-    let link = st.net.link().await;
-    let (_, client) = match st
-        .chain
-        .client(link, &s.network.local_node_api, &s.network.https_endpoints)
-        .await
-    {
+    let client = match client(&st).await {
         Ok(c) => c,
         Err(e) => return (StatusCode::BAD_GATEWAY, e).into_response(),
     };
@@ -125,26 +117,6 @@ async fn unsupported() -> Response {
         .into_response()
 }
 
-pub(crate) fn base64_decode(s: &str) -> Option<Vec<u8>> {
-    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = Vec::with_capacity((s.len() * 3).div_euclid(4));
-    let mut buf = 0u32;
-    let mut bits = 0;
-    for c in s.bytes() {
-        if c == b'=' {
-            break;
-        }
-        let v = T.iter().position(|t| *t == c)? as u32;
-        buf = (buf << 6) | v;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push(((buf >> bits) & 0xff) as u8);
-        }
-    }
-    Some(out)
-}
-
 /// Serves until the process ends. Binding failure (port taken) is logged
 /// and the app carries on: the proxy is a convenience for a local node.
 pub async fn serve(state: Arc<AppState>) {
@@ -152,19 +124,14 @@ pub async fn serve(state: Arc<AppState>) {
         .route("/cosmos/tx/v1beta1/simulate", post(unsupported))
         .route(
             "/cosmos/tx/v1beta1/txs",
-            post(broadcast).get(|s, q| async move {
-                read(s, Path("cosmos/tx/v1beta1/txs".to_owned()), q).await
-            }),
+            post(broadcast).get(|s, q| async move { read(s, Path("cosmos/tx/v1beta1/txs".to_owned()), q).await }),
         )
         .route("/{*path}", get(read))
         .with_state(state);
     let addr = format!("127.0.0.1:{PORT}");
     match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => {
-            tracing::info!(
-                addr,
-                "loopback chain gateway listening (for a node on this PC)"
-            );
+            tracing::info!(addr, "loopback chain gateway listening (for a node on this PC)");
             if let Err(e) = axum::serve(l, router).await {
                 tracing::warn!(error = %e, "loopback chain gateway stopped");
             }

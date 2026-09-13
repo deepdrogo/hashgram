@@ -1,49 +1,44 @@
 # Troubleshooting
 
-## No nodes connected
+## "Offline — showing what's on this device"
 
-- Wait ten seconds; the first handshake can take a moment.
-- Check Windows Firewall: outbound **UDP and TCP 26670** must be allowed
-  for Hashgram. QUIC needs UDP; TCP is the fallback.
-- **Network → forget peers** and reconnect if the peerstore holds stale
-  addresses.
+No node has completed the handshake. Check the network, then allow
+outbound UDP and TCP to port 26670 in Windows Firewall. Network →
+**Reconnect** retries; **Forget peers** starts again from the built-in
+list. Everything you did offline is sent at the next successful round.
 
-## "Wrong network"
+## "The recipient has no device online yet"
 
-A node reported a different genesis hash. This app is pinned to the
-Hashgram Mainnet genesis and will never talk to a fork. If *every* node is
-"wrong network", the app itself is on a DEVNET profile — check the banner
-and Settings → Network.
+Their identity has no device key on chain, or their device has not
+published an encryption key package to a store node. They must open
+Hashgram once while online (and, for a brand-new identity, register it
+with a small fee). Try again after they did.
 
-## "Waiting for a node with chain relay"
+## Mail I sent shows "partial delivery"
 
-The nodes you reached do not yet forward chain queries (an older node
-version). Balances and history stay unavailable until one does, or until
-you add an HTTPS endpoint in Settings → Network. Messaging and social still
-work.
+One of several copies (for example a BCC copy) did not reach a store
+node. The label stays on your Sent copy; resend to the people who did not
+get it.
 
-## "Single operator"
+## "Wrong passphrase"
 
-Only one operator's nodes are reachable, so the app cannot cross-check
-chain reads. The numbers shown are from one source. More independent
-operators fix this.
+The vault is Argon2id-protected; there is no reset. If you truly lost the
+passphrase, wipe local data from Settings → Advanced and restore from the
+24 words or a backup file.
 
-## Out of sync / stale balance
+## Windows Hello stopped working
 
-The app caches reads for a few seconds and re-reads after every
-transaction. Pull the page again or wait for the next block (~4 s).
+Hello wraps the passphrase; after a passphrase change, a Windows
+reinstall or a hardware change it must be enrolled again from Settings →
+Security.
 
-## NAT and calls
+## A node on this PC does not start
 
-Behind a strict NAT the app uses TURN relays for calls. If the firewall
-blocks UDP entirely, calls fail; nothing in the app can work around that.
+Earn → Run a node → **Log** shows the node's own output. The node uses
+the app's loopback chain gateway on `127.0.0.1:26680`; if another program
+holds that port the app says so at start.
 
-## Locked out
+## Export diagnostics
 
-Forgot the passphrase: **Restore from the 24 words**. There is no other
-reset. If Windows Hello stops working (new PC, re-imaged Windows), the
-passphrase still unlocks the vault.
-
-## Logs
-
-Settings → Advanced → Export logs. Secrets are redacted before export.
+Network → **Export diagnostics** writes a report without IP addresses or
+contact addresses. Attach it to a bug report.

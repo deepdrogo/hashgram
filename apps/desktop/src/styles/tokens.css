@@ -1,44 +1,70 @@
 /*
- * Hashgram design tokens — the single source of every colour in the UI chrome.
+ * Hashgram One design tokens — the single source of every colour in the UI.
  *
- * Strict monochrome dark theme. Exactly seven colours exist:
+ * Dark first. Black, near-blacks, greys, white and ONE accent (a desaturated
+ * blue-grey). No gradients, no glass, no orange/gold. The light theme is
+ * derived from the same roles. A test (tests/palette.test.ts) scans every
+ * stylesheet and component for a colour outside this list and fails.
  *
- *   #000000  bg          pure black background
- *   #0D0D0D  surface     very dark grey (cards, rails)
- *   #1A1A1A  surface-2   dark grey (inputs, hover)
- *   #262626  border      medium dark grey (borders, dividers, pressed)
- *   #404040  accent      medium grey (accents, focus rings, strong borders)
- *   #808080  muted       light grey (secondary text, icons)
- *   #FFFFFF  fg          pure white (primary text, primary buttons)
- *
- * Nothing else. No tints, no gradients, no saturation. User content (photos,
- * videos, avatars) is the only colour on screen, and it is content, not
- * chrome. A test (tests/palette.test.ts) scans every stylesheet and component
- * for a colour outside this list and fails the build.
+ *   role        dark      light
+ *   bg          #000000   #ffffff   window background
+ *   surface     #0d0d0d   #f5f5f5   panes, rails, cards
+ *   surface-2   #1a1a1a   #ebebeb   inputs, hover, selected rows
+ *   border      #262626   #dcdcdc   borders, dividers
+ *   accent      #404040   #b3b3b3   strong borders, focus, disabled text
+ *   muted       #808080   #6b6b6b   secondary text, icons
+ *   fg          #ffffff   #0d0d0d   primary text
+ *   brand       #7a8fa6   #4f6479   the one accent: links, active nav, primary actions
  */
-@theme {
+@theme inline {
   /* Wipe Tailwind's default palette so no other colour utility exists. */
   --color-*: initial;
 
-  --color-bg: #000000;
-  --color-surface: #0d0d0d;
-  --color-surface-2: #1a1a1a;
-  --color-border: #262626;
-  --color-accent: #404040;
-  --color-muted: #808080;
-  --color-fg: #ffffff;
+  --color-bg: var(--t-bg);
+  --color-surface: var(--t-surface);
+  --color-surface-2: var(--t-surface-2);
+  --color-border: var(--t-border);
+  --color-accent: var(--t-accent);
+  --color-muted: var(--t-muted);
+  --color-fg: var(--t-fg);
+  --color-brand: var(--t-brand);
 
-  --font-sans: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-sans: "Inter", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --font-mono: "Cascadia Mono", "Cascadia Code", "Consolas", ui-monospace, monospace;
 
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
 
   --shadow-none: none;
 
   --ease-out-quick: cubic-bezier(0.2, 0, 0, 1);
-  --duration-fast: 120ms;
-  --duration-base: 180ms;
+  --duration-fast: 100ms;
+  --duration-base: 150ms;
+}
+
+:root,
+html[data-theme="dark"] {
+  --t-bg: #000000;
+  --t-surface: #0d0d0d;
+  --t-surface-2: #1a1a1a;
+  --t-border: #262626;
+  --t-accent: #404040;
+  --t-muted: #808080;
+  --t-fg: #ffffff;
+  --t-brand: #7a8fa6;
+  color-scheme: dark;
+}
+
+html[data-theme="light"] {
+  --t-bg: #ffffff;
+  --t-surface: #f5f5f5;
+  --t-surface-2: #ebebeb;
+  --t-border: #dcdcdc;
+  --t-accent: #b3b3b3;
+  --t-muted: #6b6b6b;
+  --t-fg: #0d0d0d;
+  --t-brand: #4f6479;
+  color-scheme: light;
 }

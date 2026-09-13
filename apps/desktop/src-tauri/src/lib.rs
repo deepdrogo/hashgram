@@ -1,10 +1,12 @@
-//! Hashgram for Windows — the Rust side of the Tauri application.
+//! Hashgram One for Windows — the Rust side of the Tauri application.
 //!
-//! Everything that is not pixels lives here: the vault, the network link,
-//! chain access with cross-checking, the encrypted database, transaction
-//! building and signing, Windows integration (DPAPI, Hello, tray, toasts,
-//! deep links, single instance). The frontend (SolidJS in WebView2) calls
-//! the commands in [`commands`] and listens for a handful of events.
+//! Everything that is not pixels lives here, and everything cryptographic
+//! lives below here, in `hashgram_sdk::HashgramOne`. The commands in the
+//! `cmd_*` modules take ids and plain inputs, lock the facade, call the
+//! SDK, save, and return views (`views.rs`) that carry no key material.
+//! The frontend (SolidJS in WebView2) calls those commands and listens for
+//! `sync:phase`, `sync:event`, `session:*`, `net:changed`, `tx:update`,
+//! `drive:progress` and `deep-link`.
 
 #![cfg_attr(not(test), forbid(clippy::unwrap_used))]
 // Tests may unwrap and index: a panic there is a failed test, not a crash.
@@ -18,28 +20,40 @@
         clippy::integer_division
     )
 )]
+// Unit conversions for display (bytes → MiB, ms → s) truncate on purpose;
+// Tauri commands mirror form fields one-to-one.
+#![allow(clippy::integer_division, clippy::too_many_arguments)]
 
-pub mod chain_access;
 pub mod chain_proxy;
-pub mod chat;
-pub mod commands;
-pub mod commands_node;
-pub mod commands_social;
+pub mod cmd_drive;
+pub mod cmd_earn;
+pub mod cmd_feed;
+pub mod cmd_hashwall;
+pub mod cmd_identity;
+pub mod cmd_mail;
+pub mod cmd_network;
+pub mod cmd_people;
+pub mod cmd_settings;
+pub mod cmd_spaces;
+pub mod cmd_sync;
+pub mod cmd_wallet;
 pub mod crypto;
 pub mod db;
+pub mod error;
 pub mod help;
-pub mod net;
 pub mod node_manager;
+pub mod notify;
 pub mod paths;
 pub mod perf;
+pub mod session;
 pub mod settings;
-pub mod social_hub;
 pub mod state;
 pub mod tx;
+pub mod util;
+pub mod views;
 pub mod winsec;
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -49,147 +63,85 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 use crate::state::AppState;
 
-fn init_logging(perf: Arc<perf::PerfStore>, level: &str) {
+/// A deep link handed to the webview.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DeepLink {
+    /// `hashgram://…`.
+    pub url: String,
+}
+
+fn init_logging(perf: Arc<perf::PerfStore>, level: &str) -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         tracing_subscriber::EnvFilter::new(format!(
-            "{level},libp2p_gossipsub=warn,libp2p_kad=warn,libp2p_swarm=warn,quinn=warn,quinn_udp=error,hyper=warn"
+            "{level},libp2p_gossipsub=warn,libp2p_kad=warn,libp2p_swarm=warn,quinn=warn,quinn_udp=error,hyper=warn,hickory_proto=warn,hickory_resolver=warn"
         ))
     });
-    let fmt = tracing_subscriber::fmt::layer()
+    let stderr = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_target(false)
         .compact();
+    // A rotating file under logs/: one file per day, the last 7 kept. The
+    // logging policy (never subjects, bodies, contact addresses or key
+    // material) is enforced by the SDK's and this crate's log lines, which
+    // carry ids, counts and error kinds only.
+    let file = tracing_appender::rolling::Builder::new()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .max_log_files(7)
+        .filename_prefix("hashgram")
+        .filename_suffix("log")
+        .build(paths::logs_dir())
+        .ok();
+    let (file_layer, guard) = match file {
+        Some(f) => {
+            let (nb, guard) = tracing_appender::non_blocking(f);
+            (
+                Some(
+                    tracing_subscriber::fmt::layer()
+                        .with_writer(nb)
+                        .with_ansi(false)
+                        .with_target(false)
+                        .compact(),
+                ),
+                Some(guard),
+            )
+        }
+        None => (None, None),
+    };
     let _ = tracing_subscriber::registry()
         .with(filter)
-        .with(fmt)
+        .with(stderr)
+        .with(file_layer)
         .with(perf::PerfLayer::new(perf))
         .try_init();
+    guard
 }
 
-fn build_state() -> Result<Arc<AppState>, String> {
+fn build_state() -> Result<(Arc<AppState>, Option<tracing_appender::non_blocking::WorkerGuard>), String> {
     let data = paths::ensure_dirs().map_err(|e| e.to_string())?;
     let settings = settings::Settings::load(&paths::settings_path());
     let perf = Arc::new(perf::PerfStore::default());
-    init_logging(perf.clone(), &settings.advanced.log_level);
-    tracing::info!(dir = %data.display(), "Hashgram for Windows starting");
+    let guard = init_logging(perf.clone(), &settings.advanced.log_level);
+    tracing::info!(dir = %data.display(), "Hashgram One for Windows starting");
     let db = Arc::new(db::Db::open(&paths::db_path())?);
-    Ok(Arc::new(AppState {
-        settings: tokio::sync::RwLock::new(settings),
-        session: tokio::sync::RwLock::new(None),
-        pending_mnemonic: tokio::sync::Mutex::new(None),
-        net: Arc::new(net::NetManager::default()),
-        chain: Arc::new(chain_access::ChainAccess::default()),
-        db,
-        perf,
-        pending: tokio::sync::Mutex::new(Vec::new()),
-        chat: Arc::new(chat::ChatHub::default()),
-        social: Arc::new(social_hub::SocialHub::default()),
-    }))
-}
-
-fn spawn_background(app: tauri::AppHandle, state: Arc<AppState>) {
-    // 1. Start the network as soon as the process is up; peers appear as
-    //    they verify. The UI never waits on this.
-    {
-        let st = state.clone();
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            let s = st.settings.read().await.clone();
-            if let Ok(identity) = net::identity_for(&s) {
-                st.chain.set_chain_id(&identity.chain_id).await;
-            }
-            match st.net.start(&s, &st.db).await {
-                Ok(_) => tracing::info!("network link started"),
-                Err(e) => tracing::warn!(error = %e, "network link did not start"),
-            }
-            let _ = app.emit("net:changed", ());
-        });
-    }
-    // 2. Periodic: latency, pending transactions, auto-lock, net events.
-    {
-        let st = state.clone();
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_secs(2));
-            let mut n: u64 = 0;
-            loop {
-                tick.tick().await;
-                n += 1;
-                commands::poll_pending(&st, &app).await;
-                if n.is_multiple_of(15) {
-                    st.net.measure_latency().await;
-                    let _ = app.emit("net:changed", ());
-                }
-                if n % 15 == 7 && st.auto_lock_if_due().await {
-                    let _ = app.emit("session:locked", ());
-                }
-                if n.is_multiple_of(5) {
-                    let _ = app.emit("net:changed", ());
-                }
-            }
-        });
-    }
-    // 3. Loopback chain gateway for a node on this PC (and hashgram-client).
-    {
-        let st = state.clone();
-        tauri::async_runtime::spawn(chain_proxy::serve(st));
-    }
-    // 4. Messaging: mailbox sync every 4 s while unlocked, feed refresh
-    //    every 60 s, expired (disappearing) messages swept every 30 s.
-    {
-        let st = state.clone();
-        let app = app.clone();
-        tauri::async_runtime::spawn(async move {
-            let mut tick = tokio::time::interval(Duration::from_secs(4));
-            let mut n: u64 = 0;
-            let mut published_keys = false;
-            loop {
-                tick.tick().await;
-                n += 1;
-                if !st.chat.is_open().await {
-                    published_keys = false;
-                    continue;
-                }
-                if !published_keys {
-                    if let Ok((account, _, _)) = st.session_handles().await {
-                        if let (Some(link), Some(identity)) =
-                            (st.net.link().await, st.net.identity().await)
-                        {
-                            match st
-                                .chat
-                                .publish_key_packages(&account, &link, &identity)
-                                .await
-                            {
-                                Ok(n) if n > 0 => {
-                                    tracing::info!(stores = n, "key packages published");
-                                    published_keys = true;
-                                }
-                                Ok(_) => {}
-                                Err(e) => {
-                                    tracing::debug!(error = %e, "key packages not published yet")
-                                }
-                            }
-                        }
-                    }
-                }
-                if let Err(e) = commands_social::sync_once(&st, &app).await {
-                    tracing::debug!(error = %e, "mailbox sync");
-                }
-                if n.is_multiple_of(8) {
-                    if let Ok(k) = chat::sweep_expired(&st.db) {
-                        if k > 0 {
-                            let _ = app.emit("chat:changed", serde_json::json!({ "expired": k }));
-                        }
-                    }
-                }
-                if n % 15 == 1 {
-                    if let Err(e) = commands_social::refresh_feed(&st, &app).await {
-                        tracing::debug!(error = %e, "feed refresh");
-                    }
-                }
-            }
-        });
-    }
+    let _ = std::fs::remove_dir_all(paths::tmp_dir());
+    let _ = std::fs::create_dir_all(paths::tmp_dir());
+    Ok((
+        Arc::new(AppState {
+            settings: tokio::sync::RwLock::new(settings),
+            one: tokio::sync::Mutex::new(None),
+            session: tokio::sync::RwLock::new(None),
+            link: tokio::sync::RwLock::new(None),
+            link_error: tokio::sync::RwLock::new(None),
+            pending_mnemonic: tokio::sync::Mutex::new(None),
+            db,
+            perf,
+            sync: tokio::sync::RwLock::new(state::SyncStatus::default()),
+            sync_task: tokio::sync::Mutex::new(None),
+            pending_tx: tokio::sync::Mutex::new(Vec::new()),
+            sync_wake: tokio::sync::Notify::new(),
+        }),
+        guard,
+    ))
 }
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -203,7 +155,7 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         .ok_or_else(|| tauri::Error::AssetNotFound("icon".into()))?;
     TrayIconBuilder::with_id("main")
         .icon(icon)
-        .tooltip("Hashgram")
+        .tooltip("Hashgram One")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -212,11 +164,17 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                 let st = app.state::<Arc<AppState>>().inner().clone();
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    st.lock().await;
-                    let _ = app.emit("session:locked", ());
+                    session::lock(&app, &st).await;
                 });
             }
-            "quit" => app.exit(0),
+            "quit" => {
+                let st = app.state::<Arc<AppState>>().inner().clone();
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    session::lock(&app, &st).await;
+                    app.exit(0);
+                });
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -243,7 +201,7 @@ fn show_main(app: &tauri::AppHandle) {
 
 /// Runs the application.
 pub fn run() {
-    let state = match build_state() {
+    let (state, _log_guard) = match build_state() {
         Ok(s) => s,
         Err(e) => {
             eprintln!("hashgram-desktop: {e}");
@@ -251,14 +209,12 @@ pub fn run() {
         }
     };
 
-    let mut builder = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            // A second launch (or a hashgram:// link) focuses the running
-            // window and hands the link over.
             show_main(app);
             for a in args.iter().skip(1) {
                 if a.starts_with("hashgram://") {
-                    let _ = app.emit("deep-link", commands::DeepLink { url: a.clone() });
+                    let _ = app.emit("deep-link", DeepLink { url: a.clone() });
                 }
             }
         }))
@@ -282,123 +238,274 @@ pub fn run() {
             Some(vec!["--autostart"]),
         ))
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_updater::Builder::new().build());
-
-    builder = builder.manage(state.clone());
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(state.clone());
 
     builder
         .invoke_handler(tauri::generate_handler![
-            commands::app_status,
-            commands::onboarding_generate,
-            commands::onboarding_check_words,
-            commands::onboarding_create,
-            commands::onboarding_restore_preview,
-            commands::onboarding_restore,
-            commands::unlock,
-            commands::lock,
-            commands::touch,
-            commands::change_passphrase,
-            commands::hello_enable,
-            commands::hello_unlock,
-            commands::hello_disable,
-            commands::wipe_local_data,
-            commands::settings_get,
-            commands::settings_set,
-            commands::net_snapshot,
-            commands::net_measure_latency,
-            commands::net_forget_peers,
-            commands::net_reconnect,
-            commands::chain_health,
-            commands::diagnostics_export,
-            commands::chain_get,
-            commands::chain_get_many,
-            commands::wallet_overview,
-            commands::tx_preview,
-            commands::tx_submit,
-            commands::tx_recent,
-            commands::tx_status,
-            commands::tx_has_pending,
-            commands::identity_status,
-            commands::identity_register,
-            commands::search_resolve,
-            commands::search_recent,
-            commands::qr_svg,
-            commands::help_list,
-            commands::help_page,
-            commands::perf_snapshot,
-            commands::perf_mark,
-            commands::perf_memory,
-            commands::open_data_dir,
-            commands::save_text_file,
-            commands::ui_log,
-            commands_social::chat_list,
-            commands_social::chat_history,
-            commands_social::chat_start_direct,
-            commands_social::chat_create_group,
-            commands_social::chat_add_member,
-            commands_social::chat_remove_member,
-            commands_social::chat_send_text,
-            commands_social::chat_send_file,
-            commands_social::chat_send_voice,
-            commands_social::chat_attachment,
-            commands_social::chat_react,
-            commands_social::chat_edit,
-            commands_social::chat_delete,
-            commands_social::chat_mark_read,
-            commands_social::chat_typing,
-            commands_social::chat_typing_in,
-            commands_social::chat_set_disappear,
-            commands_social::chat_info,
-            commands_social::chat_search,
-            commands_social::chat_sync_now,
-            commands_social::chat_publish_key_packages,
-            commands_social::feed,
-            commands_social::feed_refresh,
-            commands_social::post_create,
-            commands_social::comment_create,
-            commands_social::social_react,
-            commands_social::repost,
-            commands_social::follow,
-            commands_social::follows,
-            commands_social::social_block,
-            commands_social::social_blocks,
-            commands_social::profile_get,
-            commands_social::profile_update,
-            commands_social::post_thread,
-            commands_social::media_upload,
-            commands_social::media_fetch,
-            commands_social::reel_publish,
-            commands_social::story_publish,
-            commands_social::channel_create,
-            commands_social::channels,
-            commands_social::channel_posts,
-            commands_social::safety_verdict,
-            commands_social::calls_discover,
-            commands_social::calls_turn,
-            commands_social::calls_signal,
-            commands_social::calls_signals,
-            commands_node::node_overview,
-            commands_node::node_configure,
-            commands_node::node_install,
-            commands_node::node_start,
-            commands_node::node_stop,
-            commands_node::node_uninstall,
-            commands_node::node_generate_cold_address,
-            commands_node::node_log_tail,
+            // identity / vault
+            cmd_identity::app_status,
+            cmd_identity::onboarding_generate,
+            cmd_identity::onboarding_check_words,
+            cmd_identity::onboarding_create,
+            cmd_identity::onboarding_restore_preview,
+            cmd_identity::onboarding_restore,
+            cmd_identity::backup_inspect,
+            cmd_identity::restore_from_backup,
+            cmd_identity::unlock,
+            cmd_identity::lock,
+            cmd_identity::touch,
+            cmd_identity::change_passphrase,
+            cmd_identity::hello_enable,
+            cmd_identity::hello_unlock,
+            cmd_identity::hello_disable,
+            cmd_identity::wipe_local_data,
+            cmd_identity::identity_status,
+            cmd_identity::identity_register,
+            cmd_identity::devices_list,
+            cmd_identity::this_device,
+            cmd_identity::device_add,
+            cmd_identity::device_revoke,
+            cmd_identity::devices_reconcile,
+            cmd_identity::devices_bootstrap,
+            // mail
+            cmd_mail::mail_counts,
+            cmd_mail::mail_list,
+            cmd_mail::mail_thread,
+            cmd_mail::mail_get,
+            cmd_mail::mail_search,
+            cmd_mail::mail_mark_read,
+            cmd_mail::mail_star,
+            cmd_mail::mail_move,
+            cmd_mail::mail_archive,
+            cmd_mail::mail_trash,
+            cmd_mail::mail_delete,
+            cmd_mail::mail_accept_request,
+            cmd_mail::mail_label,
+            cmd_mail::mail_settings_get,
+            cmd_mail::mail_settings_set,
+            cmd_mail::mail_purge,
+            cmd_mail::mail_resolve_recipients,
+            cmd_mail::mail_draft_new,
+            cmd_mail::mail_draft_save,
+            cmd_mail::mail_draft_list,
+            cmd_mail::mail_draft_get,
+            cmd_mail::mail_draft_delete,
+            cmd_mail::mail_attach_file,
+            cmd_mail::mail_attach_bytes,
+            cmd_mail::mail_attach_drive,
+            cmd_mail::mail_draft_remove_attachment,
+            cmd_mail::mail_send,
+            cmd_mail::mail_attachment_save,
+            cmd_mail::mail_attachment_open,
+            cmd_mail::mail_attachment_preview,
+            cmd_mail::mail_attachments,
+            cmd_mail::mail_live_attachment_versions,
+            // drive
+            cmd_drive::drive_list,
+            cmd_drive::drive_trash_list,
+            cmd_drive::drive_starred,
+            cmd_drive::drive_search,
+            cmd_drive::drive_entry,
+            cmd_drive::drive_versions,
+            cmd_drive::drive_usage,
+            cmd_drive::drive_resolve_path,
+            cmd_drive::drive_mkdir,
+            cmd_drive::drive_upload,
+            cmd_drive::drive_upload_bytes,
+            cmd_drive::drive_update,
+            cmd_drive::drive_download,
+            cmd_drive::drive_download_version,
+            cmd_drive::drive_open,
+            cmd_drive::drive_preview,
+            cmd_drive::drive_rename,
+            cmd_drive::drive_move,
+            cmd_drive::drive_copy,
+            cmd_drive::drive_trash,
+            cmd_drive::drive_restore,
+            cmd_drive::drive_delete,
+            cmd_drive::drive_empty_trash,
+            cmd_drive::drive_star,
+            cmd_drive::drive_restore_version,
+            cmd_drive::drive_rekey,
+            cmd_drive::drive_rekey_all,
+            cmd_drive::drive_commit,
+            cmd_drive::drive_share,
+            cmd_drive::drive_revoke,
+            cmd_drive::drive_shares,
+            cmd_drive::drive_shared_with_me,
+            cmd_drive::drive_shared_download,
+            cmd_drive::drive_shared_open,
+            cmd_drive::drive_shared_save,
+            cmd_drive::drive_shared_folder_list,
+            cmd_drive::drive_shared_folder_download,
+            // people
+            cmd_people::people_resolve,
+            cmd_people::people_profile,
+            cmd_people::people_request,
+            cmd_people::people_respond,
+            cmd_people::people_remove,
+            cmd_people::people_block,
+            cmd_people::people_unblock,
+            cmd_people::people_mute,
+            cmd_people::people_trust,
+            cmd_people::people_follow,
+            cmd_people::people_list,
+            cmd_people::people_search_local,
+            cmd_people::people_set_display_name,
+            cmd_people::people_my_display_name,
+            cmd_people::people_send_card,
+            cmd_people::people_card_of,
+            cmd_people::people_username_of,
+            // feed + circles
+            cmd_feed::feed_following,
+            cmd_feed::feed_friends,
+            cmd_feed::feed_author,
+            cmd_feed::feed_explore,
+            cmd_feed::feed_thread,
+            cmd_feed::feed_post,
+            cmd_feed::feed_comment,
+            cmd_feed::feed_react,
+            cmd_feed::feed_repost,
+            cmd_feed::feed_edit,
+            cmd_feed::feed_delete,
+            cmd_feed::feed_refresh,
+            cmd_feed::feed_follows,
+            cmd_feed::feed_profile_update,
+            cmd_feed::feed_media_fetch,
+            cmd_feed::circles_list,
+            cmd_feed::circles_create,
+            cmd_feed::circles_add_member,
+            cmd_feed::circles_remove_member,
+            cmd_feed::circles_leave,
+            cmd_feed::circles_post,
+            cmd_feed::circles_comment,
+            cmd_feed::circles_react,
+            cmd_feed::circles_vote,
+            cmd_feed::circles_delete,
+            cmd_feed::circles_set_info,
+            cmd_feed::circles_posts,
+            cmd_feed::circles_comments,
+            cmd_feed::circles_merged,
+            cmd_feed::circles_media_fetch,
+            // hashwall: explore, walls, profile, avatars, rich list
+            cmd_hashwall::hashwall_explore,
+            cmd_hashwall::hashwall_digest,
+            cmd_hashwall::hashwall_thread,
+            cmd_hashwall::walls_create,
+            cmd_hashwall::walls_info,
+            cmd_hashwall::walls_page,
+            cmd_hashwall::walls_pin,
+            cmd_hashwall::walls_pinned,
+            cmd_hashwall::people_profile_cached,
+            cmd_hashwall::people_avatar,
+            cmd_hashwall::profile_me,
+            cmd_hashwall::profile_my_events,
+            cmd_hashwall::network_holders,
+            cmd_hashwall::network_providers,
+            // spaces
+            cmd_spaces::spaces_list,
+            cmd_spaces::spaces_create,
+            cmd_spaces::spaces_state,
+            cmd_spaces::spaces_members,
+            cmd_spaces::spaces_content,
+            cmd_spaces::spaces_drive,
+            cmd_spaces::spaces_invite,
+            cmd_spaces::spaces_remove,
+            cmd_spaces::spaces_set_role,
+            cmd_spaces::spaces_set_info,
+            cmd_spaces::spaces_announce,
+            cmd_spaces::spaces_post,
+            cmd_spaces::spaces_comment,
+            cmd_spaces::spaces_share_drive,
+            cmd_spaces::spaces_unshare_drive,
+            cmd_spaces::spaces_mail,
+            cmd_spaces::spaces_drive_download,
+            cmd_spaces::spaces_drive_open,
+            cmd_spaces::spaces_drive_save,
+            cmd_spaces::spaces_drive_folder_list,
+            // earn + node
+            cmd_earn::earn_status,
+            cmd_earn::earn_earnings,
+            cmd_earn::earn_providers,
+            cmd_earn::earn_register,
+            cmd_earn::earn_update,
+            cmd_earn::earn_unbond,
+            cmd_earn::earn_withdraw,
+            cmd_earn::node_overview,
+            cmd_earn::node_configure,
+            cmd_earn::node_install,
+            cmd_earn::node_start,
+            cmd_earn::node_stop,
+            cmd_earn::node_uninstall,
+            cmd_earn::node_generate_cold_address,
+            cmd_earn::node_log_tail,
+            // wallet
+            cmd_wallet::wallet_balance,
+            cmd_wallet::wallet_overview,
+            cmd_wallet::tx_preview,
+            cmd_wallet::tx_submit,
+            cmd_wallet::tx_recent,
+            cmd_wallet::tx_has_pending,
+            cmd_wallet::wallet_parse_amount,
+            cmd_wallet::wallet_preview_send,
+            cmd_wallet::wallet_send,
+            cmd_wallet::wallet_stake,
+            cmd_wallet::wallet_unstake,
+            cmd_wallet::wallet_withdraw_rewards,
+            cmd_wallet::wallet_username_availability,
+            cmd_wallet::wallet_register_username,
+            cmd_wallet::wallet_renew_username,
+            cmd_wallet::wallet_delegations,
+            cmd_wallet::wallet_rewards,
+            cmd_wallet::wallet_unbonding,
+            cmd_wallet::wallet_history,
+            cmd_wallet::wallet_tx,
+            cmd_wallet::wallet_usernames,
+            cmd_wallet::chain_query,
+            cmd_wallet::qr_svg,
+            // network
+            cmd_network::network_overview,
+            cmd_network::network_validators,
+            cmd_network::network_supply,
+            cmd_network::network_top,
+            cmd_network::network_stats,
+            cmd_network::net_reconnect,
+            cmd_network::net_forget_peers,
+            cmd_network::diagnostics_export,
+            // sync
+            cmd_sync::sync_status,
+            cmd_sync::sync_now,
+            // settings, backup, misc
+            cmd_settings::settings_get,
+            cmd_settings::settings_set,
+            cmd_settings::backup_export,
+            cmd_settings::help_list,
+            cmd_settings::help_page,
+            cmd_settings::perf_snapshot,
+            cmd_settings::perf_mark,
+            cmd_settings::perf_memory,
+            cmd_settings::open_data_dir,
+            cmd_settings::ui_log,
+            cmd_settings::save_text_file,
+            cmd_settings::search_recent,
+            cmd_settings::search_note,
+            cmd_settings::about_info,
+            cmd_settings::leases_list,
+            cmd_settings::leases_verify,
+            cmd_settings::window_hide,
         ])
         .setup(move |app| {
             #[cfg(desktop)]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
-                // Registers hashgram:// for this user when not installed by
-                // the installer (dev runs).
                 let _ = app.deep_link().register_all();
                 let handle = app.handle().clone();
                 app.deep_link().on_open_url(move |event| {
                     for url in event.urls() {
                         let _ = handle.emit(
                             "deep-link",
-                            commands::DeepLink {
+                            DeepLink {
                                 url: url.to_string(),
                             },
                         );
@@ -406,12 +513,12 @@ pub fn run() {
                 });
             }
             setup_tray(app)?;
-            spawn_background(app.handle().clone(), state.clone());
+            let handle = app.handle().clone();
+            session::spawn_link(handle.clone(), state.clone());
+            session::spawn_housekeeping(handle, state.clone());
+            tauri::async_runtime::spawn(chain_proxy::serve(state.clone()));
             #[cfg(debug_assertions)]
-            if std::env::var("HASHGRAM_DEVTOOLS")
-                .map(|v| v == "1")
-                .unwrap_or(false)
-            {
+            if std::env::var("HASHGRAM_DEVTOOLS").map(|v| v == "1").unwrap_or(false) {
                 if let Some(w) = app.get_webview_window("main") {
                     w.open_devtools();
                 }

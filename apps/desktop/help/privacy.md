@@ -1,37 +1,39 @@
 # Privacy
 
+## What a node can see
+
+A store node sees a mailbox id (a hash of a device key), ciphertext sizes
+and times. It cannot read a subject, a body, a file name, a folder or who
+shared what. A relay sees that a client asked for a public chain fact.
+
+## What is on chain
+
+Only global facts: your address, your device public keys, a username if
+you registered one, balances, provider records. No content, no contacts,
+no folders, no Spaces.
+
+## What is on this PC
+
+The vault (keys), the local store (mail, Drive tree, contacts, Space
+state) sealed per record, and a small UI cache with sealed columns. A test
+in the repository writes a mail, a file and a draft and scans every byte
+on disk for them; the build fails if any appears in the clear.
+
 ## What leaves this PC
 
-- Transactions you sign, to the network.
-- Encrypted message envelopes, to store nodes (they cannot read them).
-- Social events you publish, signed by your device key. These are public
-  by design.
-- Media you upload, to store/media nodes (private attachments are
-  encrypted before upload).
-- A signed update check to `hashgram.io` if enabled in Settings → Updates.
-- Requests to any REST endpoint you pasted yourself.
+Encrypted envelopes to store nodes, signed public posts if you post,
+chain transactions you confirm. The app has **no analytics, no
+telemetry, no crash upload** and loads no fonts or scripts from the
+Internet. Notifications are local toasts and never contain a subject.
 
-## What never leaves
+## Metadata that remains
 
-- The 24 words, the passphrase, the vault, the database key.
-- Decrypted messages.
-- Your local mute and block lists.
-- Analytics, crash dumps or telemetry of any kind: there are none.
+Nodes learn *when* a device is online and roughly *how much* it sends.
+The app cannot hide that; it can and does avoid revealing who talks to
+whom beyond the envelope's mailbox id.
 
-## What nodes can see
+## External mail
 
-A node you connect to sees your IP address and an ephemeral peer id that
-changes every session (a client keeps no stable network identity). It
-learns which mailboxes you fetch and which blobs you request, not their
-contents. Reads of the chain are visible to the relaying nodes as queries.
-
-## What is public on chain
-
-Addresses, balances, transactions, `@username` registrations, device
-public keys, provider registrations. This is a public ledger.
-
-## Diagnostics export
-
-Settings → Network → Export diagnostics writes a report with your own
-addresses and peer list *without IP addresses of other peers*, so it can be
-shared with a node operator without exposing them.
+Mail bridged from the Internet through a gateway was plaintext on the
+Internet and at the gateway. The app labels it so you never mistake it
+for an end-to-end encrypted message.

@@ -162,6 +162,84 @@ impl Social {
             _ => Err(SdkError::Link(crate::link::LinkError::Unexpected)),
         }
     }
+
+    /// Runs an arbitrary fetch against any node that answers, verifying
+    /// every event. Returns the answering peer and the paging cursor.
+    pub async fn fetch(
+        &self,
+        link: &Link,
+        network: &NetworkIdentity,
+        query: pb::EventFetch,
+    ) -> Result<FetchResult, SdkError> {
+        let (peer, body) = link
+            .request_role_any(pb::request::Body::EventFetch(query))
+            .await?;
+        Self::verified_page(network, peer, body)
+    }
+
+    /// Runs a fetch against one specific peer, verifying every event.
+    pub async fn fetch_from(
+        &self,
+        link: &Link,
+        network: &NetworkIdentity,
+        peer: crate::PeerId,
+        query: pb::EventFetch,
+    ) -> Result<FetchResult, SdkError> {
+        let body = link
+            .request(peer, pb::request::Body::EventFetch(query))
+            .await?;
+        Self::verified_page(network, peer, body)
+    }
+
+    fn verified_page(
+        network: &NetworkIdentity,
+        peer: crate::PeerId,
+        body: pb::response::Body,
+    ) -> Result<FetchResult, SdkError> {
+        match body {
+            pb::response::Body::EventFetch(r) => Ok(FetchResult {
+                peer,
+                next_before: r.next_before,
+                events: r
+                    .events
+                    .into_iter()
+                    .filter(|e| signing::verify_social_event(network, e).is_ok())
+                    .collect(),
+            }),
+            _ => Err(SdkError::Link(crate::link::LinkError::Unexpected)),
+        }
+    }
+
+    /// Asks one peer for its activity digest.
+    pub async fn digest_from(
+        &self,
+        link: &Link,
+        peer: crate::PeerId,
+        window_secs: u64,
+        limit: u32,
+    ) -> Result<pb::SocialDigestResult, SdkError> {
+        let body = link
+            .request(
+                peer,
+                pb::request::Body::SocialDigest(pb::SocialDigest { window_secs, limit }),
+            )
+            .await?;
+        match body {
+            pb::response::Body::SocialDigest(d) => Ok(d),
+            _ => Err(SdkError::Link(crate::link::LinkError::Unexpected)),
+        }
+    }
+}
+
+/// A verified page from one node.
+#[derive(Debug, Clone)]
+pub struct FetchResult {
+    /// The node that answered.
+    pub peer: crate::PeerId,
+    /// Verified events.
+    pub events: Vec<pb::SocialEvent>,
+    /// Timeline cursor for the next page; 0 when exhausted.
+    pub next_before: u64,
 }
 
 /// Renders an event's typed payload as JSON for display.

@@ -26,6 +26,15 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 
+/// Default inbound connections accepted from one /24 (IPv4) or /64 (IPv6).
+///
+/// This was 4, which a single household or office with a few Hashgram
+/// clients exhausted on its own, and which a mobile carrier's NAT (many
+/// subscribers behind one /24) exhausted with the first handful of users.
+/// The peers refused this way saw "connection closed" at the handshake and
+/// nothing else, so it looked like the node was down.
+pub const DEFAULT_MAX_PER_SUBNET: usize = 32;
+
 /// Whether a connection may be accepted, and why not if not.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LimitDecision {
@@ -120,16 +129,19 @@ impl ConnectionLimits {
     /// Default limits, sized for a node on a small VPS.
     ///
     /// Two connections per peer allows a QUIC and a TCP connection to coexist
-    /// during a transport migration without either being refused. Four per
-    /// subnet allows a small operator running a few nodes on one network
-    /// while making a /24 flood cost 256 times more than a single host.
-    /// Reserving 32 outbound slots means inbound pressure cannot isolate this
-    /// node from the peers it chose.
+    /// during a transport migration without either being refused.
+    /// [`DEFAULT_MAX_PER_SUBNET`] per /24 still makes a flood cost many
+    /// networks rather than one host, while leaving room for the ordinary
+    /// case this limit was first set too low for: users' clients behind a
+    /// shared public address (an office, a household, a mobile carrier's
+    /// NAT), each of which is a distinct peer from the same /24. Reserving
+    /// 32 outbound slots means inbound pressure cannot isolate this node
+    /// from the peers it chose.
     #[must_use]
     pub fn new() -> Self {
         Self {
             max_per_peer: 2,
-            max_per_subnet: 4,
+            max_per_subnet: DEFAULT_MAX_PER_SUBNET,
             max_inbound: 128,
             max_outbound: 32,
             per_peer: HashMap::new(),
@@ -362,20 +374,21 @@ mod tests {
         // The attack a per-peer limit alone does not stop: many identities
         // from one network, each within the per-peer limit.
         let mut limits = ConnectionLimits::new();
+        let n = DEFAULT_MAX_PER_SUBNET as u8;
 
-        for i in 1..=4 {
+        for i in 1..=n {
             limits.established(&format!("sybil{i}"), v4(203, 0, 113, i), true);
         }
 
-        match limits.allow_inbound("sybil5", v4(203, 0, 113, 5), false) {
+        match limits.allow_inbound("sybil-next", v4(203, 0, 113, n + 1), false) {
             LimitDecision::TooManyFromSubnet {
                 subnet,
                 current,
                 max,
             } => {
                 assert_eq!(subnet, "203.0.113.0/24");
-                assert_eq!(current, 4);
-                assert_eq!(max, 4);
+                assert_eq!(current, DEFAULT_MAX_PER_SUBNET);
+                assert_eq!(max, DEFAULT_MAX_PER_SUBNET);
             }
             other => panic!("a /24 flood was not limited: {other:?}"),
         }
@@ -393,12 +406,12 @@ mod tests {
         // address would make the subnet limit meaningless.
         let mut limits = ConnectionLimits::new();
 
-        for i in 1..=4u16 {
+        for i in 1..=(DEFAULT_MAX_PER_SUBNET as u16) {
             let addr = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, i));
             limits.established(&format!("v6peer{i}"), addr, true);
         }
 
-        let next = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 99));
+        let next = IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 999));
         assert!(
             matches!(
                 limits.allow_inbound("v6peer99", next, false),

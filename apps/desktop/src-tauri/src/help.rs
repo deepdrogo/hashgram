@@ -32,46 +32,21 @@ pages![
     (
         "quick-start",
         "Quick start",
-        "docs/CLIENT_CONNECTIVITY_SPEC.md",
+        "docs/HASHGRAM_ONE_ARCHITECTURE.md",
         "quick-start.md"
     ),
-    (
-        "keys",
-        "Your keys and what they control",
-        "docs/SECURITY.md",
-        "keys.md"
-    ),
-    (
-        "sending",
-        "Sending and fees",
-        "docs/TOKENOMICS.md",
-        "sending.md"
-    ),
-    (
-        "messages",
-        "Messages and devices",
-        "docs/MESSAGING.md",
-        "messages.md"
-    ),
-    (
-        "social",
-        "Feed, reels, channels",
-        "docs/SOCIAL_PROTOCOL.md",
-        "social.md"
-    ),
-    ("calls", "Calls", "docs/CALLS.md", "calls.md"),
+    ("mail", "Mail", "docs/HASHMAIL.md", "mail.md"),
+    ("drive", "Drive", "docs/HASHDRIVE.md", "drive.md"),
+    ("people", "People", "docs/PRIVACY_MODEL.md", "people.md"),
+    ("feed", "Feed and Circles", "docs/SOCIAL_PROTOCOL.md", "feed.md"),
+    ("spaces", "Spaces", "docs/SPACES.md", "spaces.md"),
     (
         "earn",
         "Earn by running a node",
         "docs/SERVICE_REWARDS.md",
         "earn.md"
     ),
-    (
-        "staking",
-        "Staking and governance",
-        "docs/TOKENOMICS.md",
-        "staking.md"
-    ),
+    ("wallet", "Wallet", "docs/TOKENOMICS.md", "wallet.md"),
     (
         "network",
         "Network and nodes",
@@ -79,13 +54,19 @@ pages![
         "network.md"
     ),
     (
+        "keys",
+        "Your keys and what they control",
+        "docs/MULTI_DEVICE_SECURITY.md",
+        "keys.md"
+    ),
+    ("privacy", "Privacy", "docs/PRIVACY_MODEL.md", "privacy.md"),
+    (
         "troubleshooting",
         "Troubleshooting",
         "docs/OPERATIONS.md",
         "troubleshooting.md"
     ),
-    ("faq", "FAQ", "docs/ARCHITECTURE.md", "faq.md"),
-    ("privacy", "Privacy", "docs/THREAT_MODEL.md", "privacy.md"),
+    ("faq", "FAQ", "docs/HASHGRAM_ONE_AI_HANDOFF.md", "faq.md"),
 ];
 
 /// Renders a page to HTML (links to the repository docs are appended).

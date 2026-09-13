@@ -39,6 +39,7 @@
 *.test
 *.wal
 *mnemonic*
+!apps/desktop/src/components/MnemonicDisplay.tsx
 *seed-phrase*
 *seedphrase*
 *~

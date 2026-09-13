@@ -1,31 +1,42 @@
 //! Process-wide state behind Tauri's managed state.
+//!
+//! One `HashgramOne` value is the whole unlocked session. It lives in a
+//! `tokio::sync::Mutex<Option<_>>`: every command locks it, calls the SDK,
+//! saves, and lets go. Locking the vault drops the value, which zeroises
+//! the keys it holds. The P2P link outlives the session so the app stays
+//! connected (and a local node keeps its chain proxy) while locked.
 
 use std::sync::Arc;
 use std::time::Instant;
 
-use hashgram_sdk::account::Account;
+use hashgram_sdk::link::Link;
+use hashgram_sdk::sync::SyncPhase;
+use hashgram_sdk::HashgramOne;
 use tokio::sync::{Mutex, RwLock};
 use zeroize::Zeroizing;
 
-use crate::chain_access::ChainAccess;
 use crate::crypto::DbKey;
 use crate::db::Db;
-use crate::net::NetManager;
+use crate::error::{CmdResult, UiError};
 use crate::perf::PerfStore;
 use crate::settings::Settings;
 
-/// The unlocked account, shared between the session and the messaging and
-/// social hubs (which persist their state into the vault). Locked only
-/// around reads of keys and around saves, never across network calls.
-pub type SharedAccount = Arc<Mutex<Account>>;
+/// A mnemonic shown to the user during onboarding and not yet committed to
+/// a vault. Zeroised on drop.
+pub type PendingMnemonic = Zeroizing<String>;
 
-/// An unlocked vault.
-pub struct Session {
-    /// The account (wallet, root, device keys).
-    pub account: SharedAccount,
-    /// Address (cached so reads need no lock).
+/// Cheap facts about the unlocked session (read without the SDK lock).
+#[derive(Clone)]
+pub struct SessionInfo {
+    /// Address.
     pub address: String,
-    /// The database column key from the vault.
+    /// This device's id.
+    pub device_id: String,
+    /// This device holds the wallet key.
+    pub has_wallet_key: bool,
+    /// This device holds the root key.
+    pub has_root_key: bool,
+    /// UI cache column key from the vault.
     pub db_key: DbKey,
     /// When it was unlocked.
     pub unlocked_at: Instant,
@@ -33,35 +44,95 @@ pub struct Session {
     pub last_activity: Instant,
 }
 
-/// A mnemonic shown to the user during onboarding and not yet committed to
-/// a vault. Zeroised on drop.
-pub type PendingMnemonic = Zeroizing<String>;
+/// What the sync loop last reported.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct SyncStatus {
+    /// Engine phase.
+    pub phase: SyncPhase,
+    /// Unix ms of the last successful round.
+    pub last_ok_ms: Option<u64>,
+    /// Rounds run this session.
+    pub rounds: u64,
+    /// Last error text, if the last round failed.
+    pub last_error: Option<String>,
+    /// Verified peers right now.
+    pub peers: usize,
+    /// Latest balance seen (uhash string).
+    pub balance_uhash: Option<String>,
+}
+
+impl Default for SyncStatus {
+    fn default() -> Self {
+        Self {
+            phase: SyncPhase::Offline,
+            last_ok_ms: None,
+            rounds: 0,
+            last_error: None,
+            peers: 0,
+            balance_uhash: None,
+        }
+    }
+}
 
 /// Everything.
 pub struct AppState {
     /// Settings.
     pub settings: RwLock<Settings>,
-    /// Unlocked session, if any.
-    pub session: RwLock<Option<Session>>,
+    /// The unlocked session's facade, if any.
+    pub one: Mutex<Option<HashgramOne>>,
+    /// Facts about the session that need no SDK lock.
+    pub session: RwLock<Option<SessionInfo>>,
+    /// The P2P link, started at boot and kept across lock/unlock.
+    pub link: RwLock<Option<Arc<Link>>>,
+    /// Why the link is not up, when it is not.
+    pub link_error: RwLock<Option<String>>,
     /// Mnemonic generated during onboarding, before the vault exists.
     pub pending_mnemonic: Mutex<Option<PendingMnemonic>>,
-    /// The swarm.
-    pub net: Arc<NetManager>,
-    /// Chain source chooser.
-    pub chain: Arc<ChainAccess>,
-    /// Database.
+    /// UI cache database.
     pub db: Arc<Db>,
     /// Performance store.
     pub perf: Arc<PerfStore>,
+    /// Sync loop status.
+    pub sync: RwLock<SyncStatus>,
+    /// The sync loop task (aborted at lock).
+    pub sync_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     /// Transactions still pending (hashes), watched by a background task.
-    pub pending: Mutex<Vec<String>>,
-    /// Messaging.
-    pub chat: Arc<crate::chat::ChatHub>,
-    /// Social.
-    pub social: Arc<crate::social_hub::SocialHub>,
+    pub pending_tx: Mutex<Vec<String>>,
+    /// Ask the sync loop to run a round now.
+    pub sync_wake: tokio::sync::Notify,
 }
 
 impl AppState {
+    /// The unlocked facade or `locked`.
+    pub fn unlocked(g: &mut Option<HashgramOne>) -> CmdResult<&mut HashgramOne> {
+        g.as_mut().ok_or_else(UiError::locked)
+    }
+
+    /// Whether a session is open.
+    pub async fn is_unlocked(&self) -> bool {
+        self.session.read().await.is_some()
+    }
+
+    /// The session's address or `locked`.
+    pub async fn address(&self) -> CmdResult<String> {
+        self.session
+            .read()
+            .await
+            .as_ref()
+            .map(|s| s.address.clone())
+            .ok_or_else(UiError::locked)
+    }
+
+    /// The session's UI-cache key or `locked`.
+    pub async fn db_key(&self) -> CmdResult<DbKey> {
+        self.session
+            .read()
+            .await
+            .as_ref()
+            .map(|s| s.db_key.clone())
+            .ok_or_else(UiError::locked)
+    }
+
     /// Milliseconds since unlock, or `None` when locked.
     pub async fn unlocked_for_ms(&self) -> Option<u64> {
         self.session
@@ -78,40 +149,31 @@ impl AppState {
         }
     }
 
-    /// Locks if the auto-lock timer elapsed. Returns `true` when it locked.
-    pub async fn auto_lock_if_due(&self) -> bool {
+    /// Whether the auto-lock timer elapsed.
+    pub async fn auto_lock_due(&self) -> bool {
         let minutes = self.settings.read().await.security.auto_lock_minutes;
         if minutes == 0 {
             return false;
         }
-        let due = self
-            .session
+        self.session
             .read()
             .await
             .as_ref()
             .map(|s| s.last_activity.elapsed().as_secs() >= u64::from(minutes) * 60)
-            .unwrap_or(false);
-        if due {
-            self.lock().await;
+            .unwrap_or(false)
+    }
+
+    /// The link, or an `offline` error explaining why there is none.
+    pub async fn link(&self) -> CmdResult<Arc<Link>> {
+        if let Some(l) = self.link.read().await.clone() {
+            return Ok(l);
         }
-        due
-    }
-
-    /// Locks the vault: drops the account and the database key, and the
-    /// messaging and social state derived from them.
-    pub async fn lock(&self) {
-        self.chat.close().await;
-        self.social.close().await;
-        *self.session.write().await = None;
-        self.pending_mnemonic.lock().await.take();
-    }
-
-    /// The unlocked account and database key, or "locked".
-    pub async fn session_handles(
-        &self,
-    ) -> Result<(SharedAccount, crate::crypto::DbKey, String), String> {
-        let s = self.session.read().await;
-        let s = s.as_ref().ok_or_else(|| "locked".to_owned())?;
-        Ok((s.account.clone(), s.db_key.clone(), s.address.clone()))
+        let why = self
+            .link_error
+            .read()
+            .await
+            .clone()
+            .unwrap_or_else(|| "the network link has not started yet".to_owned());
+        Err(UiError::offline(why))
     }
 }

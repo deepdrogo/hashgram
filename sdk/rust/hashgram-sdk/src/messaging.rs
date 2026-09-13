@@ -50,6 +50,18 @@ pub const VAULT_SEEN_KEY: &str = "seen_envelopes";
 pub const FAILED_ATTEMPTS_CAP: u32 = 5;
 /// Key for envelope failure counts.
 pub const VAULT_FAILED_KEY: &str = "failed_envelopes";
+/// Key for this device's current last-resort key package (hex bytes and
+/// the second it was made), so the same one is re-published rather than a
+/// new one minted on every sync.
+pub const VAULT_LAST_RESORT_KEY: &str = "mls_last_resort";
+/// A last-resort key package is re-minted this long after it was made,
+/// comfortably inside [`KEY_PACKAGE_TTL_SECS`] so a store never holds an
+/// expired one for us.
+pub const LAST_RESORT_ROTATE_SECS: u64 = 25 * 24 * 3600;
+/// How often the one-time key packages at a store node are topped up when
+/// nothing consumed them (a Welcome consumes one; that triggers a refresh
+/// on its own).
+pub const KEY_PACKAGE_REFRESH_SECS: u64 = 15 * 60;
 /// How many processed envelope ids to remember. An envelope stored on
 /// several store nodes arrives several times; MLS refuses the second copy
 /// (secret reuse), so the copies are recognised here first.
@@ -176,6 +188,17 @@ pub struct Messaging {
     seen: Vec<String>,
     /// Envelopes that failed to process, with attempt counts.
     failed: HashMap<String, u32>,
+    /// The current last-resort key package and when it was made.
+    last_resort: Option<LastResort>,
+    /// Store peers that hold our key packages, by the second we last
+    /// confirmed it. Session-only: a fresh process publishes again.
+    published_at: HashMap<String, u64>,
+}
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct LastResort {
+    key_package: Vec<u8>,
+    created_at: u64,
 }
 
 impl Messaging {
@@ -216,6 +239,12 @@ impl Messaging {
             .and_then(|h| hex::decode(h).ok())
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
+        let last_resort = account
+            .contents
+            .extra
+            .get(VAULT_LAST_RESORT_KEY)
+            .and_then(|h| hex::decode(h).ok())
+            .and_then(|b| serde_json::from_slice::<LastResort>(&b).ok());
         Ok(Self {
             mls,
             device,
@@ -223,6 +252,8 @@ impl Messaging {
             cursors,
             seen,
             failed,
+            last_resort,
+            published_at: HashMap::new(),
         })
     }
 
@@ -248,6 +279,13 @@ impl Messaging {
             .contents
             .extra
             .insert(VAULT_FAILED_KEY.into(), hex::encode(failed));
+        if let Some(lr) = &self.last_resort {
+            let lr = serde_json::to_vec(lr).unwrap_or_default();
+            account
+                .contents
+                .extra
+                .insert(VAULT_LAST_RESORT_KEY.into(), hex::encode(lr));
+        }
         Ok(())
     }
 
@@ -285,33 +323,92 @@ impl Messaging {
     }
 
     /// Publishes key packages to every store peer, and so registers this
-    /// device's mailbox with them: a last-resort package plus enough
+    /// device's mailbox with them: the last-resort package plus enough
     /// one-time packages to bring each store's queue to
     /// [`KEY_PACKAGE_BATCH`]. Returns how many store nodes accepted.
-    /// Called on first run and by [`Self::sync`] to replenish.
+    /// Called on first run and from the troubleshooting button; the sync
+    /// loop uses [`Self::replenish_key_packages`], which only talks to a
+    /// store when there is a reason to.
     pub async fn publish_key_package(
-        &self,
+        &mut self,
         link: &Link,
         network: &NetworkIdentity,
+    ) -> Result<usize, SdkError> {
+        self.replenish_key_packages(link, network, true).await
+    }
+
+    /// Store peers that hold this device's key packages, as far as this
+    /// session has confirmed.
+    #[must_use]
+    pub fn key_package_stores(&self) -> Vec<String> {
+        self.published_at.keys().cloned().collect()
+    }
+
+    /// The last-resort key package, minted once and reused until it is
+    /// [`LAST_RESORT_ROTATE_SECS`] old. The earlier code built a new one on
+    /// every call, and the sync loop called it every few seconds: every
+    /// call left another private key in the MLS store, the vault grew
+    /// without bound, and the store node was handed a fresh package each
+    /// time for nothing.
+    fn last_resort_package(&mut self) -> Result<LastResort, SdkError> {
+        let t = now();
+        if let Some(lr) = &self.last_resort {
+            if t.saturating_sub(lr.created_at) < LAST_RESORT_ROTATE_SECS
+                && !lr.key_package.is_empty()
+            {
+                return Ok(lr.clone());
+            }
+        }
+        let lr = LastResort {
+            key_package: self.mls.key_package_last_resort()?,
+            created_at: t,
+        };
+        self.last_resort = Some(lr.clone());
+        Ok(lr)
+    }
+
+    /// Makes sure every connected store peer holds this device's key
+    /// packages. With `force` false, a store confirmed within
+    /// [`KEY_PACKAGE_REFRESH_SECS`] is left alone. Returns how many store
+    /// nodes hold our packages after the call (confirmed now or recently).
+    pub async fn replenish_key_packages(
+        &mut self,
+        link: &Link,
+        network: &NetworkIdentity,
+        force: bool,
     ) -> Result<usize, SdkError> {
         let stores = link.peers_with_role("store").await;
         if stores.is_empty() {
             return Err(SdkError::Link(crate::link::LinkError::NoPeer("store")));
         }
         let t = now();
+        // Forget stores we are no longer connected to.
+        let connected: std::collections::HashSet<String> =
+            stores.iter().map(ToString::to_string).collect();
+        self.published_at.retain(|p, _| connected.contains(p));
+        let lr = self.last_resort_package()?;
         let mut ok = 0;
         for p in stores {
+            let key = p.to_string();
+            if !force {
+                if let Some(at) = self.published_at.get(&key) {
+                    if t.saturating_sub(*at) < KEY_PACKAGE_REFRESH_SECS {
+                        ok += 1;
+                        continue;
+                    }
+                }
+            }
             // Last resort first: it also tells us the current one-time depth.
-            let mut lr = pb::KeyPackagePublish {
-                key_package: self.mls.key_package_last_resort()?,
-                created_at: t,
-                expires_at: t + KEY_PACKAGE_TTL_SECS,
+            let mut msg = pb::KeyPackagePublish {
+                key_package: lr.key_package.clone(),
+                created_at: lr.created_at,
+                expires_at: lr.created_at + KEY_PACKAGE_TTL_SECS,
                 last_resort: true,
                 ..Default::default()
             };
-            signing::sign_key_package(network, &self.device, &mut lr)?;
+            signing::sign_key_package(network, &self.device, &mut msg)?;
             let mut remaining = match link
-                .request(p, pb::request::Body::KeyPackagePublish(lr))
+                .request(p, pb::request::Body::KeyPackagePublish(msg))
                 .await
             {
                 Ok(pb::response::Body::KeyPackagePublish(r)) if r.stored => r.remaining,
@@ -341,6 +438,7 @@ impl Messaging {
                     _ => break,
                 }
             }
+            self.published_at.insert(key, t);
             ok += 1;
         }
         Ok(ok)
@@ -678,6 +776,7 @@ impl Messaging {
             }
         }
         let mut out = Vec::new();
+        let mut joined = false;
         for p in peers {
             let mut bytes_served: u64 = 0;
             let mut cursor = self
@@ -735,6 +834,11 @@ impl Messaging {
                     if self.seen.contains(&id_hex) {
                         acked.push(env.id.clone());
                         continue;
+                    }
+                    // Not marked seen yet: a failed envelope must stay
+                    // unacknowledged so the store keeps it for the next sync.
+                    if env.kind == pb::EnvelopeKind::MlsWelcome as i32 {
+                        joined = true;
                     }
                     match self.process_envelope(env) {
                         Ok(Some(r)) => {
@@ -806,9 +910,10 @@ impl Messaging {
                 }
             }
         }
-        // Replenish one-time key packages consumed by Welcomes since the
-        // last sync. Failure here is not a sync failure.
-        if let Err(e) = self.publish_key_package(link, network).await {
+        // Replenish one-time key packages: at once when a Welcome consumed
+        // one, otherwise on the slow schedule. Failure here is not a sync
+        // failure.
+        if let Err(e) = self.replenish_key_packages(link, network, joined).await {
             debug!(error = %e, "key package replenish skipped");
         }
         Ok(out)

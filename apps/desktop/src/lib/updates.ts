@@ -1,15 +1,14 @@
 // Self-update over GitHub Releases. One place owns the state so the Settings
 // tab, the start-up check and the shell banner all agree on what is going on.
 //
-// The manifest (latest.json) and the installer come from
-// https://github.com/deepdrogo/hashgram_windows/releases; both are refused
-// unless the minisign signature verifies against the public key compiled into
-// this build (tauri.conf.json → plugins.updater.pubkey). No other endpoint
-// is ever contacted.
+// The manifest (latest.json) and the installer come from the release
+// endpoint compiled into tauri.conf.json; both are refused unless the
+// minisign signature verifies against the public key compiled into this
+// build. No other endpoint is ever contacted.
 import { createRoot, createSignal } from "solid-js";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { ipc } from "./ipc";
+import { ipc, errText } from "./ipc";
 import { store } from "./store";
 
 export type UpdatePhase = "idle" | "checking" | "up-to-date" | "available" | "downloading" | "installing" | "error";
@@ -67,7 +66,7 @@ function createUpdates() {
       setPhase("available");
       return u;
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
       setPhase("error");
       return null;
     }
@@ -93,7 +92,7 @@ function createUpdates() {
       // On Windows the installer closes the app itself; this only runs elsewhere.
       await relaunch();
     } catch (e) {
-      setError(String(e));
+      setError(errText(e));
       setPhase("error");
     }
   };

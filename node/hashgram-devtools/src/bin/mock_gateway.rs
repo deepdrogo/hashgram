@@ -42,6 +42,15 @@ struct Cli {
     /// Answer balances one uhash too high: a node that lies.
     #[arg(long)]
     lie: bool,
+    /// A device on chain, `hash1<address>=<64-hex ed25519 public key>`,
+    /// repeatable. Served under `hashgram/identity/v1/{identity,devices}`
+    /// so two clients can run the whole messaging flow (devices from the
+    /// chain, key packages and mailboxes on store nodes) with no chain.
+    #[arg(long = "device")]
+    devices: Vec<String>,
+    /// A registered `@username`, `<name>=hash1<address>`, repeatable.
+    #[arg(long = "username")]
+    usernames: Vec<String>,
 }
 
 struct App {
@@ -51,10 +60,11 @@ struct App {
     txs: Mutex<Vec<(String, u64)>>,
     /// DEVNET ONLY identity registry: address → devices. Lets two
     /// unfunded test clients find each other's device keys (the SDK asks
-    /// the chain for them) without a chain. Filled through
-    /// `POST /devnet/identity`.
+    /// the chain for them) without a chain. Seeded from `--device` and
+    /// filled through `POST /devnet/identity`.
     identities: Mutex<std::collections::BTreeMap<String, Vec<MockDevice>>>,
-    /// DEVNET ONLY username registry: name → owner.
+    /// DEVNET ONLY username registry: name → owner. Seeded from
+    /// `--username` and filled through `POST /devnet/identity`.
     usernames: Mutex<std::collections::BTreeMap<String, String>>,
 }
 
@@ -154,6 +164,21 @@ fn device_json(root: &str, d: &MockDevice) -> serde_json::Value {
         "revoked": d.revoked,
         "added_height": "1",
     })
+}
+
+fn parse_pairs(items: &[String], what: &str) -> Vec<(String, String)> {
+    items
+        .iter()
+        .filter_map(|s| {
+            let (a, b) = s.split_once('=')?;
+            let (a, b) = (a.trim(), b.trim());
+            if a.is_empty() || b.is_empty() {
+                eprintln!("mock-gateway: ignoring malformed --{what} {s:?}");
+                return None;
+            }
+            Some((a.to_owned(), b.to_owned()))
+        })
+        .collect()
 }
 
 type S = State<Arc<App>>;
@@ -290,20 +315,29 @@ async fn hashgram_any(
         };
     }
     if let Some(addr) = rest.strip_prefix("identity/v1/identity/") {
-        let known = app
+        let active = app
             .identities
             .lock()
             .ok()
-            .map(|m| m.contains_key(addr))
-            .unwrap_or(false);
-        return if known {
-            stamped(
+            .and_then(|m| m.get(addr).map(|d| d.iter().filter(|x| !x.revoked).count()));
+        return match active {
+            Some(n) => stamped(
                 &app,
                 StatusCode::OK,
-                serde_json::json!({ "identity": { "address": addr, "rotation_count": 0, "revoked": false } }),
-            )
-        } else {
-            not_found(&app)
+                serde_json::json!({
+                    "found": true,
+                    "identity": {
+                        "address": addr,
+                        "root_pubkey": "",
+                        "root_key_type": "KEY_TYPE_ED25519",
+                        "rotation_count": 0,
+                        "created_height": "1",
+                        "revoked": false
+                    },
+                    "active_devices": n
+                }),
+            ),
+            None => not_found(&app),
         };
     }
     if rest == "identity/v1/resolve_device_key" {
@@ -327,34 +361,74 @@ async fn hashgram_any(
             None => stamped(&app, StatusCode::OK, serde_json::json!({ "found": false })),
         };
     }
+    // Username queries answer with the same shapes as `x/username`
+    // (`proto/hashgram/username/v1/query.proto`): lookup is 200 with
+    // `found`, reverse is `registrations[]`, availability carries a reason.
     if let Some(name) = rest.strip_prefix("username/v1/lookup/") {
+        let name = name.to_lowercase();
         let owner = app
             .usernames
             .lock()
             .ok()
-            .and_then(|u| u.get(&name.to_lowercase()).cloned());
-        return match owner {
-            Some(o) => stamped(
-                &app,
-                StatusCode::OK,
-                serde_json::json!({ "registration": { "name": name, "owner": o, "expiry_height": "9999999" } }),
-            ),
-            None => not_found(&app),
+            .and_then(|u| u.get(&name).cloned());
+        let body = match owner {
+            Some(o) => serde_json::json!({
+                "found": true,
+                "registration": { "name": name, "owner": o, "skeleton": name, "registered_height": "1", "expiry_height": "7884000" },
+                "normalized": name
+            }),
+            None => serde_json::json!({
+                "found": false,
+                "registration": { "name": "", "owner": "", "skeleton": "", "registered_height": "0", "expiry_height": "0" },
+                "normalized": name
+            }),
         };
+        return stamped(&app, StatusCode::OK, body);
     }
     if let Some(addr) = rest.strip_prefix("username/v1/reverse/") {
-        let names: Vec<String> = app
+        let regs: Vec<serde_json::Value> = app
             .usernames
             .lock()
             .ok()
             .map(|u| {
                 u.iter()
                     .filter(|(_, o)| o.as_str() == addr)
-                    .map(|(n, _)| n.clone())
+                    .map(|(n, o)| serde_json::json!({ "name": n, "owner": o, "skeleton": n, "registered_height": "1", "expiry_height": "7884000" }))
                     .collect()
             })
             .unwrap_or_default();
-        return stamped(&app, StatusCode::OK, serde_json::json!({ "names": names }));
+        return stamped(&app, StatusCode::OK, serde_json::json!({ "registrations": regs }));
+    }
+    if let Some(name) = rest.strip_prefix("username/v1/availability/") {
+        let name = name.to_lowercase();
+        let taken = app
+            .usernames
+            .lock()
+            .ok()
+            .map(|u| u.contains_key(&name))
+            .unwrap_or(false);
+        let reason = if taken {
+            "taken"
+        } else if name.len() < 3 {
+            "too_short"
+        } else if name.len() > 32 {
+            "too_long"
+        } else if !name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            "invalid"
+        } else {
+            ""
+        };
+        return stamped(
+            &app,
+            StatusCode::OK,
+            serde_json::json!({
+                "available": reason.is_empty(),
+                "normalized": name,
+                "skeleton": name,
+                "reason": reason,
+                "conflicting_name": if taken { name.clone() } else { String::new() }
+            }),
+        );
     }
     if rest.starts_with("serviceproof/v1/provider/")
         || rest.starts_with("serviceproof/v1/rewards/")
@@ -458,13 +532,38 @@ async fn main() {
         eprintln!("mock-gateway: refusing to bind a privileged port; this is a DEVNET tool");
         std::process::exit(2);
     }
+    // Seed the DEVNET registries from the command line; `POST
+    // /devnet/identity` can add more while running.
+    let mut identities: std::collections::BTreeMap<String, Vec<MockDevice>> = Default::default();
+    for (address, hex_key) in parse_pairs(&cli.devices, "device") {
+        match hex::decode(&hex_key) {
+            Ok(pubkey) if pubkey.len() == 32 => {
+                let list = identities.entry(address).or_default();
+                let i = list.len();
+                list.push(MockDevice {
+                    device_id: format!("mock-device-{i}"),
+                    device_pubkey: hex::encode(pubkey),
+                    label: format!("mock {i}"),
+                    platform: "devnet".into(),
+                    revoked: false,
+                });
+            }
+            _ => {
+                eprintln!("mock-gateway: --device {address}: key is not 32 bytes of hex; ignored");
+            }
+        }
+    }
+    let usernames: std::collections::BTreeMap<String, String> = parse_pairs(&cli.usernames, "username")
+        .into_iter()
+        .map(|(n, a)| (n.to_lowercase(), a))
+        .collect();
     let app = Arc::new(App {
         chain_id: cli.chain_id.clone(),
         height: AtomicU64::new(cli.height),
         lie: cli.lie,
         txs: Mutex::new(Vec::new()),
-        identities: Mutex::new(Default::default()),
-        usernames: Mutex::new(Default::default()),
+        identities: Mutex::new(identities),
+        usernames: Mutex::new(usernames),
     });
     {
         let app = app.clone();

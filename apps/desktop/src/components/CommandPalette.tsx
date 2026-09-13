@@ -1,170 +1,220 @@
-// Ctrl+K search. Resolves, in order: hash1… address → @username (chain
-// lookup) → transaction hash → #hashtag → channel. There is no fuzzy
-// "people you may know": no server exists to compute one.
-import { createSignal, createEffect, Show, For, onCleanup } from "solid-js";
+// Ctrl+K: one box that searches Mail, Drive and People together, plus a
+// few commands (compose, sections). Results come from local indexes; a
+// typed @name or address is resolved on chain only when Enter is pressed
+// on the "look up" row.
+import { For, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { Portal } from "solid-js/web";
 import { useNavigate } from "@solidjs/router";
-import { Search, User, AtSign, Hash, Receipt, Radio, CircleAlert } from "lucide-solid";
-import { ipc, type SearchResult } from "~/lib/ipc";
-import { truncateMiddle } from "~/lib/format";
+import { Mail, HardDrive, Users, Search, ArrowRight, PenSquare } from "lucide-solid";
+import { ipc, type MailSummary, type EntryView, type ContactRecord } from "~/lib/ipc";
+import { store } from "~/lib/store";
+import { t } from "~/lib/i18n";
+import { handle, shortWhen, formatBytes, isHashAddress } from "~/lib/format";
+import { NAV } from "./Shell";
 import { Kbd } from "./ui";
 
+type Row =
+  | { kind: "cmd"; id: string; label: string; hint?: string; run: () => void }
+  | { kind: "mail"; id: string; m: MailSummary }
+  | { kind: "drive"; id: string; e: EntryView }
+  | { kind: "person"; id: string; c: ContactRecord }
+  | { kind: "lookup"; id: string; q: string };
+
 export function CommandPalette(props: { open: boolean; onClose: () => void }) {
-  const [q, setQ] = createSignal("");
-  const [result, setResult] = createSignal<SearchResult | null>(null);
-  const [recent, setRecent] = createSignal<string[]>([]);
-  const [busy, setBusy] = createSignal(false);
   const navigate = useNavigate();
+  const [q, setQ] = createSignal("");
+  const [sel, setSel] = createSignal(0);
   let input!: HTMLInputElement;
-  let timer: ReturnType<typeof setTimeout> | null = null;
 
   createEffect(() => {
     if (props.open) {
       setQ("");
-      setResult(null);
-      void ipc.searchRecent().then(setRecent).catch(() => undefined);
+      setSel(0);
       queueMicrotask(() => input?.focus());
-      const onKey = (e: KeyboardEvent) => {
-        if (e.key === "Escape") props.onClose();
-      };
-      window.addEventListener("keydown", onKey);
-      onCleanup(() => window.removeEventListener("keydown", onKey));
     }
   });
 
-  const run = (value: string) => {
-    if (timer) clearTimeout(timer);
-    if (!value.trim()) {
-      setResult(null);
-      return;
-    }
-    timer = setTimeout(async () => {
-      setBusy(true);
-      try {
-        setResult(await ipc.searchResolve(value));
-      } catch (e) {
-        setResult({ kind: "nothing", reason: String(e) });
-      } finally {
-        setBusy(false);
-      }
-    }, 180);
-  };
-
-  const go = (r: SearchResult) => {
-    switch (r.kind) {
-      case "address":
-        navigate(`/profile/${r.address}`);
-        break;
-      case "username":
-        navigate(`/profile/${r.address}`);
-        break;
-      case "username_available":
-        navigate(`/wallet/usernames?register=${encodeURIComponent(r.name)}`);
-        break;
-      case "tx":
-        navigate(`/wallet/history?tx=${r.hash}`);
-        break;
-      case "hashtag":
-        navigate(`/feed?tag=${encodeURIComponent(r.tag)}`);
-        break;
-      case "channel":
-        navigate(`/channels/${encodeURIComponent(r.id)}`);
-        break;
-      default:
-        return;
-    }
-    props.onClose();
-  };
-
-  const Row = (p: { icon: typeof Search; title: string; sub?: string; onClick?: () => void; disabled?: boolean }) => (
-    <button
-      type="button"
-      class="row-hover flex w-full items-center gap-3 rounded-md px-3 py-2 text-left disabled:opacity-60"
-      disabled={p.disabled}
-      onClick={p.onClick}
-    >
-      <p.icon size={16} class="shrink-0 text-muted" aria-hidden="true" />
-      <span class="min-w-0 flex-1">
-        <span class="block truncate text-sm">{p.title}</span>
-        <Show when={p.sub}>
-          <span class="mono block truncate text-xs text-muted">{p.sub}</span>
-        </Show>
-      </span>
-    </button>
+  const [results] = createResource(
+    () => (props.open ? q().trim() : null),
+    async (query) => {
+      if (!query || query.length < 2 || store.locked()) return { mail: [] as MailSummary[], drive: [] as EntryView[], people: [] as ContactRecord[] };
+      const [mail, drive, people] = await Promise.all([
+        ipc.mailSearch(query, 8).catch(() => []),
+        ipc.driveSearch(query, 8).catch(() => []),
+        ipc.peopleSearchLocal(query).catch(() => []),
+      ]);
+      return { mail, drive, people: people.slice(0, 8) };
+    },
   );
+
+  const rows = createMemo<Row[]>(() => {
+    const query = q().trim();
+    const out: Row[] = [];
+    const lower = query.toLowerCase();
+    if (!query) {
+      out.push({ kind: "cmd", id: "compose", label: t("mail_compose"), hint: "c", run: () => navigate("/mail?compose=1") });
+      for (const n of NAV) out.push({ kind: "cmd", id: n.to, label: t(n.key), hint: n.accel ? `Alt+${n.accel}` : undefined, run: () => navigate(n.to) });
+      return out;
+    }
+    for (const n of NAV) if (t(n.key).toLowerCase().includes(lower)) out.push({ kind: "cmd", id: n.to, label: t(n.key), run: () => navigate(n.to) });
+    if (t("mail_compose").toLowerCase().includes(lower)) out.push({ kind: "cmd", id: "compose", label: t("mail_compose"), run: () => navigate("/mail?compose=1") });
+    const r = results();
+    for (const m of r?.mail ?? []) out.push({ kind: "mail", id: m.id, m });
+    for (const e of r?.drive ?? []) out.push({ kind: "drive", id: e.id, e });
+    for (const c of r?.people ?? []) out.push({ kind: "person", id: c.address, c });
+    if (query.startsWith("@") || isHashAddress(query) || /^[a-z0-9._-]{2,32}(@hashgram\.io)?$/i.test(query)) out.push({ kind: "lookup", id: "lookup", q: query });
+    return out;
+  });
+
+  const run = (row: Row) => {
+    props.onClose();
+    if (q().trim()) void ipc.searchNote(q().trim()).catch(() => undefined);
+    switch (row.kind) {
+      case "cmd":
+        row.run();
+        break;
+      case "mail":
+        navigate(`/mail/${row.m.folder}/${row.m.id}`);
+        break;
+      case "drive":
+        navigate(`/drive/${row.e.parent_id}?select=${row.e.id}`);
+        break;
+      case "person":
+        navigate(`/people/${row.c.address}`);
+        break;
+      case "lookup":
+        navigate(`/people?q=${encodeURIComponent(row.q)}`);
+        break;
+    }
+  };
+
+  createEffect(() => {
+    if (!props.open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") props.onClose();
+      else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSel((s) => Math.min(rows().length - 1, s + 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSel((s) => Math.max(0, s - 1));
+      } else if (e.key === "Enter") {
+        const r = rows()[sel()];
+        if (r) run(r);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    onCleanup(() => window.removeEventListener("keydown", onKey));
+  });
+  createEffect(() => {
+    void rows();
+    setSel(0);
+  });
 
   return (
     <Show when={props.open}>
       <Portal>
-        <div class="fixed inset-0 z-50 flex items-start justify-center bg-bg/80 pt-[12vh] fade-in" onClick={props.onClose} role="presentation">
-          <div class="card w-full max-w-xl" role="dialog" aria-label="Search" onClick={(e) => e.stopPropagation()}>
+        <div class="fixed inset-0 z-50 flex items-start justify-center bg-bg/70 pt-[12vh]" onClick={props.onClose} role="presentation">
+          <div class="card w-full max-w-xl fade-in" role="dialog" aria-label={t("search")} onClick={(e) => e.stopPropagation()}>
             <div class="flex items-center gap-2 border-b border-border px-3">
-              <Search size={16} class="text-muted" aria-hidden="true" />
+              <Search size={14} class="text-muted" />
               <input
                 ref={input}
-                class="h-11 flex-1 bg-transparent text-sm outline-none placeholder:text-muted"
-                placeholder="hash1… address, @username, transaction hash, #hashtag, channel:name"
+                class="h-10 w-full bg-transparent text-sm outline-none placeholder:text-muted"
+                placeholder={t("search_placeholder")}
                 value={q()}
-                onInput={(e) => {
-                  setQ(e.currentTarget.value);
-                  run(e.currentTarget.value);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && result()) go(result()!);
-                }}
+                onInput={(e) => setQ(e.currentTarget.value)}
+                autocomplete="off"
                 spellcheck={false}
-                aria-label="Search"
               />
               <Kbd>Esc</Kbd>
             </div>
-            <div class="max-h-[50vh] overflow-auto p-1.5">
-              <Show when={busy()}>
-                <p class="px-3 py-2 text-xs text-muted">Resolving on chain…</p>
-              </Show>
-              <Show when={result()}>
-                {(r) => {
-                  const v = r();
-                  switch (v.kind) {
-                    case "address":
-                      return <Row icon={User} title={v.username ? `@${v.username}` : "Address"} sub={v.address} onClick={() => go(v)} />;
-                    case "username":
-                      return <Row icon={AtSign} title={`@${v.name}`} sub={v.address} onClick={() => go(v)} />;
-                    case "username_available":
-                      return (
-                        <>
-                          <Row icon={AtSign} title={`@${v.name} is available — register it`} sub="1 HASH, about a year" onClick={() => go(v)} />
-                          <Show when={v.confusable_with.length}>
-                            <p class="px-3 py-1 text-xs text-muted">Looks like: {v.confusable_with.map((c) => `@${c}`).join(", ")}</p>
-                          </Show>
-                        </>
-                      );
-                    case "tx":
-                      return <Row icon={Receipt} title={v.found ? `Transaction at height ${v.height ?? "?"}` : "Transaction not found on chain"} sub={truncateMiddle(v.hash, 16, 8)} onClick={() => go(v)} disabled={!v.found} />;
-                    case "hashtag":
-                      return <Row icon={Hash} title={`#${v.tag}`} onClick={() => go(v)} />;
-                    case "channel":
-                      return <Row icon={Radio} title={`Channel ${v.id}`} onClick={() => go(v)} />;
-                    default:
-                      return <Row icon={CircleAlert} title={v.reason} disabled />;
-                  }
-                }}
-              </Show>
-              <Show when={!q() && recent().length}>
-                <p class="px-3 pt-2 pb-1 text-[11px] uppercase tracking-wide text-muted">Recent</p>
-                <For each={recent()}>
-                  {(r) => (
-                    <Row
-                      icon={Search}
-                      title={r}
-                      onClick={() => {
-                        setQ(r);
-                        run(r);
+            <ul class="max-h-[50vh] overflow-auto py-1" role="listbox">
+              <For each={rows()}>
+                {(row, i) => (
+                  <li
+                    role="option"
+                    aria-selected={sel() === i()}
+                    class={`row flex cursor-default items-center gap-3 px-3 py-1.5 text-[13px] ${sel() === i() ? "bg-surface-2" : ""}`}
+                    onMouseEnter={() => setSel(i())}
+                    onClick={() => run(row)}
+                  >
+                    <Show when={row.kind === "cmd"}>
+                      {(_) => {
+                        const r = row as Extract<Row, { kind: "cmd" }>;
+                        return (
+                          <>
+                            <ArrowRight size={13} class="text-muted" />
+                            <span class="flex-1">{r.label}</span>
+                            <Show when={r.hint}>
+                              <Kbd>{r.hint}</Kbd>
+                            </Show>
+                          </>
+                        );
                       }}
-                    />
-                  )}
-                </For>
+                    </Show>
+                    <Show when={row.kind === "mail"}>
+                      {(_) => {
+                        const r = row as Extract<Row, { kind: "mail" }>;
+                        return (
+                          <>
+                            <Mail size={13} class="text-muted" />
+                            <span class="min-w-0 flex-1 truncate">
+                              <span class="font-medium">{r.m.subject || "(no subject)"}</span>
+                              <span class="ml-2 text-muted">{handle(r.m.from, r.m.from_username)}</span>
+                            </span>
+                            <span class="tnum text-xs text-muted">{shortWhen(r.m.received_at_ms)}</span>
+                          </>
+                        );
+                      }}
+                    </Show>
+                    <Show when={row.kind === "drive"}>
+                      {(_) => {
+                        const r = row as Extract<Row, { kind: "drive" }>;
+                        return (
+                          <>
+                            <HardDrive size={13} class="text-muted" />
+                            <span class="min-w-0 flex-1 truncate">
+                              {r.e.name}
+                              <span class="ml-2 text-muted">{r.e.path}</span>
+                            </span>
+                            <span class="tnum text-xs text-muted">{r.e.kind === "file" ? formatBytes(r.e.size) : "folder"}</span>
+                          </>
+                        );
+                      }}
+                    </Show>
+                    <Show when={row.kind === "person"}>
+                      {(_) => {
+                        const r = row as Extract<Row, { kind: "person" }>;
+                        return (
+                          <>
+                            <Users size={13} class="text-muted" />
+                            <span class="min-w-0 flex-1 truncate">{handle(r.c.address, r.c.username, r.c.display_name)}</span>
+                            <span class="mono text-xs text-muted">{r.c.username ? `@${r.c.username}` : ""}</span>
+                          </>
+                        );
+                      }}
+                    </Show>
+                    <Show when={row.kind === "lookup"}>
+                      {(_) => {
+                        const r = row as Extract<Row, { kind: "lookup" }>;
+                        return (
+                          <>
+                            <PenSquare size={13} class="text-muted" />
+                            <span class="flex-1">
+                              Look up <span class="mono">{r.q}</span> on the network
+                            </span>
+                          </>
+                        );
+                      }}
+                    </Show>
+                  </li>
+                )}
+              </For>
+              <Show when={!rows().length}>
+                <li class="px-3 py-6 text-center text-xs text-muted">{results.loading ? t("loading") : t("nothing_here")}</li>
               </Show>
-            </div>
+            </ul>
           </div>
         </div>
       </Portal>

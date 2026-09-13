@@ -1,10 +1,16 @@
 @import "tailwindcss";
 @import "./tokens.css";
 
+/* Inter, bundled: no font ever loads from the network. */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("../assets/fonts/InterVariable.woff2") format("woff2");
+}
+
 @layer base {
-  :root {
-    color-scheme: dark;
-  }
   html,
   body,
   #root {
@@ -12,12 +18,16 @@
     background: var(--color-bg);
     color: var(--color-fg);
     font-family: var(--font-sans);
-    font-size: 14px;
+    font-size: 13.5px;
     line-height: 1.45;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    font-feature-settings: "cv11", "ss01";
     overflow: hidden;
     user-select: none;
+  }
+  html[data-density="compact"] body {
+    font-size: 12.5px;
   }
   ::selection {
     background: var(--color-accent);
@@ -52,44 +62,49 @@
     user-select: text;
   }
   :focus-visible {
-    outline: 2px solid var(--color-fg);
-    outline-offset: 2px;
+    outline: 2px solid var(--color-brand);
+    outline-offset: 1px;
     border-radius: var(--radius-sm);
   }
   .selectable {
     user-select: text;
   }
+  a {
+    color: var(--color-brand);
+  }
 }
 
-/* shadcn-inspired primitives, monochrome. Composable ones are utilities so
-   they can be @apply'd (Tailwind v4 rule). */
+/* Primitives. Composable ones are utilities so they can be @apply'd
+   (Tailwind v4 rule). */
 @utility btn {
-  @apply inline-flex h-9 items-center justify-center gap-2 rounded-md px-3.5 text-sm font-medium whitespace-nowrap select-none;
+  @apply inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-[13px] font-medium whitespace-nowrap select-none;
   transition: background-color var(--duration-fast) var(--ease-out-quick), color var(--duration-fast) var(--ease-out-quick), border-color var(--duration-fast) var(--ease-out-quick), opacity var(--duration-fast);
   &:disabled {
     @apply cursor-not-allowed opacity-40;
   }
 }
 @utility input {
-  @apply h-9 w-full rounded-md border border-border bg-surface-2 px-3 text-sm text-fg placeholder:text-muted;
+  @apply h-8 w-full rounded-md border border-border bg-surface-2 px-2.5 text-[13px] text-fg placeholder:text-muted;
   transition: border-color var(--duration-fast) var(--ease-out-quick);
   &:focus {
-    @apply border-accent outline-none;
+    @apply border-brand outline-none;
   }
   &[aria-invalid="true"] {
     @apply border-fg;
   }
 }
-/* Amounts and hashes: monospace with tabular figures. */
+/* Amounts, hashes and addresses: tabular figures. */
 @utility mono {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
 }
-@utility badge {
-  @apply inline-flex h-5 items-center rounded-full border border-border px-2 text-[11px] font-medium text-muted;
+@utility tnum {
+  font-variant-numeric: tabular-nums;
 }
-
+@utility badge {
+  @apply inline-flex h-[18px] items-center rounded-full border border-border px-1.5 text-[10.5px] font-medium text-muted leading-none;
+}
 @utility card {
   @apply rounded-lg border border-border bg-surface;
 }
@@ -99,14 +114,19 @@
     @apply btn bg-fg text-bg;
   }
   .btn-primary:not(:disabled):hover {
-    /* Opacity, not a new colour: the palette stays seven values. */
     opacity: 0.88;
+  }
+  .btn-brand {
+    @apply btn bg-brand text-bg;
+  }
+  .btn-brand:not(:disabled):hover {
+    opacity: 0.9;
   }
   .btn-secondary {
     @apply btn border border-border bg-surface-2 text-fg;
   }
   .btn-secondary:not(:disabled):hover {
-    @apply border-accent bg-border;
+    @apply border-accent;
   }
   .btn-ghost {
     @apply btn text-muted;
@@ -114,23 +134,35 @@
   .btn-ghost:not(:disabled):hover {
     @apply bg-surface-2 text-fg;
   }
+  .btn-danger {
+    @apply btn border border-border text-fg;
+  }
+  .btn-danger:not(:disabled):hover {
+    @apply border-fg;
+  }
   .btn-sm {
-    @apply h-8 px-2.5 text-xs;
+    @apply h-7 px-2 text-xs;
   }
   .btn-icon {
-    @apply h-9 w-9 px-0;
+    @apply h-8 w-8 px-0;
+  }
+  .btn-icon-sm {
+    @apply h-7 w-7 px-0;
   }
   .textarea {
-    @apply input h-auto min-h-24 py-2 leading-relaxed;
+    @apply input h-auto min-h-20 py-1.5 leading-relaxed;
   }
   .label {
-    @apply mb-1.5 block text-xs font-medium text-muted;
+    @apply mb-1 block text-xs font-medium text-muted;
   }
   .badge-strong {
     @apply badge border-accent text-fg;
   }
+  .badge-brand {
+    @apply badge border-brand text-brand;
+  }
   .kbd {
-    @apply mono inline-flex h-5 items-center rounded border border-border bg-surface-2 px-1.5 text-[10px] text-muted;
+    @apply mono inline-flex h-[18px] items-center rounded border border-border bg-surface-2 px-1 text-[10px] text-muted;
   }
   .divider {
     @apply h-px w-full bg-border;
@@ -152,46 +184,83 @@
     0%, 100% { opacity: 0; }
     50% { opacity: 0.6; }
   }
-  .row-hover {
+  .row {
     transition: background-color var(--duration-fast) var(--ease-out-quick);
   }
-  .row-hover:hover {
+  .row:hover {
     @apply bg-surface-2;
   }
+  .row[aria-selected="true"],
+  .row[data-selected="true"] {
+    @apply bg-surface-2;
+    box-shadow: inset 2px 0 0 var(--color-brand);
+  }
   .page {
-    @apply mx-auto w-full max-w-5xl px-6 py-6;
+    @apply mx-auto w-full max-w-5xl px-6 py-5;
   }
   .page-title {
-    @apply text-lg font-semibold tracking-tight;
+    @apply text-base font-semibold tracking-tight;
   }
   .stat {
-    @apply card flex flex-col gap-1 p-4;
+    @apply card flex flex-col gap-0.5 p-3;
   }
   .stat-label {
-    @apply text-xs text-muted;
+    @apply text-[11px] text-muted;
   }
   .stat-value {
-    @apply mono text-xl font-semibold;
+    @apply tnum text-lg font-semibold;
   }
   .table {
-    @apply w-full text-left text-sm;
+    @apply w-full text-left text-[13px];
   }
   .table th {
-    @apply border-b border-border px-3 py-2 text-xs font-medium text-muted;
+    @apply border-b border-border px-2.5 py-1.5 text-[11px] font-medium text-muted;
   }
   .table td {
-    @apply border-b border-border px-3 py-2 align-middle;
+    @apply border-b border-border px-2.5 py-1.5 align-middle;
   }
-  .health-dot {
+  .dot {
     @apply inline-block h-2 w-2 rounded-full;
   }
-  .health-ok { background: var(--color-fg); }
-  .health-warn { background: var(--color-muted); }
-  .health-bad { background: var(--color-accent); }
-  .health-off { background: var(--color-border); }
+  .dot-ok { background: var(--color-brand); }
+  .dot-warn { background: var(--color-muted); }
+  .dot-bad { background: var(--color-accent); }
+  .dot-off { background: var(--color-border); }
+  .pane {
+    @apply flex min-h-0 flex-col border-r border-border bg-surface;
+  }
+  .pane-head {
+    @apply flex h-10 shrink-0 items-center gap-2 border-b border-border px-3;
+  }
+  .menu {
+    @apply card z-50 min-w-44 py-1 text-[13px];
+  }
+  .menu-item {
+    @apply flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-surface-2 disabled:opacity-40 disabled:hover:bg-transparent;
+  }
+  .menu-sep {
+    @apply my-1 h-px bg-border;
+  }
+  .prose-mail {
+    @apply text-[13.5px] leading-relaxed;
+    white-space: pre-wrap;
+    word-break: break-word;
+    user-select: text;
+  }
+  .prose-mail a {
+    text-decoration: underline;
+  }
+  .help-content h1 { @apply mb-3 text-lg font-semibold; }
+  .help-content h2 { @apply mt-5 mb-2 text-sm font-semibold; }
+  .help-content p, .help-content li { @apply mb-2 text-[13px] leading-relaxed text-fg; }
+  .help-content ul { @apply mb-2 list-disc pl-5; }
+  .help-content code { @apply mono rounded bg-surface-2 px-1 text-[12px]; }
+  .help-content table { @apply my-2 w-full text-[13px]; }
+  .help-content th, .help-content td { @apply border-b border-border px-2 py-1 text-left align-top; }
+  .help-content .help-source { @apply mt-6 text-xs text-muted; }
 }
 
-/* Motion: short, purposeful, and off when the user asked for it. */
+/* Motion: short and off when the user asked for it. */
 .fade-in {
   animation: fade-in var(--duration-base) var(--ease-out-quick) both;
 }
@@ -211,6 +280,11 @@ html[data-reduced-motion="true"] *::before,
 html[data-reduced-motion="true"] *::after {
   animation-duration: 0.001ms !important;
   transition-duration: 0.001ms !important;
+}
+
+/* Secret content blurs when the window loses focus. */
+html[data-blur-secrets="true"] [data-secret="true"] {
+  filter: blur(8px);
 }
 
 /* Windows high contrast: let the system paint. */

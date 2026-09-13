@@ -1,36 +1,37 @@
 # FAQ
 
-**Is there a sign-up?** No. An account is 24 words. There is no email,
-phone number or password database anywhere in Hashgram.
+**Is there a server?** No. The app talks to a network of nodes run by
+independent operators and checks what they say against each other and
+against signatures. Any one node can disappear.
 
-**Can I use 12 words?** No. Hashgram accounts are 24 words only.
+**Can a node read my mail or files?** No. Everything is encrypted on
+your PC before it leaves; nodes store ciphertext and see sizes and
+times.
 
-**Who can reset my passphrase?** Nobody. Restore from the 24 words.
+**Why do I need HASH to start?** Registering your identity and this
+device's key on chain is one transaction with a fee. Until then the app
+works locally (Drive, drafts, settings) and shows your address so someone
+can send you HASH. There is no faucet on Mainnet today.
 
-**Where is my data?** On this PC under `%LOCALAPPDATA%\Hashgram\data`: an
-encrypted vault, an encrypted database and a list of peers. Nothing is
-uploaded anywhere except what you publish to the network.
+**Is there mining?** No. Nodes earn from proven work — storage
+challenges and signed receipts — paid from a fixed reserve.
 
-**Which server does the app talk to?** None in particular. It talks to
-nodes on the peer-to-peer network and compares what they say.
+**What if I lose my PC?** Restore from the 24 words (or a backup file)
+on another PC, then revoke the lost device from Wallet → Devices. The
+lost device stops receiving from the next encryption epoch on; what it
+already held it keeps.
 
-**Is there mining?** No. Nodes earn for storing and serving real bytes;
-see *Earn by running a node*.
+**Why is a sender shown differently from the From line?** The network
+authenticates the sender's device; the From line is only a claim. The
+authenticated name is what you see.
 
-**Is the supply fixed?** Yes: 1,000,000,000 HASH, no mint module.
+**Can I e-mail people outside Hashgram?** Through a gateway, yes; such
+mail is not end-to-end encrypted and is labelled. Set the gateway's
+identity in Settings → Network.
 
-**Are transfers taxed?** No. 100 HASH sent is 100 HASH received. 1 % of
-protocol *fees* goes to the Founder; the Founder screen shows it live.
+**Why chronological only?** Because ranking is a decision someone else
+makes for you. Friends and Following are in time order; Explore is the
+indexer's chronological feed.
 
-**Can I buy or sell HASH in the app?** No. There is no exchange, price feed,
-fiat or bridge in this application.
-
-**Does the app send analytics?** No. The only outbound HTTPS is the signed
-update check and any REST endpoint you configured yourself.
-
-**Can I run a node?** Yes: **Earn → Run a node** installs one as a Windows
-service managed by the app.
-
-**What does "verified by 2 nodes" mean?** Two nodes run by different
-operators returned byte-identical answers within three blocks of each
-other. It does not mean a Merkle proof was checked.
+**Where is my data?** `%LOCALAPPDATA%\Hashgram\data`. Open it from
+Settings → About.

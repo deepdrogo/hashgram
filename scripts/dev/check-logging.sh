@@ -35,7 +35,7 @@ printf '========================================================================
 
 # Directories that hold real code. Excluding vendored protos and generated
 # files, which we do not control and which contain no logging.
-SEARCH_PATHS=(app cmd x genesis tools node sdk)
+SEARCH_PATHS=(app cmd x genesis tools node sdk apps services)
 EXISTING=()
 for p in "${SEARCH_PATHS[@]}"; do
   [ -d "$p" ] && EXISTING+=("$p")
@@ -48,6 +48,11 @@ EXCLUDE=(
   --glob '!**/*.pb.gw.go'
   --glob '!**/*_test.go'
   --glob '!**/testdata/**'
+  --glob '!**/node_modules/**'
+  --glob '!**/target/**'
+  --glob '!**/dist/**'
+  --glob '!**/*.test.ts'
+  --glob '!**/*.test.tsx'
 )
 
 # ---------------------------------------------------------------------------
@@ -89,6 +94,32 @@ if [ ${#EXISTING[@]} -gt 0 ] && \
   bad "a log call references key material (matches above)"
 else
   ok "no log call references a mnemonic, seed phrase or private key"
+fi
+
+# ---------------------------------------------------------------------------
+# 2b. Rust `tracing` macros and TypeScript `console` calls (SDK, node,
+#     desktop). Same idea as 1 and 2 for the other two languages: a log macro
+#     on one line with a field that would carry content or key material. The
+#     desktop additionally treats mail subjects, file names and passphrases as
+#     content (docs/PRIVACY_MODEL.md).
+# ---------------------------------------------------------------------------
+say ""
+say "2b. Rust tracing / TypeScript console calls with content or key material"
+
+RUST_LOG_PATTERN='\b(trace|debug|info|warn|error)!\s*\(.*\b(plaintext|cleartext|decrypted|mnemonic|seed_phrase|passphrase|private_key|secret_key|root_key|device_seed|object_key|manifest_key|subject|body_text|body_html|file_name)\b'
+TS_LOG_PATTERN='console\.(log|info|warn|error|debug|trace)\s*\(.*\b(mnemonic|passphrase|words|subject|bodyText|body_text|privateKey|secret)\b'
+
+if [ ${#EXISTING[@]} -gt 0 ] && \
+   rg --pcre2 -n "${EXCLUDE[@]}" --glob '*.rs' "$RUST_LOG_PATTERN" "${EXISTING[@]}" 2>/dev/null; then
+  bad "a Rust tracing call references content or key material (matches above)"
+else
+  ok "no Rust tracing call references content or key material"
+fi
+if [ ${#EXISTING[@]} -gt 0 ] && \
+   rg --pcre2 -n "${EXCLUDE[@]}" --glob '*.ts' --glob '*.tsx' "$TS_LOG_PATTERN" "${EXISTING[@]}" 2>/dev/null; then
+  bad "a console call references content or key material (matches above)"
+else
+  ok "no console call references content or key material"
 fi
 
 # ---------------------------------------------------------------------------
@@ -223,6 +254,24 @@ selftest() {
     bad "pattern does NOT fire on a known violation: $label. The check above is not protecting anything."
   fi
 }
+
+cat > "$FIXTURE_DIR/violations.rs" <<'FIXTURE'
+fn bad(m: &Mail) { tracing::info!(subject = %m.subject, "delivering"); }
+fn worse(p: &str) { warn!("unlock failed for passphrase {p}"); }
+FIXTURE
+cat > "$FIXTURE_DIR/violations.ts" <<'FIXTURE'
+console.log("restore", mnemonic);
+FIXTURE
+if rg --pcre2 -q "$RUST_LOG_PATTERN" "$FIXTURE_DIR/violations.rs" 2>/dev/null; then
+  ok "pattern fires on a known violation: rust tracing"
+else
+  bad "pattern does NOT fire on a known violation: rust tracing"
+fi
+if rg --pcre2 -q "$TS_LOG_PATTERN" "$FIXTURE_DIR/violations.ts" 2>/dev/null; then
+  ok "pattern fires on a known violation: console"
+else
+  bad "pattern does NOT fire on a known violation: console"
+fi
 
 selftest "message content"        "$CONTENT_PATTERN"
 selftest "key material"           "$KEY_PATTERN"

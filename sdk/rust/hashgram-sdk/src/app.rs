@@ -127,6 +127,9 @@ pub struct HashgramOne {
     pub(crate) spaces_state: crate::spaces::SpacesState,
     pub(crate) circles_state: crate::circles::CirclesState,
     pub(crate) sync_state: crate::sync::SyncState,
+    /// Which connected nodes answer Explore queries (digest / timeline);
+    /// nodes running an older release do not, and are not asked twice.
+    pub(crate) explore_caps: crate::feed::ExploreCaps,
 }
 
 impl HashgramOne {
@@ -136,19 +139,29 @@ impl HashgramOne {
         Self::with_account(config, account).await
     }
 
-    /// Builds the facade around an already-opened account (used by
-    /// onboarding after `Account::create`).
-    pub async fn with_account(config: Config, account: Account) -> Result<Self, SdkError> {
-        let bootstrap: Vec<Multiaddr> =
-            if config.bootstrap.is_empty() && config.network.is_mainnet() {
-                hashgram_net::mainnet_bootstrap_peers()
-                    .iter()
-                    .filter_map(|s| s.parse().ok())
-                    .collect()
-            } else {
-                config.bootstrap.clone()
-            };
-        let link = Arc::new(
+    /// The bootstrap list a config resolves to: the compiled-in Mainnet
+    /// peers when none are given on Mainnet, the given ones otherwise.
+    #[must_use]
+    pub fn bootstrap_of(config: &Config) -> Vec<Multiaddr> {
+        if config.bootstrap.is_empty() && config.network.is_mainnet() {
+            hashgram_net::mainnet_bootstrap_peers()
+                .iter()
+                .filter_map(|s| s.parse().ok())
+                .collect()
+        } else {
+            config.bootstrap.clone()
+        }
+    }
+
+    /// Starts the P2P link a facade would start for `config`, without an
+    /// account. A long-lived process (the desktop app) keeps one link for
+    /// its whole lifetime — across lock and unlock — and hands it to
+    /// [`Self::with_link`] each time a vault is opened, so the network
+    /// stays connected and a local node's chain proxy keeps working while
+    /// the vault is locked.
+    pub async fn connect_link(config: &Config) -> Result<Arc<Link>, SdkError> {
+        let bootstrap = Self::bootstrap_of(config);
+        Ok(Arc::new(
             Link::connect(
                 &config.network,
                 &bootstrap,
@@ -156,7 +169,24 @@ impl HashgramOne {
                 config.connect_wait,
             )
             .await?,
-        );
+        ))
+    }
+
+    /// Builds the facade around an already-opened account (used by
+    /// onboarding after `Account::create`).
+    pub async fn with_account(config: Config, account: Account) -> Result<Self, SdkError> {
+        let link = Self::connect_link(&config).await?;
+        Self::with_link(config, account, link).await
+    }
+
+    /// Builds the facade around an opened account and an already-running
+    /// link (see [`Self::connect_link`]). `config.bootstrap` and
+    /// `config.connect_wait` are ignored: the link is already up.
+    pub async fn with_link(
+        config: Config,
+        account: Account,
+        link: Arc<Link>,
+    ) -> Result<Self, SdkError> {
         let chain = match &config.chain_api {
             Some(url) if !url.is_empty() => ChainClient::new(url, &config.network.chain_id)?,
             _ => crate::chain_client_over_link(link.clone(), &config.network.chain_id),
@@ -170,6 +200,7 @@ impl HashgramOne {
             spaces_state: crate::spaces::SpacesState::load(&store)?,
             circles_state: crate::circles::CirclesState::load(&store)?,
             sync_state: crate::sync::SyncState::default(),
+            explore_caps: crate::feed::ExploreCaps::default(),
             account,
             network: config.network,
             link,
@@ -186,6 +217,19 @@ impl HashgramOne {
     #[must_use]
     pub fn address(&self) -> &str {
         self.account.address()
+    }
+
+    /// Swaps the P2P link under a running facade (a desktop app that
+    /// opened the vault before its link was up, or that reconnected). The
+    /// chain client is rebuilt over the new link unless a REST gateway is
+    /// configured. Local state is untouched.
+    pub fn replace_link(&mut self, link: Arc<Link>, chain_api: Option<&str>) -> Result<(), SdkError> {
+        self.chain = match chain_api {
+            Some(url) if !url.is_empty() => ChainClient::new(url, &self.network.chain_id)?,
+            _ => crate::chain_client_over_link(link.clone(), &self.network.chain_id),
+        };
+        self.link = link;
+        Ok(())
     }
 
     /// Persists MLS state and every module's vault-resident state, then

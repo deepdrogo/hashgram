@@ -40,7 +40,8 @@ pub fn data_dir() -> PathBuf {
     std::env::temp_dir().join("Hashgram").join("data")
 }
 
-/// Ensures the data root exists, moving a 0.1.0 layout into place first.
+/// Ensures the data root exists, moving a 0.1.0 layout into place first and
+/// renaming a 0.1.x vault to the SDK's file name (same format).
 pub fn ensure_dirs() -> std::io::Result<PathBuf> {
     let d = data_dir();
     if std::env::var("HASHGRAM_DESKTOP_HOME")
@@ -53,8 +54,26 @@ pub fn ensure_dirs() -> std::io::Result<PathBuf> {
     }
     std::fs::create_dir_all(&d)?;
     std::fs::create_dir_all(d.join("logs"))?;
-    std::fs::create_dir_all(d.join("media-cache"))?;
+    std::fs::create_dir_all(d.join("cache"))?;
+    std::fs::create_dir_all(d.join("tmp"))?;
+    migrate_vault_name(&d);
     Ok(d)
+}
+
+/// 0.1.x wrote the vault as `vault.json`; the SDK's `Paths` names it
+/// `keystore.json`. Same format, so a rename is the whole migration. The
+/// peerstore is renamed too (`peers.json` → `peerstore.json`).
+fn migrate_vault_name(d: &Path) {
+    let old = d.join("vault.json");
+    let new = d.join("keystore.json");
+    if old.exists() && !new.exists() {
+        let _ = std::fs::rename(&old, &new);
+    }
+    let old = d.join("peers.json");
+    let new = d.join("peerstore.json");
+    if old.exists() && !new.exists() {
+        let _ = std::fs::rename(&old, &new);
+    }
 }
 
 /// Moves the known data files from `parent` into `data` when `data` does not
@@ -79,10 +98,17 @@ fn migrate_legacy_layout(parent: &Path, data: &Path) {
     }
 }
 
+/// The SDK's file layout under the data root (`keystore.json`,
+/// `local.redb`, `peerstore.json`, `cache/`).
+#[must_use]
+pub fn sdk_paths() -> hashgram_sdk::Paths {
+    hashgram_sdk::Paths::new(&data_dir())
+}
+
 /// The encrypted vault (keys). Never plaintext.
 #[must_use]
 pub fn vault_path() -> PathBuf {
-    data_dir().join("vault.json")
+    sdk_paths().vault()
 }
 
 /// Settings (no secrets).
@@ -91,16 +117,30 @@ pub fn settings_path() -> PathBuf {
     data_dir().join("settings.json")
 }
 
-/// The SQLite database (sensitive columns encrypted with the vault key).
+/// The SQLite database for UI caches (sensitive columns sealed with the
+/// vault-held key). The SDK's `local.redb` is the source of truth.
 #[must_use]
 pub fn db_path() -> PathBuf {
-    data_dir().join("hashgram.db")
+    data_dir().join("ui-cache.db")
+}
+
+/// The SDK's encrypted local store.
+#[must_use]
+pub fn store_path() -> PathBuf {
+    sdk_paths().store()
 }
 
 /// The persisted peerstore (peer ids and addresses only).
 #[must_use]
 pub fn peerstore_path() -> PathBuf {
-    data_dir().join("peers.json")
+    sdk_paths().peerstore()
+}
+
+/// Scratch files for "Open" (decrypted attachments / Drive files). Wiped
+/// at start and at lock.
+#[must_use]
+pub fn tmp_dir() -> PathBuf {
+    data_dir().join("tmp")
 }
 
 /// DPAPI-wrapped passphrase blob for Windows Hello unlock.
@@ -141,6 +181,25 @@ mod tests {
         std::fs::write(root.join("peers.json"), b"[]").unwrap();
         migrate_legacy_layout(&root, &data);
         assert!(root.join("peers.json").exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_0_1_vault_is_renamed_to_the_sdk_name_once() {
+        let root = std::env::temp_dir().join(format!("hg-paths-vault-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("vault.json"), b"{\"v\":1}").unwrap();
+        super::migrate_vault_name(&root);
+        assert!(root.join("keystore.json").exists());
+        assert!(!root.join("vault.json").exists());
+        // A later vault.json (say, restored by hand) never overwrites.
+        std::fs::write(root.join("vault.json"), b"{\"v\":2}").unwrap();
+        super::migrate_vault_name(&root);
+        assert_eq!(
+            std::fs::read(root.join("keystore.json")).unwrap(),
+            b"{\"v\":1}"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

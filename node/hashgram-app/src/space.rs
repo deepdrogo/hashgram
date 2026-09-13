@@ -428,7 +428,15 @@ impl State {
         let mut progress = true;
         while progress {
             progress = false;
-            let pending = std::mem::take(&mut self.pending);
+            let mut pending = std::mem::take(&mut self.pending);
+            // Canonical order: store nodes return a page in arrival order
+            // and two events of one second sort by id, so an actor's later
+            // event can reach us before an earlier one. Retrying in
+            // (at_ms, sequence, id) order keeps per-actor sequences
+            // monotonic instead of rejecting the earlier event as a replay.
+            pending.sort_by(|a, b| {
+                (a.at_ms, a.sequence, &a.event_id).cmp(&(b.at_ms, b.sequence, &b.event_id))
+            });
             for e in pending {
                 match self.apply_verified(&e) {
                     Ok(()) => progress = true,
@@ -452,6 +460,15 @@ impl State {
                 got: e.sequence,
                 last,
             });
+        }
+        // A gap means an earlier event of this actor has not reached us
+        // yet (delivery is per store node and unordered across a page).
+        // Applying the later one now would make the earlier one look like
+        // a replay forever; keep it pending until the gap fills. The
+        // Create is the exception: it is the first event and has no
+        // predecessor we could be missing.
+        if e.sequence > last + 1 && !matches!(e.body, Some(B::Create(_))) {
+            return Err(Rejected::Pending("earlier events from this actor not seen yet"));
         }
         let actor_role = self.role_of(&e.actor);
         let forbid = |action: &'static str| Rejected::Forbidden {
@@ -1005,5 +1022,80 @@ mod tests {
             2,
             "pending comment applied after its post"
         );
+    }
+
+    #[test]
+    fn out_of_order_delivery_converges_to_the_same_state() {
+        // The owner emits Create(1), MemberAdd(2), Announcement(3) in order;
+        // a new member's store page delivers them as 3, 2, 1 (same second,
+        // sorted by random id). Every reader must still end up with the
+        // member added and the announcement applied.
+        let owner = actor(OWNER, 1);
+        let mut source = create(&owner);
+        let sid = hex::decode(&source.space_id).unwrap();
+        let mut events = Vec::new();
+        let mk = |st: &mut State, body: pb::space_event::Body| {
+            let mut e = build(&sid, OWNER, st.next_sequence(OWNER), &st.head_id(), body).unwrap();
+            sign(&net(), &owner.key, &mut e).unwrap();
+            st.apply(&net(), &e, OWNER).unwrap();
+            e
+        };
+        // Reconstruct the Create the source applied (it is the first event).
+        let create_ev = {
+            let mut e = build(
+                &sid,
+                OWNER,
+                1,
+                &[],
+                pb::space_event::Body::Create(pb::SpaceCreate {
+                    name: "Team".into(),
+                    description: String::new(),
+                    owner: OWNER.into(),
+                }),
+            )
+            .unwrap();
+            e.event_id = sid.clone();
+            sign(&net(), &owner.key, &mut e).unwrap();
+            e
+        };
+        events.push(mk(
+            &mut source,
+            pb::space_event::Body::MemberAdd(pb::SpaceMemberAdd {
+                address: ALICE.into(),
+                role: pb::SpaceRole::Member as i32,
+            }),
+        ));
+        events.push(mk(
+            &mut source,
+            pb::space_event::Body::Announcement(pb::SpaceAnnouncement {
+                title: "Kick-off".into(),
+                text: "Monday".into(),
+                attachments: Vec::new(),
+            }),
+        ));
+        // Reader gets 3, 2, then 1.
+        let mut reader = State::new(&sid);
+        assert!(matches!(
+            reader.apply(&net(), &events[1], OWNER),
+            Err(Rejected::Pending(_))
+        ));
+        assert!(matches!(
+            reader.apply(&net(), &events[0], OWNER),
+            Err(Rejected::Pending(_))
+        ));
+        reader.apply(&net(), &create_ev, OWNER).unwrap();
+        assert_eq!(reader.role_of(ALICE), pb::SpaceRole::Member);
+        assert_eq!(reader.content.len(), 1);
+        assert_eq!(reader.sequences.get(OWNER), Some(&3));
+        // And with the Create first but 3 before 2: the gap keeps 3 pending.
+        let mut reader2 = State::new(&sid);
+        reader2.apply(&net(), &create_ev, OWNER).unwrap();
+        assert!(matches!(
+            reader2.apply(&net(), &events[1], OWNER),
+            Err(Rejected::Pending(_))
+        ));
+        reader2.apply(&net(), &events[0], OWNER).unwrap();
+        assert_eq!(reader2.role_of(ALICE), pb::SpaceRole::Member);
+        assert_eq!(reader2.content.len(), 1, "announcement applied after the gap filled");
     }
 }

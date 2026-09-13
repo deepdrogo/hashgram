@@ -1,6 +1,6 @@
 name: Desktop release (Windows)
 
-# Builds Hashgram for Windows with apps/desktop/release.ps1 — the same script
+# Builds Hashgram One for Windows with apps/desktop/release.ps1 — the same script
 # the owner runs locally — and publishes the installer, its minisign
 # signature and latest.json to the GitHub release for the pushed tag. The app
 # self-updates from <repo>/releases/latest/download/latest.json.
@@ -85,16 +85,44 @@ jobs:
         with:
           workspaces: node
 
+      # Authenticode (architected, disabled until a certificate exists).
+      # Provide HASHGRAM_CODESIGN_PFX_BASE64 + HASHGRAM_CODESIGN_PFX_PASSWORD as
+      # repository secrets and this step imports the certificate into the
+      # runner's user store; release.ps1 then signs the .exe/.msi with signtool
+      # and bakes HASHGRAM_CODESIGNED=1 into the binary (About -> "signed").
+      # Without the secrets the step is a no-op and About says "unsigned preview".
+      - name: Import Authenticode certificate (optional)
+        id: codesign
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          PFX_B64: ${{ secrets.HASHGRAM_CODESIGN_PFX_BASE64 }}
+          PFX_PASSWORD: ${{ secrets.HASHGRAM_CODESIGN_PFX_PASSWORD }}
+        run: |
+          if (-not $env:PFX_B64) {
+            Write-Host "no HASHGRAM_CODESIGN_PFX_BASE64 secret; building an unsigned preview"
+            "thumbprint=" >> $env:GITHUB_OUTPUT
+            exit 0
+          }
+          $pfx = Join-Path $env:RUNNER_TEMP "codesign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_B64))
+          $secure = ConvertTo-SecureString -String $env:PFX_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $secure
+          Remove-Item $pfx -Force
+          Write-Host "imported certificate $($cert.Subject)"
+          "thumbprint=$($cert.Thumbprint)" >> $env:GITHUB_OUTPUT
+
       - name: Build and sign (release.ps1)
         if: steps.guard.outputs.skip != 'true'
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          HASHGRAM_CODESIGN_THUMBPRINT: ${{ steps.codesign.outputs.thumbprint }}
         run: |
           if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
             Write-Host "::error::secret TAURI_SIGNING_PRIVATE_KEY is missing; an unsigned build cannot be an update"
             exit 1
           }
+          if (-not $env:HASHGRAM_CODESIGN_THUMBPRINT) { Remove-Item Env:HASHGRAM_CODESIGN_THUMBPRINT -ErrorAction SilentlyContinue }
           pwsh -File apps/desktop/release.ps1 -Repo "${{ github.repository }}"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Get-Content dist/desktop/RELEASE_NOTES.txt
@@ -114,7 +142,7 @@ jobs:
           $tag = "${{ github.ref_name }}"
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --title "Hashgram for Windows $tag" --notes-file dist/desktop/RELEASE_NOTES.txt --verify-tag
+            gh release create $tag --title "Hashgram One for Windows $tag" --notes-file dist/desktop/RELEASE_NOTES.txt --verify-tag
             if ($LASTEXITCODE -ne 0) { exit 1 }
           }
           $files = Get-ChildItem dist/desktop | Where-Object { $_.Name -ne "RELEASE_NOTES.txt" } | ForEach-Object { $_.FullName }

@@ -8,8 +8,9 @@ import { Button } from "./ui";
 
 export const BUDGET = {
   coldStartMs: 1500,
-  idleRamBytes: 150 * 1024 * 1024,
-  sendToAckMs: 300,
+  unlockToMailMs: 400,
+  idleRamBytes: 180 * 1024 * 1024,
+  syncRoundMs: 3000,
 };
 
 export function PerfPanel(props: { open: boolean; onClose: () => void }) {

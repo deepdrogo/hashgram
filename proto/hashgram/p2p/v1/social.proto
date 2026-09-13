@@ -167,16 +167,102 @@ message EventAnnounce {
   string type = 3;
 }
 
-// Fetch events by id or by author range.
+// Fetch events by id, by author range, by target, or as a public timeline.
+//
+// Modes, tried in this order by a node:
+//   1. `ids` non-empty            → those events.
+//   2. `target` non-empty         → events that reference that post or
+//                                   comment (comments, reactions, reposts,
+//                                   edits, deletes), oldest first.
+//   3. `author` non-empty         → that author's chain from
+//                                   `from_sequence` upwards; with `latest`
+//                                   the newest events first instead.
+//   4. otherwise                  → the node's public timeline, newest
+//                                   first, strictly before `before_timestamp`
+//                                   (0 = now).
+// `types`, `hashtag` and `channel` narrow any mode. A client pages a
+// timeline by passing the last item's timestamp as the next
+// `before_timestamp`; nothing is ever pulled in bulk.
 message EventFetch {
   repeated bytes ids = 1;
   string author = 2;
   uint64 from_sequence = 3;
   uint32 limit = 4;
+  // Timeline mode: events with timestamp < before_timestamp (0 = now).
+  uint64 before_timestamp = 5;
+  // Only these event types (wire strings), e.g. ["POST_CREATE"].
+  repeated string types = 6;
+  // Only posts carrying this hashtag (lower-case, no '#').
+  string hashtag = 7;
+  // Only posts in this channel (id of its CHANNEL_CREATE event).
+  bytes channel = 8;
+  // Author mode: newest first.
+  bool latest = 9;
+  // Events referencing this post or comment id.
+  bytes target = 10;
 }
 
 message EventFetchResult {
   repeated SocialEvent events = 1;
+  // Timeline mode: `before_timestamp` for the next page; 0 when exhausted.
+  uint64 next_before = 2;
+}
+
+// Ask a node what is active in its public log over a recent window: who
+// posts, which hashtags and channels are busy. A derived view a client uses
+// for Explore; the node computes it from the events it holds and caches it
+// briefly. Nothing here is authoritative and nothing here is a ranking of
+// people: counts are counts.
+message SocialDigest {
+  // Window in seconds looking back from now; bounded by the node.
+  uint64 window_secs = 1;
+  // Most entries per list; bounded by the node.
+  uint32 limit = 2;
+}
+
+message AuthorActivity {
+  string author = 1;
+  uint32 posts = 2;
+  uint32 comments = 3;
+  uint32 reactions_received = 4;
+  uint32 comments_received = 5;
+  // Last event timestamp.
+  uint64 last_active = 6;
+}
+
+message HashtagActivity {
+  string tag = 1;
+  uint32 posts = 2;
+  uint32 authors = 3;
+  uint64 last_used = 4;
+}
+
+message ChannelActivity {
+  // Id of the CHANNEL_CREATE event.
+  bytes id = 1;
+  string name = 2;
+  string description = 3;
+  string creator = 4;
+  bool open_posting = 5;
+  uint64 created_at = 6;
+  uint32 posts = 7;
+  uint32 authors = 8;
+  uint64 last_post = 9;
+}
+
+message SocialDigestResult {
+  uint64 window_secs = 1;
+  // Events and distinct authors in the window.
+  uint64 events = 2;
+  uint64 authors = 3;
+  // Events and distinct authors the node holds in total.
+  uint64 total_events = 4;
+  uint64 total_authors = 5;
+  repeated AuthorActivity top_authors = 6;
+  repeated HashtagActivity top_hashtags = 7;
+  repeated ChannelActivity channels = 8;
+  // Unix seconds when the node computed this.
+  uint64 computed_at = 9;
 }
 
 // Publish an event through a node (client-facing). The node validates it

@@ -1,43 +1,33 @@
 # Earn by running a node
 
-**There is no mining.** Nodes earn for storing and serving real bytes; the
-budget is a ceiling, not a guarantee.
+A Hashgram node stores encrypted mailboxes and Drive objects and relays
+traffic for people who cannot connect directly. Operators are paid from
+the service reserve for **work that was proven**: storage challenges the
+chain issues and receipts that clients sign for bytes served. Nothing is
+paid for declared capacity, and there is no mining.
 
-## What earns credit
+## On this PC
 
-| Role | Earns for |
-| --- | --- |
-| `store` | keeping mailboxes and blob replicas, answering fetches |
-| `media` | serving blob chunks |
-| `relay` | relaying traffic between peers |
-| `bootstrap` | being a first-contact node |
-| `call` | TURN relaying for calls |
+Earn → **Run a node** installs the bundled node as a per-user scheduled
+task (or a Windows service when the app runs elevated) and keeps it
+running at logon. The node reaches the chain through the app's loopback
+gateway, so no chain software is needed on a home PC.
 
-Chain-query relaying (what lets this wallet read balances without a
-server) earns **nothing**; it is a public good like peer exchange.
+## Registering
 
-## The numbers
+Registration is one transaction with a bond. The **reward address must
+differ from the operator address**: the operator key is hot (it lives on
+the node and signs receipts); rewards should go to a key that only
+receives. The app can generate a cold reward address and show its 24 words
+once.
 
-- Reserve: 500,000,000 HASH.
-- Epoch: 21,600 blocks (about a day). Budget per epoch:
-  `min(remaining × 5 / 10,000, 250,000 HASH)`.
-- At most 5 % of an epoch's budget to any one provider.
-- Bond: 1,000 HASH, slashed 5 % on proven fraud. Unbonding takes 21 days.
+## What the lifecycle means
 
-## Running a node from this PC
-
-**Earn → Run a node** installs `hashgram-node` as a Windows service managed
-by the app: choose roles, disk quota, bandwidth cap and a **reward
-address**. The default reward address is a separate cold address you write
-down, not your hot wallet. The node's operator key lives in the same vault.
-
-Then the screen shows: reachability (autonat), storage assignments,
-challenges passed, fraud score, credit this epoch, lifetime paid and the
-payout history to the reward address.
-
-## Honest expectations
-
-A home PC behind a NAT that hole punching cannot cross will receive fewer
-assignments and earn less; the app says so when it detects it. Earnings
-depend on real demand for storage and bandwidth on the network. Nothing
-here promises a return.
+- **Waiting for assignment** — registered as a storage provider; the
+  network has not assigned data yet. This needs an assigner to be
+  registered by governance.
+- **Active** — earning credit in the current epoch.
+- **Degraded** — the fraud score is above zero; weight is reduced until it
+  decays.
+- **Jailed** — no rewards until the height shown.
+- **Unbonding** — the bond is released after 21 days.

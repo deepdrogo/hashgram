@@ -335,23 +335,125 @@ pub fn install() -> Result<Registration, String> {
     // A logon task for this user running the wrapper in foreground mode:
     // the wrapper supervises and restarts the node. Runs whether or not the
     // app is open.
-    let cmdline = format!("\"{}\" {common}", wrapper.display());
+    //
+    // The task is registered from an XML definition rather than `/TR`:
+    // `schtasks /TR` refuses command lines over 261 characters, and the
+    // three quoted paths under `%LOCALAPPDATA%` exceed that on any account
+    // with a normal user name. The XML form has no such limit and also lets
+    // us switch off the 72-hour execution limit a `/SC ONLOGON` task gets
+    // by default (which would have killed the node every three days), keep
+    // it running on battery, and ask the scheduler to restart it if the
+    // wrapper itself ever dies.
+    let xml_path = home.join("task.xml");
+    let xml = task_xml(&wrapper, &common, &home, &current_user());
+    write_utf16(&xml_path, &xml)?;
     run(
         "schtasks.exe",
         &[
             "/Create",
             "/TN",
             SERVICE_NAME,
-            "/SC",
-            "ONLOGON",
-            "/RL",
-            "LIMITED",
+            "/XML",
+            &xml_path.display().to_string(),
             "/F",
-            "/TR",
-            &cmdline,
         ],
     )?;
     Ok(Registration::ScheduledTask)
+}
+
+/// `DOMAIN\user` of the current session, as the task scheduler wants it.
+fn current_user() -> String {
+    let user = std::env::var("USERNAME").unwrap_or_default();
+    match std::env::var("USERDOMAIN") {
+        Ok(d) if !d.is_empty() && !user.is_empty() => format!("{d}\\{user}"),
+        _ => user,
+    }
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+/// The Task Scheduler definition for the per-user logon task.
+fn task_xml(wrapper: &std::path::Path, arguments: &str, home: &std::path::Path, user: &str) -> String {
+    let user_el = if user.is_empty() {
+        String::new()
+    } else {
+        format!("<UserId>{}</UserId>", xml_escape(user))
+    };
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Hashgram peer-to-peer node managed by Hashgram One (Earn -&gt; Run a node on this PC).</Description>
+    <URI>\{name}</URI>
+  </RegistrationInfo>
+  <Triggers>
+    <LogonTrigger>
+      <Enabled>true</Enabled>
+      {user_el}
+      <Delay>PT20S</Delay>
+    </LogonTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+      {user_el}
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>999</Count>
+    </RestartOnFailure>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>{cmd}</Command>
+      <Arguments>{args}</Arguments>
+      <WorkingDirectory>{cwd}</WorkingDirectory>
+    </Exec>
+  </Actions>
+</Task>
+"#,
+        name = SERVICE_NAME,
+        user_el = user_el,
+        cmd = xml_escape(&wrapper.display().to_string()),
+        args = xml_escape(arguments),
+        cwd = xml_escape(&home.display().to_string()),
+    )
+}
+
+/// Writes a UTF-16LE file with a byte-order mark, the encoding `schtasks
+/// /XML` reads without complaint on every Windows build.
+fn write_utf16(path: &std::path::Path, text: &str) -> Result<(), String> {
+    let mut bytes = vec![0xFF, 0xFE];
+    for u in text.encode_utf16() {
+        bytes.extend_from_slice(&u.to_le_bytes());
+    }
+    std::fs::write(path, bytes).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Starts the node now.
@@ -453,6 +555,33 @@ mod tests {
             serde_json::from_slice(&std::fs::read(d.join("setup.json")).unwrap()).unwrap();
         assert_eq!(saved.roles, vec!["store".to_owned(), "bogus".to_owned()]);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn task_xml_carries_long_paths_without_a_time_limit() {
+        let wrapper = PathBuf::from(
+            r"C:\Users\someone with a long name\AppData\Local\Hashgram One\hashgram-node-service.exe",
+        );
+        let home = PathBuf::from(r"C:\Users\someone with a long name\AppData\Local\Hashgram\data\node");
+        let args = format!(
+            "--node \"{}\" --home \"{}\" --config \"{}\"",
+            r"C:\Users\someone with a long name\AppData\Local\Hashgram One\hashgram-node.exe & co",
+            home.display(),
+            home.join("node.toml").display()
+        );
+        assert!(args.len() + wrapper.display().to_string().len() > 261, "the case that broke /TR");
+        let xml = task_xml(&wrapper, &args, &home, r"PC\someone");
+        assert!(xml.contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"));
+        assert!(xml.contains("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"));
+        assert!(xml.contains("<UserId>PC\\someone</UserId>"));
+        assert!(xml.contains("&amp; co"), "ampersands are escaped: {xml}");
+        assert!(xml.contains("&quot;--home&quot;") || xml.contains("--home &quot;"));
+        assert!(!xml.contains("<Arguments>--node \"C:"), "quotes must be escaped inside XML");
+        let d = std::env::temp_dir().join(format!("hg-task-{}.xml", std::process::id()));
+        write_utf16(&d, &xml).unwrap();
+        let bytes = std::fs::read(&d).unwrap();
+        assert_eq!(&bytes[..2], &[0xFF, 0xFE], "UTF-16LE BOM");
+        let _ = std::fs::remove_file(&d);
     }
 
     #[test]

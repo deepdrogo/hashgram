@@ -60,10 +60,11 @@ pub mod metrics;
 pub mod peerstore;
 mod score;
 pub mod swarm;
+pub mod transport;
 
 pub use codec::RPC_PROTOCOL;
 pub use config::{ConfigError, NodeConfig, Transport, KNOWN_ROLES};
-pub use limits::{ConnectionLimits, LimitDecision};
+pub use limits::{ConnectionLimits, LimitDecision, DEFAULT_MAX_PER_SUBNET};
 pub use score::{PeerScore, ScoreEvent, Scoreboard, BAN_THRESHOLD, GRAYLIST_THRESHOLD};
 pub use swarm::{start, Command, Event, NodeHandle, PeerSummary, RequestError, StartError, Stats};
 

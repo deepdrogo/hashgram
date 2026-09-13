@@ -1,293 +1,237 @@
-// Settings: Network (precedence, HTTPS list, DEVNET), Security, Devices,
-// Notifications, Media, Appearance, Updates, Advanced, About.
-import { createSignal, createResource, For, Show } from "solid-js";
-import { enable as autostartEnable, disable as autostartDisable } from "@tauri-apps/plugin-autostart";
-import { save } from "@tauri-apps/plugin-dialog";
-import { Card, Button, Field, Input, Notice, Switch, Tabs, Skeleton } from "~/components/ui";
+// Settings: Network, Security (passphrase, Hello, auto-lock, backup),
+// Devices (link to Wallet), Notifications, Mail, Appearance, Updates,
+// Advanced (leases, rekey all, wipe), About (version, genesis, signed or
+// unsigned preview, licenses).
+import { For, Show, createEffect, createResource, createSignal } from "solid-js";
+import { useNavigate, useParams } from "@solidjs/router";
+import { Fingerprint, KeyRound, Download, Upload, Trash2, RefreshCw, FolderOpen, ShieldCheck, ShieldAlert, Smartphone } from "lucide-solid";
+import { Button, Card, Field, Input, Notice, Switch, Select, Tabs, Badge, Textarea } from "~/components/ui";
 import { Mono } from "~/components/identity";
-import { ipc, type Settings as S } from "~/lib/ipc";
+import { ipc, errText, type Settings, type MailSettings } from "~/lib/ipc";
 import { store } from "~/lib/store";
+import { t, LOCALES } from "~/lib/i18n";
 import { updates } from "~/lib/updates";
-import { formatBytes } from "~/lib/format";
+import { formatBytes, formatMs } from "~/lib/format";
+import { pickSavePath, confirm } from "~/lib/dialogs";
+import { enable as autostartEnable, disable as autostartDisable } from "@tauri-apps/plugin-autostart";
 
-const TABS = [
-  { id: "network", label: "Network" },
-  { id: "security", label: "Security" },
-  { id: "notifications", label: "Notifications" },
-  { id: "media", label: "Media" },
-  { id: "appearance", label: "Appearance" },
-  { id: "updates", label: "Updates" },
-  { id: "advanced", label: "Advanced" },
-  { id: "about", label: "About" },
-];
+type Tab = "network" | "security" | "devices" | "notifications" | "mail" | "appearance" | "updates" | "advanced" | "about";
 
-export function Settings() {
-  const [tab, setTab] = createSignal("network");
-  const [draft, setDraft] = createSignal<S | null>(structuredClone(store.settings()));
-  const [busy, setBusy] = createSignal(false);
-  const s = () => draft();
-
-  const patch = (f: (d: S) => void) => {
-    const d = structuredClone(s());
-    if (!d) return;
-    f(d);
-    setDraft(d);
+export function SettingsRoute() {
+  const params = useParams<{ tab?: string }>();
+  const navigate = useNavigate();
+  const tab = (): Tab => (params.tab as Tab) || "network";
+  const [draft, setDraft] = createSignal<Settings | null>(null);
+  createEffect(() => {
+    const s = store.settings();
+    if (s && !draft()) setDraft(structuredClone(s));
+  });
+  const patch = (f: (s: Settings) => void) => {
+    const s = structuredClone(draft() ?? store.settings()!);
+    f(s);
+    setDraft(s);
+    // Appearance applies live; everything else on Save.
+    store.applyAppearance(s);
   };
-  const saveSettings = async () => {
-    const d = s();
-    if (!d) return;
-    setBusy(true);
+  const [saving, setSaving] = createSignal(false);
+  const dirty = () => JSON.stringify(draft()) !== JSON.stringify(store.settings());
+  const save = async () => {
+    const s = draft();
+    if (!s) return;
+    setSaving(true);
     try {
-      await ipc.settingsSet(d);
-      await store.refreshSettings();
-      await store.refreshStatus();
-      document.documentElement.dataset.reducedMotion = d.appearance.reduced_motion ? "true" : "false";
-      if (d.start_with_windows) await autostartEnable().catch(() => undefined);
+      await ipc.settingsSet(s);
+      if (s.start_with_windows) await autostartEnable().catch(() => undefined);
       else await autostartDisable().catch(() => undefined);
+      await store.refreshSettings();
+      setDraft(structuredClone(store.settings()!));
       store.toast("Settings saved");
     } catch (e) {
-      store.toast(String(e), "error");
+      store.toast(errText(e), "error");
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   };
-
   return (
-    <div class="page flex flex-col gap-4">
-      <div class="flex items-center justify-between">
-        <h1 class="page-title">Settings</h1>
-        <Button onClick={saveSettings} loading={busy()} disabled={!s()}>
-          Save
-        </Button>
+    <div class="flex h-full flex-col">
+      <div class="flex items-center gap-3 border-b border-border px-4">
+        <Tabs
+          class="flex-1 border-b-0"
+          value={tab()}
+          onChange={(v) => navigate(`/settings/${v}`)}
+          tabs={[
+            { id: "network", label: t("settings_network") },
+            { id: "security", label: t("settings_security") },
+            { id: "devices", label: t("settings_devices") },
+            { id: "notifications", label: t("settings_notifications") },
+            { id: "mail", label: t("settings_mail") },
+            { id: "appearance", label: t("settings_appearance") },
+            { id: "updates", label: t("settings_updates") },
+            { id: "advanced", label: t("settings_advanced") },
+            { id: "about", label: t("settings_about") },
+          ]}
+        />
+        <Show when={dirty()}>
+          <Button size="sm" onClick={save} loading={saving()}>
+            {t("save")}
+          </Button>
+        </Show>
       </div>
-      <Tabs tabs={TABS} value={tab()} onChange={setTab} />
-      <Show when={s()} fallback={<Skeleton lines={4} />}>
-        {(d) => (
-          <div class="fade-in flex flex-col gap-4">
-            <Show when={tab() === "network"}>
-              <Card title="Network profile">
-                <div class="flex flex-col gap-3 p-4">
-                  <div class="flex gap-2">
-                    <Button variant={d().network.kind === "mainnet" ? "primary" : "secondary"} onClick={() => patch((x) => (x.network.kind = "mainnet"))}>
-                      Mainnet
-                    </Button>
-                    <Button variant={d().network.kind === "devnet" ? "primary" : "secondary"} onClick={() => patch((x) => (x.network.kind = "devnet"))}>
-                      DEVNET
-                    </Button>
+      <div class="min-h-0 flex-1 overflow-auto">
+        <div class="page max-w-3xl">
+          <Show when={draft()}>
+            {(s) => (
+              <>
+                <Show when={tab() === "network"}>
+                  <div class="flex flex-col gap-4">
+                    <Card title="Public indexer (optional)">
+                      <div class="p-4">
+                        <Field label="Indexer URL" hint="Serves Explore, leaderboards and network stats. A read model, never an authority; data is labelled as coming from it. Leave empty for none.">
+                          <Input mono value={s().network.indexer_url} onInput={(e) => patch((x) => (x.network.indexer_url = e.currentTarget.value.trim()))} placeholder="https://…" />
+                        </Field>
+                      </div>
+                    </Card>
+                    <Card title="External e-mail gateway (optional)">
+                      <div class="p-4">
+                        <Field label="Gateway identity" hint="The @name or hash1… address of a mail gateway. Mail to plain e-mail addresses is sent to it with an ext-to label and leaves the network in the clear from there. Empty = external sending disabled.">
+                          <Input mono value={s().network.gateway_address} onInput={(e) => patch((x) => (x.network.gateway_address = e.currentTarget.value.trim()))} placeholder="@gateway" />
+                        </Field>
+                      </div>
+                    </Card>
+                    <Card title="Network profile">
+                      <div class="flex flex-col gap-3 p-4">
+                        <Field label="Network">
+                          <Select value={s().network.kind} onChange={(v) => patch((x) => (x.network.kind = v as "mainnet" | "devnet"))} options={[{ value: "mainnet", label: "Hashgram Mainnet" }, { value: "devnet", label: "Devnet (development only)" }]} />
+                        </Field>
+                        <Show when={s().network.kind === "devnet"}>
+                          <Notice strong>DEVNET: nothing here has value. A persistent banner is shown while this is selected.</Notice>
+                          <Field label="Devnet genesis hash (64 hex)">
+                            <Input mono value={s().network.devnet_genesis_hash} onInput={(e) => patch((x) => (x.network.devnet_genesis_hash = e.currentTarget.value.trim()))} />
+                          </Field>
+                          <Field label="Chain REST gateway (devnet only)" hint="On Mainnet chain reads go through the P2P relay; leave empty.">
+                            <Input mono value={s().network.chain_api} onInput={(e) => patch((x) => (x.network.chain_api = e.currentTarget.value.trim()))} placeholder="http://127.0.0.1:31417" />
+                          </Field>
+                        </Show>
+                        <Field label="Bootstrap peers override" hint="One multiaddr per line. Empty on Mainnet means the list compiled into the app. Changing the profile locks the app and reconnects.">
+                          <Textarea mono rows={3} value={s().network.bootstrap.join("\n")} onInput={(e) => patch((x) => (x.network.bootstrap = e.currentTarget.value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean)))} />
+                        </Field>
+                      </div>
+                    </Card>
                   </div>
-                  <Show when={d().network.kind === "devnet"}>
-                    <Notice strong title="DEVNET is visually unmistakable">A persistent banner is shown while this profile is active. Nothing on a devnet has value.</Notice>
-                    <Field label="Devnet genesis hash (64 hex)">
-                      <Input mono value={d().network.devnet_genesis_hash} onInput={(e) => patch((x) => (x.network.devnet_genesis_hash = e.currentTarget.value))} />
-                    </Field>
-                    <Field label="Devnet bootstrap multiaddrs (one per line)">
-                      <textarea class="textarea mono" rows={3} value={d().network.devnet_bootstrap.join("\n")} onInput={(e) => patch((x) => (x.network.devnet_bootstrap = e.currentTarget.value.split("\n").map((l) => l.trim()).filter(Boolean)))} />
-                    </Field>
-                  </Show>
-                  <Show when={d().network.kind === "mainnet"}>
-                    <p class="text-xs text-muted">
-                      Mainnet is pinned to genesis <span class="mono">e322bc23…d5e4d</span>, compiled into the app. Bootstrap peers come from the built-in list and the peerstore; nothing to type.
-                    </p>
-                  </Show>
-                </div>
-              </Card>
-              <Card title="Chain sources (precedence)">
-                <div class="flex flex-col gap-3 p-4">
-                  <Field label="1. Node on this PC (REST gateway)" hint="Used first when it answers on the right chain.">
-                    <Input mono value={d().network.local_node_api} onInput={(e) => patch((x) => (x.network.local_node_api = e.currentTarget.value))} />
-                  </Field>
-                  <p class="text-sm">2. P2P chain relay across ≥ 2 connected nodes, cross-checked (always on).</p>
-                  <Field label="3. HTTPS REST endpoints (one per line)" hint="Optional fallbacks you trust. Never the only way in; each is checked against the chain id.">
-                    <textarea class="textarea mono" rows={3} value={d().network.https_endpoints.join("\n")} onInput={(e) => patch((x) => (x.network.https_endpoints = e.currentTarget.value.split("\n").map((l) => l.trim()).filter(Boolean)))} placeholder="https://rest.example.org" />
-                  </Field>
-                </div>
-              </Card>
-            </Show>
-
-            <Show when={tab() === "security"}>
-              <SecurityTab d={d()} patch={patch} />
-            </Show>
-
-            <Show when={tab() === "notifications"}>
-              <Card>
-                <div class="p-4">
-                  <Switch label="Messages" hint="Native Windows toast for new messages" checked={d().notifications.messages} onChange={(v) => patch((x) => (x.notifications.messages = v))} />
-                  <Switch label="Calls" hint="Toast for incoming calls" checked={d().notifications.calls} onChange={(v) => patch((x) => (x.notifications.calls = v))} />
-                </div>
-              </Card>
-            </Show>
-
-            <Show when={tab() === "media"}>
-              <Card>
-                <div class="flex flex-col gap-3 p-4">
-                  <Switch label="Autoplay reels and videos" checked={d().media.autoplay} onChange={(v) => patch((x) => (x.media.autoplay = v))} />
-                  <Field label="Media cache ceiling (MiB)">
-                    <Input mono type="number" min="128" value={d().media.cache_mb} onInput={(e) => patch((x) => (x.media.cache_mb = Number(e.currentTarget.value) || 512))} />
-                  </Field>
-                  <p class="text-xs text-muted">
-                    Storage location: <span class="mono">{store.status()?.data_dir}\media-cache</span>
-                  </p>
-                </div>
-              </Card>
-            </Show>
-
-            <Show when={tab() === "appearance"}>
-              <Card>
-                <div class="p-4">
-                  <p class="mb-2 text-sm text-muted">Monochrome brand chrome: black, white and greys. Your content — photos, videos, avatars — stays in colour. Dark only.</p>
-                  <Switch label="Reduce motion" hint="Also follows the Windows setting automatically" checked={d().appearance.reduced_motion} onChange={(v) => patch((x) => (x.appearance.reduced_motion = v))} />
-                  <Switch label="Compact density" checked={d().appearance.compact} onChange={(v) => patch((x) => (x.appearance.compact = v))} />
-                </div>
-              </Card>
-            </Show>
-
-            <Show when={tab() === "updates"}>
-              <UpdatesTab d={d()} patch={patch} />
-            </Show>
-
-            <Show when={tab() === "advanced"}>
-              <Card>
-                <div class="flex flex-col gap-3 p-4">
-                  <Field label="Log level" hint="Takes effect on restart.">
-                    <select class="input" value={d().advanced.log_level} onChange={(e) => patch((x) => (x.advanced.log_level = e.currentTarget.value))}>
-                      <For each={["error", "warn", "info", "debug", "trace"]}>{(l) => <option value={l}>{l}</option>}</For>
-                    </select>
-                  </Field>
-                  <Switch label="Start with Windows" hint="Starts minimised to the tray" checked={d().start_with_windows} onChange={(v) => patch((x) => (x.start_with_windows = v))} />
-                  <div class="flex gap-2">
-                    <Button variant="secondary" onClick={() => void ipc.openDataDir()}>
-                      Open data folder
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onClick={async () => {
-                        try {
-                          const text = await ipc.diagnosticsExport();
-                          const path = await save({ defaultPath: "hashgram-logs.txt" });
-                          if (path) {
-                            await ipc.saveTextFile(path, text);
-                            store.toast("Exported (secrets are never logged)");
-                          }
-                        } catch (e) {
-                          store.toast(String(e), "error");
-                        }
-                      }}
-                    >
-                      Export logs
-                    </Button>
-                  </div>
-                </div>
-              </Card>
-            </Show>
-
-            <Show when={tab() === "about"}>
-              <Card>
-                <dl class="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 p-4 text-sm">
-                  <dt class="text-muted">Version</dt>
-                  <dd class="mono">{store.status()?.version}</dd>
-                  <dt class="text-muted">Commit</dt>
-                  <dd class="mono">{store.status()?.commit}</dd>
-                  <dt class="text-muted">Chain</dt>
-                  <dd class="mono">{store.status()?.chain_id}</dd>
-                  <dt class="text-muted">Data</dt>
-                  <dd class="mono">{store.status()?.data_dir}</dd>
-                  <dt class="text-muted">Licence</dt>
-                  <dd>Apache-2.0. Built with Tauri, SolidJS, libp2p, OpenMLS, rusqlite, Lucide icons.</dd>
-                  <dt class="text-muted">Telemetry</dt>
-                  <dd>None. No analytics, no crash uploads. The only outbound HTTPS is the signed update check and endpoints you configured.</dd>
-                </dl>
-              </Card>
-            </Show>
-          </div>
-        )}
-      </Show>
+                </Show>
+                <Show when={tab() === "security"}>
+                  <SecurityTab s={s()} patch={patch} />
+                </Show>
+                <Show when={tab() === "devices"}>
+                  <Card title={t("settings_devices")}>
+                    <div class="flex flex-col gap-2 p-4 text-[13px]">
+                      <p>Devices are managed in Wallet → Devices: add a second device by pasting its key, revoke a lost one, reconcile encryption groups with the chain.</p>
+                      <Button variant="secondary" size="sm" class="w-fit" onClick={() => navigate("/wallet/devices")}>
+                        <Smartphone size={12} /> Open Wallet → Devices
+                      </Button>
+                      <Field label="This device's label" hint="Shown to your other devices and used when registering the device key.">
+                        <Input value={s().device_label} onInput={(e) => patch((x) => (x.device_label = e.currentTarget.value))} />
+                      </Field>
+                    </div>
+                  </Card>
+                </Show>
+                <Show when={tab() === "notifications"}>
+                  <Card title={t("settings_notifications")}>
+                    <div class="p-4">
+                      <Switch label="New mail" hint="A toast saying who wrote — never the subject." checked={s().notifications.mail} onChange={(v) => patch((x) => (x.notifications.mail = v))} />
+                      <Switch label="Requests" hint="First messages from strangers and contact requests." checked={s().notifications.requests} onChange={(v) => patch((x) => (x.notifications.requests = v))} />
+                      <Switch label="Spaces" checked={s().notifications.spaces} onChange={(v) => patch((x) => (x.notifications.spaces = v))} />
+                      <Switch label="Circles" checked={s().notifications.circles} onChange={(v) => patch((x) => (x.notifications.circles = v))} />
+                      <p class="mt-2 text-xs text-muted">Notifications are local Windows toasts driven by sync events. Nothing leaves this PC; there is no push service.</p>
+                    </div>
+                  </Card>
+                </Show>
+                <Show when={tab() === "mail"}>
+                  <MailTab s={s()} patch={patch} />
+                </Show>
+                <Show when={tab() === "appearance"}>
+                  <Card title={t("settings_appearance")}>
+                    <div class="flex flex-col gap-3 p-4">
+                      <Field label="Theme">
+                        <Select value={s().appearance.theme} onChange={(v) => patch((x) => (x.appearance.theme = v as "dark" | "light" | "system"))} options={[{ value: "dark", label: "Dark" }, { value: "light", label: "Light" }, { value: "system", label: "Follow Windows" }]} />
+                      </Field>
+                      <Field label="Density">
+                        <Select value={s().appearance.density} onChange={(v) => patch((x) => (x.appearance.density = v as "comfortable" | "compact"))} options={[{ value: "comfortable", label: "Comfortable" }, { value: "compact", label: "Compact" }]} />
+                      </Field>
+                      <Field label="Language">
+                        <Select value={s().appearance.language} onChange={(v) => patch((x) => (x.appearance.language = v as "en" | "ka"))} options={LOCALES.map((l) => ({ value: l.id, label: l.label }))} />
+                      </Field>
+                      <Switch label="Reduce motion" checked={s().appearance.reduced_motion} onChange={(v) => patch((x) => (x.appearance.reduced_motion = v))} />
+                      <Switch label="Start with Windows" hint="Starts minimised to the tray at logon." checked={s().start_with_windows} onChange={(v) => patch((x) => (x.start_with_windows = v))} />
+                    </div>
+                  </Card>
+                </Show>
+                <Show when={tab() === "updates"}>
+                  <UpdatesTab s={s()} patch={patch} />
+                </Show>
+                <Show when={tab() === "advanced"}>
+                  <AdvancedTab s={s()} patch={patch} />
+                </Show>
+                <Show when={tab() === "about"}>
+                  <AboutTab />
+                </Show>
+              </>
+            )}
+          </Show>
+        </div>
+      </div>
     </div>
   );
 }
 
-function SecurityTab(props: { d: S; patch: (f: (d: S) => void) => void }) {
+function SecurityTab(props: { s: Settings; patch: (f: (s: Settings) => void) => void }) {
   const [cur, setCur] = createSignal("");
-  const [n1, setN1] = createSignal("");
-  const [n2, setN2] = createSignal("");
+  const [next, setNext] = createSignal("");
+  const [next2, setNext2] = createSignal("");
   const [helloPass, setHelloPass] = createSignal("");
-  const [busy, setBusy] = createSignal(false);
-  const change = async () => {
-    setBusy(true);
+  const [busy, setBusy] = createSignal<string | null>(null);
+  const [bkPass, setBkPass] = createSignal("");
+  const [bkPass2, setBkPass2] = createSignal("");
+  const run = async (name: string, f: () => Promise<unknown>, done?: string) => {
+    setBusy(name);
     try {
-      await ipc.changePassphrase(cur(), n1());
-      store.toast("Passphrase changed. Unlock again with the new one.");
-      await store.refreshStatus();
-    } catch (e) {
-      store.toast(String(e), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-  const helloOn = async () => {
-    setBusy(true);
-    try {
-      await ipc.helloEnable(helloPass());
-      setHelloPass("");
+      await f();
+      if (done) store.toast(done);
       await store.refreshStatus();
       await store.refreshSettings();
-      store.toast("Windows Hello enabled");
     } catch (e) {
-      store.toast(String(e), "error");
+      store.toast(errText(e), "error");
     } finally {
-      setBusy(false);
-    }
-  };
-  const helloOff = async () => {
-    setBusy(true);
-    try {
-      await ipc.helloDisable();
-      await store.refreshStatus();
-      await store.refreshSettings();
-      store.toast("Windows Hello disabled");
-    } catch (e) {
-      store.toast(String(e), "error");
-    } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
   return (
-    <>
-      <Card title="Auto-lock and clipboard">
-        <div class="grid grid-cols-2 gap-3 p-4">
-          <Field label="Lock after inactivity (minutes, 0 = never)">
-            <Input mono type="number" min="0" value={props.d.security.auto_lock_minutes} onInput={(e) => props.patch((x) => (x.security.auto_lock_minutes = Number(e.currentTarget.value) || 0))} />
+    <div class="flex flex-col gap-4">
+      <Card title="Auto-lock">
+        <div class="p-4">
+          <Field label="Lock after (minutes of inactivity, 0 = never)" hint="Locking drops every key from memory; the app renders from nothing until you unlock.">
+            <Input mono type="number" min="0" class="w-32" value={props.s.security.auto_lock_minutes} onInput={(e) => props.patch((x) => (x.security.auto_lock_minutes = Math.max(0, Number(e.currentTarget.value) || 0)))} />
           </Field>
-          <Field label="Clear sensitive clipboard copies after (seconds)">
-            <Input mono type="number" min="5" value={props.d.security.clipboard_clear_secs} onInput={(e) => props.patch((x) => (x.security.clipboard_clear_secs = Number(e.currentTarget.value) || 30))} />
+          <Field label="Clear sensitive clipboard copies after (seconds)" class="mt-3">
+            <Input mono type="number" min="5" class="w-32" value={props.s.security.clipboard_clear_secs} onInput={(e) => props.patch((x) => (x.security.clipboard_clear_secs = Math.max(5, Number(e.currentTarget.value) || 30)))} />
           </Field>
         </div>
       </Card>
       <Card title="Windows Hello">
         <div class="flex flex-col gap-3 p-4">
-          <Show when={store.status()?.hello_available} fallback={<Notice>Windows Hello is not set up on this PC (Settings → Accounts → Sign-in options in Windows).</Notice>}>
-            <Show
-              when={store.status()?.hello_enabled}
-              fallback={
-                <>
-                  <p class="text-sm text-muted">Wraps your passphrase behind a Hello prompt using DPAPI. Hello never sees your 24 words.</p>
-                  <Field label="Confirm passphrase to enrol">
-                    <Input type="password" value={helloPass()} onInput={(e) => setHelloPass(e.currentTarget.value)} />
-                  </Field>
-                  <div>
-                    <Button onClick={helloOn} loading={busy()} disabled={!helloPass()}>
-                      Enable Windows Hello
-                    </Button>
-                  </div>
-                </>
-              }
-            >
-              <p class="text-sm">Enabled.</p>
-              <div>
-                <Button variant="secondary" onClick={helloOff} loading={busy()}>
-                  Disable Windows Hello
-                </Button>
-              </div>
-            </Show>
+          <p class="text-xs text-muted">{store.status()?.hello_enabled ? "Enabled. Hello wraps the passphrase behind the Windows security chip; it never sees the 24 words." : store.status()?.hello_available ? "Available on this PC. Enrol with your passphrase." : "Not available on this PC."}</p>
+          <Show when={!store.status()?.hello_enabled && store.status()?.hello_available}>
+            <div class="flex items-center gap-2">
+              <Input type="password" class="w-64" placeholder="Confirm your passphrase" value={helloPass()} onInput={(e) => setHelloPass(e.currentTarget.value)} />
+              <Button size="sm" loading={busy() === "hello"} disabled={!helloPass()} onClick={() => run("hello", () => ipc.helloEnable(helloPass()).then(() => setHelloPass("")), "Windows Hello enabled")}>
+                <Fingerprint size={12} /> Enable
+              </Button>
+            </div>
+          </Show>
+          <Show when={store.status()?.hello_enabled}>
+            <Button variant="secondary" size="sm" class="w-fit" loading={busy() === "hello-off"} onClick={() => run("hello-off", () => ipc.helloDisable(), "Windows Hello disabled")}>
+              Disable Windows Hello
+            </Button>
           </Show>
         </div>
       </Card>
@@ -296,97 +240,248 @@ function SecurityTab(props: { d: S; patch: (f: (d: S) => void) => void }) {
           <Field label="Current">
             <Input type="password" value={cur()} onInput={(e) => setCur(e.currentTarget.value)} />
           </Field>
-          <Field label="New (≥ 8 characters)">
-            <Input type="password" value={n1()} onInput={(e) => setN1(e.currentTarget.value)} />
+          <Field label="New (10+ characters)">
+            <Input type="password" value={next()} onInput={(e) => setNext(e.currentTarget.value)} />
           </Field>
-          <Field label="Repeat" error={n2() && n1() !== n2() ? "Does not match" : undefined}>
-            <Input type="password" value={n2()} onInput={(e) => setN2(e.currentTarget.value)} />
+          <Field label="Repeat" error={next2() && next() !== next2() ? "does not match" : undefined}>
+            <Input type="password" value={next2()} onInput={(e) => setNext2(e.currentTarget.value)} />
           </Field>
           <div class="col-span-3 flex items-center justify-between">
-            <p class="text-xs text-muted">Re-encrypts the vault on this PC. Windows Hello must be re-enrolled afterwards. The 24 words are unaffected.</p>
-            <Button variant="secondary" onClick={change} loading={busy()} disabled={!cur() || n1().length < 8 || n1() !== n2()}>
-              Change
+            <p class="text-xs text-muted">Re-encrypts the vault and locks the app. Windows Hello must be enrolled again.</p>
+            <Button size="sm" loading={busy() === "pass"} disabled={!cur() || next().length < 10 || next() !== next2()} onClick={() => run("pass", () => ipc.changePassphrase(cur(), next()))}>
+              <KeyRound size={12} /> Change and lock
             </Button>
           </div>
         </div>
       </Card>
-      <Notice title="Forgot passphrase">There is no reset. Lock the app and use “Forgot passphrase?” on the lock screen to remove this PC's data and restore from your 24 words.</Notice>
-    </>
+      <Card title="Encrypted backup">
+        <div class="flex flex-col gap-3 p-4">
+          <p class="text-xs text-muted">
+            Writes one file with the wallet key, root key and Drive keyring, encrypted with its own passphrase (Argon2id 256 MiB, then XChaCha20-Poly1305). This device's key and encryption sessions are deliberately left out, so a restore becomes a new device. Keep the file anywhere; the host cannot read it.
+          </p>
+          <div class="grid grid-cols-2 gap-3">
+            <Field label="Backup passphrase (12+ characters)" hint="Not this PC's passphrase. Write it down separately.">
+              <Input type="password" value={bkPass()} onInput={(e) => setBkPass(e.currentTarget.value)} />
+            </Field>
+            <Field label="Repeat" error={bkPass2() && bkPass() !== bkPass2() ? "does not match" : undefined}>
+              <Input type="password" value={bkPass2()} onInput={(e) => setBkPass2(e.currentTarget.value)} />
+            </Field>
+          </div>
+          <div class="flex gap-2">
+            <Button
+              size="sm"
+              loading={busy() === "backup"}
+              disabled={bkPass().length < 12 || bkPass() !== bkPass2()}
+              onClick={async () => {
+                const p = await pickSavePath(`hashgram-backup-${new Date().toISOString().slice(0, 10)}.hgbkup`, { filters: [{ name: "Hashgram backup", extensions: ["hgbkup"] }] });
+                if (!p) return;
+                await run("backup", async () => {
+                  const m = await ipc.backupExport(p, bkPass());
+                  setBkPass(""); setBkPass2("");
+                  store.toast(`Backup written for ${m.address.slice(0, 12)}… (${m.partial ? "device-only vault: no account key inside" : "full"})`);
+                });
+              }}
+            >
+              <Download size={12} /> Export backup…
+            </Button>
+            <span class="self-center text-xs text-muted">
+              <Upload size={11} class="mr-1 inline" /> To restore: wipe local data (Advanced), then choose "Restore from backup file" on the first screen.
+            </span>
+          </div>
+        </div>
+      </Card>
+    </div>
   );
 }
 
-function UpdatesTab(props: { d: S; patch: (f: (d: S) => void) => void }) {
-  const status = () => store.status();
-  const configured = () => status()?.updater_configured;
-  const phase = updates.phase;
-  const u = updates.available;
-  const statusLine = () => {
-    switch (phase()) {
-      case "checking":
-        return "Checking the signed manifest…";
-      case "up-to-date":
-        return `Up to date (v${status()?.version ?? ""}).`;
-      case "available":
-        return `Hashgram ${u()?.version} is available${u()?.date ? ` (${u()?.date})` : ""}.`;
-      case "downloading": {
-        const p = updates.progress();
-        return p.total ? `Downloading… ${formatBytes(p.done)} / ${formatBytes(p.total)}` : `Downloading… ${formatBytes(p.done)}`;
+function MailTab(props: { s: Settings; patch: (f: (s: Settings) => void) => void }) {
+  const [ms, setMs] = createSignal<MailSettings | null>(null);
+  createResource(
+    () => ({ locked: store.locked(), phase: store.phase() }),
+    async ({ locked, phase }) => {
+      // The SDK sync round owns the facade mutex while it performs bounded
+      // network reads. Fetch this local setting as soon as the round reaches
+      // Idle instead of leaving the panel apparently stuck behind it.
+      const syncOwnsFacade =
+        phase === "Connecting" ||
+        phase === "Discovering" ||
+        (typeof phase === "object" && "Syncing" in phase);
+      if (!locked && !syncOwnsFacade && !ms()) {
+        setMs(await ipc.mailSettingsGet().catch(() => null));
       }
-      case "installing":
-        return "Signature verified. Installing and restarting…";
-      case "error":
-        return `Update failed: ${updates.error()}`;
-      default:
-        return "";
+      return null;
+    },
+  );
+  const patchMs = async (f: (m: MailSettings) => void) => {
+    const m = structuredClone(ms());
+    if (!m) return;
+    f(m);
+    setMs(m);
+    try {
+      await ipc.mailSettingsSet(m);
+    } catch (e) {
+      store.toast(errText(e), "error");
     }
   };
-  const pctDone = () => {
-    const p = updates.progress();
-    return p.total ? Math.min(100, Math.round((p.done / p.total) * 100)) : 0;
-  };
   return (
-    <Card title="Updates">
+    <div class="flex flex-col gap-4">
+      <Card title="Privacy">
+        <div class="p-4">
+          <Show when={ms()} fallback={<p class="text-xs text-muted">{store.locked() ? "Unlock to change mail settings." : t("loading")}</p>}>
+            {(m) => (
+              <>
+                <Switch label="Send read receipts" hint="Only when the sender asked for one. Delivery receipts are always sent when your device decrypts a message." checked={m().send_read_receipts} onChange={(v) => void patchMs((x) => (x.send_read_receipts = v))} />
+                <Switch label="Keep sent mail" hint="Your Sent copy, on this device and your other devices." checked={m().keep_sent} onChange={(v) => void patchMs((x) => (x.keep_sent = v))} />
+                <Field label="Purge trash and spam after (days, 0 = never)" class="mt-2">
+                  <Input mono type="number" min="0" class="w-32" value={m().purge_after_days} onChange={(e) => void patchMs((x) => (x.purge_after_days = Math.max(0, Number(e.currentTarget.value) || 0)))} />
+                </Field>
+              </>
+            )}
+          </Show>
+        </div>
+      </Card>
+      <Card title="Reading">
+        <div class="p-4">
+          <Switch label="Group by conversation" checked={props.s.mail.threaded} onChange={(v) => props.patch((x) => (x.mail.threaded = v))} />
+          <Field label="Mark read after (seconds open, 0 = at once)" class="mt-2">
+            <Input mono type="number" min="0" class="w-32" value={props.s.mail.mark_read_after_secs} onInput={(e) => props.patch((x) => (x.mail.mark_read_after_secs = Math.max(0, Number(e.currentTarget.value) || 0)))} />
+          </Field>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function UpdatesTab(props: { s: Settings; patch: (f: (s: Settings) => void) => void }) {
+  return (
+    <Card title={t("settings_updates")}>
       <div class="flex flex-col gap-3 p-4">
-        <Show when={!configured()}>
-          <Notice strong title="Updater not configured in this build">
-            The signing public key compiled into this build is a placeholder. The owner generates a minisign keypair offline, puts the public key in <span class="mono">tauri.conf.json</span> and signs releases with the private key, which never touches a server. Until then “Check now” refuses unsigned manifests by design.
-          </Notice>
-        </Show>
-        <Switch label="Check for updates on start" hint="The only outbound HTTPS this app makes on its own. The manifest and the installer must carry a valid signature; anything else is refused." checked={props.d.updates.auto_check} onChange={(v) => props.patch((x) => (x.updates.auto_check = v))} />
+        <Switch label="Check for updates on start" hint="The only outbound HTTPS request besides endpoints you configured: the signed manifest at the release endpoint." checked={props.s.updates.auto_check} onChange={(v) => props.patch((x) => (x.updates.auto_check = v))} />
+        <Field label="Channel">
+          <Select value={props.s.updates.channel} onChange={(v) => props.patch((x) => (x.updates.channel = v))} options={[{ value: "stable", label: "Stable" }]} />
+        </Field>
         <div class="flex items-center gap-3">
-          <Button variant="secondary" onClick={() => void updates.checkNow()} loading={phase() === "checking"} disabled={updates.busy() || !configured()}>
-            Check now
+          <Button variant="secondary" size="sm" onClick={() => void updates.checkNow()} loading={updates.busy()}>
+            <RefreshCw size={12} /> Check now
           </Button>
-          <Show when={phase() === "available"}>
-            <Button onClick={() => void updates.install()} disabled={updates.busy()}>
-              Install v{u()?.version} and restart
+          <span class="text-xs text-muted">
+            {updates.phase() === "up-to-date" ? "Up to date." : updates.phase() === "available" ? `${updates.available()?.version} is available.` : updates.phase() === "error" ? updates.error() : updates.checkedAt() ? `Checked ${formatMs(updates.checkedAt())}` : ""}
+          </span>
+          <Show when={updates.phase() === "available"}>
+            <Button size="sm" onClick={() => void updates.install()}>
+              Install and restart
             </Button>
           </Show>
-          <span class="whitespace-pre-wrap text-xs text-muted" role="status">
-            {statusLine()}
-          </span>
         </div>
-        <Show when={phase() === "downloading" && updates.progress().total}>
-          <div class="h-1 w-full overflow-hidden rounded bg-surface-2" aria-hidden="true">
-            <div class="h-full bg-fg transition-[width]" style={{ width: `${pctDone()}%` }} />
-          </div>
-        </Show>
-        <Show when={phase() === "available" && u()?.body}>
-          <div class="rounded-md border border-border bg-surface-2 p-3 text-xs whitespace-pre-wrap">{u()?.body}</div>
-        </Show>
-        <div class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs text-muted">
-          <span>Installed</span>
-          <span class="mono">
-            v{status()?.version} · {status()?.commit}
-          </span>
-          <span>Source</span>
-          <span class="mono break-all">{status()?.updater_endpoint || "—"}</span>
-          <span>Signing key id</span>
-          <Mono text={configured() ? status()?.updater_key_id || "configured" : "REPLACE_WITH_MINISIGN_PUBLIC_KEY (placeholder)"} full />
-          <span>Install mode</span>
-          <span>Passive installer for the current user, no administrator prompt; your vault and settings stay in place.</span>
-        </div>
+        <p class="text-xs text-muted">
+          Manifest and installer are refused unless the minisign signature verifies against the key compiled into this build.
+          {store.status()?.updater_configured ? "" : " This build has no updater key; it will not update itself."}
+        </p>
       </div>
     </Card>
+  );
+}
+
+function AdvancedTab(props: { s: Settings; patch: (f: (s: Settings) => void) => void }) {
+  const [leases] = createResource(
+    () => store.locked(),
+    (locked) => (locked ? Promise.resolve([]) : ipc.leasesList().catch(() => [])),
+  );
+  const [busy, setBusy] = createSignal<string | null>(null);
+  const [confirmText, setConfirmText] = createSignal("");
+  return (
+    <div class="flex flex-col gap-4">
+      <Card title="Logging">
+        <div class="p-4">
+          <Field label="Log level" hint="Logs never contain subjects, bodies, contact addresses or key material. Rotating files under logs/ (7 days).">
+            <Select value={props.s.advanced.log_level} onChange={(v) => props.patch((x) => (x.advanced.log_level = v))} options={["error", "warn", "info", "debug"].map((l) => ({ value: l, label: l }))} />
+          </Field>
+        </div>
+      </Card>
+      <Card title="Storage leases (protocol v1.1 preview)">
+        <div class="p-4 text-xs">
+          <p class="mb-2 text-muted">Paid storage leases exist in the client model (signed leases, verify-before-pay). Offering one to a provider needs protocol v1.1; this lists what is recorded locally and can run a verification.</p>
+          <Show when={(leases() ?? []).length} fallback={<p class="text-muted">No leases recorded.</p>}>
+            <pre class="mono max-h-48 overflow-auto selectable">{JSON.stringify(leases(), null, 1)}</pre>
+          </Show>
+        </div>
+      </Card>
+      <Card title="Drive">
+        <div class="flex items-center justify-between p-4">
+          <p class="text-xs text-muted">Re-encrypt every file under a fresh key and revoke all live shares. Slow: every object is downloaded, re-sealed and uploaded. Use after a device was lost.</p>
+          <Button variant="secondary" size="sm" loading={busy() === "rekey"} onClick={async () => { if (await confirm("Rekey every Drive file? This downloads and re-uploads everything and revokes all live shares.")) { setBusy("rekey"); try { const n = await ipc.driveRekeyAll(); store.toast(`${n} file(s) rekeyed`); store.bump("drive"); } catch (e) { store.toast(errText(e), "error"); } finally { setBusy(null); } } }}>
+            <KeyRound size={12} /> Rekey all
+          </Button>
+        </div>
+      </Card>
+      <Card title="Wipe local data">
+        <div class="flex flex-col gap-2 p-4">
+          <Notice strong title="Removes the vault, the local store and the UI cache from this PC">You will need your 24 words or a backup file to get back in. Mail and files stored only on this device are lost. The app must be locked first.</Notice>
+          <div class="flex items-center gap-2">
+            <Input mono class="w-40" placeholder="type DELETE" value={confirmText()} onInput={(e) => setConfirmText(e.currentTarget.value)} />
+            <Button variant="danger" size="sm" disabled={confirmText() !== "DELETE"} loading={busy() === "wipe"} onClick={async () => { setBusy("wipe"); try { await ipc.lock(); await ipc.wipeLocalData(confirmText()); await store.refreshStatus(); location.reload(); } catch (e) { store.toast(errText(e), "error"); } finally { setBusy(null); } }}>
+              <Trash2 size={12} /> Wipe
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+function AboutTab() {
+  const [about] = createResource(() => ipc.aboutInfo());
+  const [memBytes] = createResource(() => ipc.perfMemory().catch(() => 0));
+  const perfMem = () => memBytes() ?? 0;
+  return (
+    <Show when={about()}>
+      {(a) => (
+        <div class="flex flex-col gap-4">
+          <Card title={t("app_name")}>
+            <div class="grid grid-cols-2 gap-x-6 gap-y-2 p-4 text-[13px]">
+              <span class="text-muted">Version</span>
+              <span class="mono">
+                {a().version} · {a().commit}{" "}
+                <Badge brand={a().code_signed} strong={!a().code_signed} title={a().code_signed ? "Authenticode signature present" : "No code-signing certificate yet; SmartScreen may warn on first run"}>
+                  {a().code_signed ? <><ShieldCheck size={10} class="mr-1" />{t("signed")}</> : <><ShieldAlert size={10} class="mr-1" />{t("unsigned_preview")}</>}
+                </Badge>
+              </span>
+              <span class="text-muted">Chain</span>
+              <span class="mono">{a().chain_id}</span>
+              <span class="text-muted">Genesis hash</span>
+              <span>
+                <Mono text={a().genesis_hash} full copy class="text-xs" />
+              </span>
+              <span class="text-muted">Vault KDF</span>
+              <span>{a().kdf}</span>
+              <span class="text-muted">Updater</span>
+              <span class="mono truncate text-xs">{a().updater_endpoint || "—"}</span>
+              <span class="text-muted">Data</span>
+              <span class="flex items-center gap-2">
+                <span class="mono truncate text-xs">{a().data_dir}</span>
+                <Button variant="ghost" size="sm" onClick={() => void ipc.openDataDir()}>
+                  <FolderOpen size={12} />
+                </Button>
+              </span>
+              <span class="text-muted">Memory</span>
+              <span class="mono text-xs">{formatBytes(perfMem())}</span>
+            </div>
+          </Card>
+          <Card title="Licenses">
+            <ul class="grid grid-cols-2 gap-x-6 p-4 text-xs">
+              <For each={a().licenses}>
+                {([name, lic]) => (
+                  <li class="flex justify-between border-b border-border py-1">
+                    <span>{name}</span>
+                    <span class="text-muted">{lic}</span>
+                  </li>
+                )}
+              </For>
+            </ul>
+          </Card>
+          <p class="text-[11px] text-muted">{t("tagline")} No analytics, no telemetry, no crash upload. Fonts and scripts are bundled; nothing loads from the Internet.</p>
+        </div>
+      )}
+    </Show>
   );
 }

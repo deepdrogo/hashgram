@@ -13,7 +13,13 @@
 //!
 //! Run without `--service` it does the same in the foreground, which is
 //! what the per-user Scheduled Task uses on machines without administrator
-//! rights.
+//! rights. `--config` defaults to `<home>\node.toml`.
+//!
+//! Built as a windowless program on Windows release builds so a logon task
+//! never flashes a console at the user; the node child is started with
+//! `CREATE_NO_WINDOW` for the same reason and its output goes to `node.log`.
+
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -53,10 +59,12 @@ fn parse(argv: &[String]) -> anyhow::Result<Args> {
         }
         i += 1;
     }
+    let home: PathBuf = home.ok_or_else(|| anyhow::anyhow!("--home <dir> is required"))?;
+    let config = config.unwrap_or_else(|| home.join("node.toml"));
     Ok(Args {
         node: node.ok_or_else(|| anyhow::anyhow!("--node <hashgram-node.exe> is required"))?,
-        home: home.ok_or_else(|| anyhow::anyhow!("--home <dir> is required"))?,
-        config: config.ok_or_else(|| anyhow::anyhow!("--config <node.toml> is required"))?,
+        home,
+        config,
         service,
     })
 }
@@ -68,16 +76,23 @@ fn spawn(args: &Args) -> anyhow::Result<Child> {
         .append(true)
         .open(args.home.join("node.log"))?;
     let err = log.try_clone()?;
-    Ok(Command::new(&args.node)
-        .arg("run")
+    let mut cmd = Command::new(&args.node);
+    cmd.arg("run")
         .arg("--home")
         .arg(&args.home)
         .arg("--config")
         .arg(&args.config)
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
-        .stderr(Stdio::from(err))
-        .spawn()?)
+        .stderr(Stdio::from(err));
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // CREATE_NO_WINDOW: the node is a console program; without this a
+        // windowless parent would give it a console of its own on screen.
+        cmd.creation_flags(0x0800_0000);
+    }
+    Ok(cmd.spawn()?)
 }
 
 /// Supervises the child until `stop` is set. Restarts with back-off.

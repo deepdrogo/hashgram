@@ -175,6 +175,15 @@ pub struct NodeConfig {
     #[serde(default)]
     pub serve_relay: Option<bool>,
 
+    /// Dial TCP before QUIC when a peer offers both. For a client behind a
+    /// consumer NAT this is the difference between a connection that lasts
+    /// and one that dies when the router forgets a UDP mapping: TCP
+    /// mappings live for hours, UDP ones often for 30 seconds. QUIC is
+    /// still tried when TCP fails (every second attempt), so a network that
+    /// filters TCP is not cut off. Off by default; clients turn it on.
+    #[serde(default)]
+    pub prefer_tcp: bool,
+
     /// Maximum connections from one peer.
     #[serde(default = "default_max_per_peer")]
     pub max_connections_per_peer: usize,
@@ -329,7 +338,7 @@ fn default_max_per_peer() -> usize {
     2
 }
 fn default_max_per_subnet() -> usize {
-    4
+    crate::limits::DEFAULT_MAX_PER_SUBNET
 }
 fn default_max_inbound() -> usize {
     128

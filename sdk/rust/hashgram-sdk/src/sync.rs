@@ -159,10 +159,13 @@ impl Default for SyncState {
     }
 }
 
-/// Backoff schedule: 2, 4, 8 … capped at 300 s.
+/// Backoff schedule: 2, 4, 8, 16, then 30 s. The link redials on its own
+/// every few seconds, so a longer wait here only delays noticing that the
+/// network is back; 300 s (the old cap) showed as "offline" for five
+/// minutes after a ten-second hiccup.
 #[must_use]
 pub fn backoff_secs(attempt: u32) -> u64 {
-    (2u64.saturating_pow(attempt.min(9))).clamp(2, 300)
+    (2u64.saturating_pow(attempt.min(5))).clamp(2, 30)
 }
 
 /// The Sync API.
@@ -262,22 +265,36 @@ impl<'a> Sync<'a> {
             ));
         }
 
-        // Mailbox.
+        // Mailbox. A failed mailbox pull with peers still connected is a
+        // degraded round, not an outage: the rest of the round (feed,
+        // balance, outbox) still runs and the UI stays "online" with a
+        // warning, instead of every screen showing the offline banner
+        // because one store node timed out once.
         self.set_phase(SyncPhase::Syncing(Stage::Mailbox));
-        let received = self
+        match self
             .one
             .messaging
             .sync(&self.one.link, &self.one.network, Some(&self.one.chain))
-            .await?;
-        report.envelopes = received.len();
-        for r in received {
-            self.dispatch(r, &mut report).await;
+            .await
+        {
+            Ok(received) => {
+                report.envelopes = received.len();
+                for r in received {
+                    self.dispatch(r, &mut report).await;
+                }
+            }
+            Err(e) => {
+                if self.one.link.peers().await.is_empty() {
+                    return Err(e);
+                }
+                self.emit(SyncEvent::Warning(format!("mailbox not synced this round: {e}")));
+            }
         }
 
         // Outbox.
         self.set_phase(SyncPhase::Syncing(Stage::Outbox));
         if let Some(hint) = self.one.mail().take_pending_hint() {
-            if let Some(gid) = self.one.self_group().await? {
+            if let Some(gid) = self.self_group_soft().await {
                 let body = hashgram_app::pb::DeviceSync {
                     version: hashgram_app::version::DEVICE_SYNC_VERSION,
                     body: Some(hashgram_app::pb::device_sync::Body::MailState(hint)),
@@ -294,7 +311,7 @@ impl<'a> Sync<'a> {
             }
         }
         if let Some(snapshot) = self.one.people().take_snapshot_if_dirty() {
-            if let Some(gid) = self.one.self_group().await? {
+            if let Some(gid) = self.self_group_soft().await {
                 let body = hashgram_app::pb::DeviceSync {
                     version: hashgram_app::version::DEVICE_SYNC_VERSION,
                     body: Some(hashgram_app::pb::device_sync::Body::Contacts(snapshot)),
@@ -354,6 +371,20 @@ impl<'a> Sync<'a> {
         }
         self.one.save()?;
         Ok(report)
+    }
+
+    /// The self (multi-device) group, or `None` with a warning when it
+    /// cannot be resolved right now; device state is retried next round.
+    async fn self_group_soft(&mut self) -> Option<Vec<u8>> {
+        match self.one.self_group().await {
+            Ok(g) => g,
+            Err(e) => {
+                self.emit(SyncEvent::Warning(format!(
+                    "device group unavailable this round: {e}"
+                )));
+                None
+            }
+        }
     }
 
     /// Routes one decrypted message to its application.
@@ -474,6 +505,8 @@ mod tests {
         assert_eq!(backoff_secs(1), 2);
         assert_eq!(backoff_secs(2), 4);
         assert_eq!(backoff_secs(3), 8);
-        assert_eq!(backoff_secs(20), 300);
+        assert_eq!(backoff_secs(4), 16);
+        assert_eq!(backoff_secs(5), 30);
+        assert_eq!(backoff_secs(20), 30);
     }
 }

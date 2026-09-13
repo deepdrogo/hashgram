@@ -53,6 +53,13 @@ pub struct Profile {
     pub states: Vec<String>,
 }
 
+/// A profile with the time it was fetched, for the local cache.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct CachedProfile {
+    profile: Profile,
+    fetched_at_ms: u64,
+}
+
 /// People state.
 #[derive(Debug, Default)]
 pub struct PeopleState {
@@ -103,9 +110,13 @@ impl<'a> People<'a> {
             .chain
             .query(&format!("hashgram/username/v1/reverse/{address}"))
             .await;
+        // `x/username` answers `{registrations: [{name, owner, …}]}`
+        // (`proto/hashgram/username/v1/query.proto`); older mocks used
+        // `names`, accepted as a fallback.
         let name = match v {
             Ok(v) => v
-                .get("names")
+                .get("registrations")
+                .or_else(|| v.get("names"))
                 .and_then(|n| n.as_array())
                 .and_then(|a| a.first())
                 .and_then(|x| x.get("name").or(Some(x)))
@@ -138,12 +149,19 @@ impl<'a> People<'a> {
             .query(&format!("hashgram/username/v1/lookup/{username}"))
             .await;
         match v {
-            Ok(v) => Ok(v
-                .get("registration")
-                .and_then(|r| r.get("owner"))
-                .or_else(|| v.get("owner"))
-                .and_then(|o| o.as_str())
-                .map(|s| s.to_owned())),
+            Ok(v) => {
+                // The chain answers 200 with `found: false` for an
+                // unregistered name; the registration is then empty.
+                if v.get("found").and_then(|f| f.as_bool()) == Some(false) {
+                    return Ok(None);
+                }
+                Ok(v.get("registration")
+                    .and_then(|r| r.get("owner"))
+                    .or_else(|| v.get("owner"))
+                    .and_then(|o| o.as_str())
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_owned()))
+            }
             Err(crate::chain::ClientError::Gateway { status: 404, .. }) => Ok(None),
             Err(e) => {
                 let msg = e.to_string();
@@ -205,13 +223,34 @@ impl<'a> People<'a> {
     }
 
     /// Public profile from the social log (latest `PROFILE_UPDATE`).
+    /// Always asks the network; see [`Self::profile_cached`] for lists.
     pub async fn profile(&mut self, address: &str) -> Result<Profile, SdkError> {
         let username = self.username_of(address).await.unwrap_or_default();
         let social = crate::social::Social::open(&self.one.account)?;
-        let events = social
-            .fetch_author(&self.one.link, &self.one.network, address, 0, 200)
+        // Newest profile update first; a node that predates the `latest`
+        // filter answers with the author's chain from the start, which the
+        // fallback below still reads correctly.
+        let mut events = social
+            .fetch(
+                &self.one.link,
+                &self.one.network,
+                hashgram_proto::pb::EventFetch {
+                    author: address.to_owned(),
+                    types: vec!["PROFILE_UPDATE".to_owned()],
+                    latest: true,
+                    limit: 1,
+                    ..Default::default()
+                },
+            )
             .await
+            .map(|r| r.events)
             .unwrap_or_default();
+        if events.is_empty() {
+            events = social
+                .fetch_author(&self.one.link, &self.one.network, address, 0, 200)
+                .await
+                .unwrap_or_default();
+        }
         let mut prof = Profile {
             address: address.to_owned(),
             username,
@@ -225,28 +264,63 @@ impl<'a> People<'a> {
                 .unwrap_or_default(),
             ..Default::default()
         };
-        for ev in events.iter().rev() {
-            if ev.r#type == "PROFILE_UPDATE" {
-                let j = crate::social::payload_json(ev);
-                prof.display_name = j
-                    .get("display_name")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_owned();
-                prof.bio = j
-                    .get("bio")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_owned();
-                prof.avatar_cid = j
-                    .get("avatar_cid")
-                    .and_then(|x| x.as_str())
-                    .unwrap_or("")
-                    .to_owned();
-                break;
+        // Newest PROFILE_UPDATE wins whichever order the node answered in.
+        if let Some(ev) = events
+            .iter()
+            .filter(|e| e.r#type == "PROFILE_UPDATE")
+            .max_by_key(|e| (e.timestamp, e.sequence))
+        {
+            if let Ok(p) = <hashgram_proto::pb::ProfileUpdate as prost::Message>::decode(
+                ev.payload.as_slice(),
+            ) {
+                prof.display_name = p.display_name;
+                prof.bio = p.bio;
+                prof.avatar_cid = hex::encode(&p.avatar_cid);
             }
         }
+        self.one.store.put(
+            NS,
+            format!("profile/{address}").as_bytes(),
+            &CachedProfile {
+                profile: prof.clone(),
+                fetched_at_ms: hashgram_app::ids::now_ms(),
+            },
+        )?;
         Ok(prof)
+    }
+
+    /// Public profile, from a local cache no older than `max_age_secs`,
+    /// otherwise from the network. Cheap enough to call for every author
+    /// in a list.
+    pub async fn profile_cached(
+        &mut self,
+        address: &str,
+        max_age_secs: u64,
+    ) -> Result<Profile, SdkError> {
+        let key = format!("profile/{address}");
+        if let Some(c) = self.one.store.get::<CachedProfile>(NS, key.as_bytes())? {
+            let age_ms = hashgram_app::ids::now_ms().saturating_sub(c.fetched_at_ms);
+            if age_ms < max_age_secs.saturating_mul(1000) {
+                let mut p = c.profile;
+                // Contact flags are local and may have changed since.
+                p.states = self
+                    .one
+                    .people_state
+                    .contacts
+                    .records
+                    .get(address)
+                    .map(|r| r.states.clone())
+                    .unwrap_or_default();
+                return Ok(p);
+            }
+        }
+        self.profile(address).await
+    }
+
+    /// Our display name (used in outgoing mail headers and cards).
+    #[must_use]
+    pub fn my_display_name(&self) -> String {
+        self.one.people_state.my_display_name.clone()
     }
 
     /// Sets our display name (used in outgoing mail headers and cards).

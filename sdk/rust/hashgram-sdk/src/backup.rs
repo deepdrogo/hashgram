@@ -116,13 +116,25 @@ pub fn export_backup(
     passphrase: &str,
     cost: Option<(u32, u32, u8)>,
 ) -> Result<BackupMeta, SdkError> {
+    export_backup_contents(&account.contents, path, passphrase, cost)
+}
+
+/// [`export_backup`] over a copy of the vault contents, so a caller that
+/// holds its account behind a lock can clone the contents and run the
+/// (slow, 256 MiB Argon2id) export on a blocking thread without holding
+/// the lock.
+pub fn export_backup_contents(
+    c: &VaultContents,
+    path: &Path,
+    passphrase: &str,
+    cost: Option<(u32, u32, u8)>,
+) -> Result<BackupMeta, SdkError> {
     if passphrase.chars().count() < MIN_PASSPHRASE {
         return Err(SdkError::Invalid(format!(
             "backup passphrase must be at least {MIN_PASSPHRASE} characters"
         )));
     }
     let (m, t, p) = cost.unwrap_or((BACKUP_M_COST_KIB, BACKUP_T_COST, BACKUP_P_COST));
-    let c = &account.contents;
     let meta = BackupMeta {
         exported_at: hashgram_app::ids::now_secs(),
         address: c.address.clone(),

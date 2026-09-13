@@ -19,6 +19,14 @@
 //!    Spam rather than Requests; a single unknown sender is capped at
 //!    `MAX_PER_SENDER_PER_HOUR`.
 //!
+//! 5. **Postage.** A sender writing to someone who is not yet a contact
+//!    attaches a *postage stamp*: a small proof of work over (recipient,
+//!    message id) carried as a `postage:<nonce>` label. It costs a real
+//!    person's PC well under a second per first-contact message and costs a
+//!    bulk sender the same second for each of a million recipients. A valid
+//!    stamp raises the trust score; its absence is not a penalty, so older
+//!    clients still reach Requests.
+//!
 //! Nothing here contacts a network. The transport-level backstop is the
 //! store node's per-mailbox quota; the economic backstop is that every
 //! Hashgram identity costs gas to create and a username costs 1 HASH.
@@ -26,6 +34,82 @@
 use std::collections::HashMap;
 
 use crate::pb;
+
+/// Label prefix of a postage stamp.
+pub const POSTAGE_LABEL_PREFIX: &str = "postage:";
+/// Leading zero bits a full stamp has. 2^20 ≈ one million hashes, roughly
+/// 0.2–0.8 s on one core of an ordinary PC.
+pub const POSTAGE_BITS: u32 = 20;
+/// Most hash attempts a sender spends on one stamp before giving up and
+/// sending without (2^24: sixteen times the expected work).
+pub const POSTAGE_MAX_ITERS: u64 = 1 << 24;
+/// Domain separation for the stamp digest.
+const POSTAGE_DOMAIN: &[u8] = b"hashgram-mail-postage-v1";
+
+/// The stamp digest for one nonce.
+#[must_use]
+pub fn postage_digest(recipient: &str, message_id: &[u8], nonce: u64) -> [u8; 32] {
+    let mut h = blake3::Hasher::new();
+    h.update(POSTAGE_DOMAIN);
+    h.update(&(recipient.len() as u32).to_le_bytes());
+    h.update(recipient.as_bytes());
+    h.update(&(message_id.len() as u32).to_le_bytes());
+    h.update(message_id);
+    h.update(&nonce.to_le_bytes());
+    *h.finalize().as_bytes()
+}
+
+/// Leading zero bits of a digest.
+#[must_use]
+pub fn leading_zero_bits(d: &[u8]) -> u32 {
+    let mut n = 0;
+    for b in d {
+        if *b == 0 {
+            n += 8;
+        } else {
+            n += b.leading_zeros();
+            break;
+        }
+    }
+    n
+}
+
+/// Mints a stamp label of at least `bits` for `(recipient, message_id)`,
+/// trying at most `max_iters` nonces. `None` when the budget ran out.
+#[must_use]
+pub fn mint_postage(recipient: &str, message_id: &[u8], bits: u32, max_iters: u64) -> Option<String> {
+    // A random start so two devices minting for the same message do not
+    // duplicate work, and so the nonce reveals nothing about ordering.
+    let mut nonce = u64::from_le_bytes(
+        blake3::hash(&[message_id, &std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_le_bytes())
+            .unwrap_or([0; 16])].concat())
+            .as_bytes()[..8]
+            .try_into()
+            .unwrap_or([0; 8]),
+    );
+    for _ in 0..max_iters {
+        if leading_zero_bits(&postage_digest(recipient, message_id, nonce)) >= bits {
+            return Some(format!("{POSTAGE_LABEL_PREFIX}{nonce:016x}"));
+        }
+        nonce = nonce.wrapping_add(1);
+    }
+    None
+}
+
+/// The strongest valid stamp a message carries for `recipient`, in bits;
+/// 0 when none.
+#[must_use]
+pub fn postage_bits(m: &pb::MailMessage, recipient: &str) -> u32 {
+    m.labels
+        .iter()
+        .filter_map(|l| l.strip_prefix(POSTAGE_LABEL_PREFIX))
+        .filter_map(|n| u64::from_str_radix(n, 16).ok())
+        .map(|nonce| leading_zero_bits(&postage_digest(recipient, &m.message_id, nonce)))
+        .max()
+        .unwrap_or(0)
+}
 
 /// Where a message is filed on arrival.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -59,6 +143,9 @@ pub struct SenderFacts {
     pub username_age_days: Option<u32>,
     /// Messages from this sender accepted before.
     pub prior_messages: u32,
+    /// Strength of the postage stamp the message carries for us, in bits
+    /// (see [`postage_bits`]); 0 when none.
+    pub postage_bits: u32,
 }
 
 /// Bounds of the rate window.
@@ -118,6 +205,13 @@ pub fn trust_score(facts: &SenderFacts, m: &pb::MailMessage) -> i32 {
         s -= 10;
     }
     s += (facts.prior_messages.min(10) as i32) * 3;
+    // Postage: work spent on this recipient specifically. A full stamp
+    // outweighs the missing-username penalty; a partial one softens it.
+    if facts.postage_bits >= POSTAGE_BITS {
+        s += 30;
+    } else if facts.postage_bits >= POSTAGE_BITS - 4 {
+        s += 12;
+    }
     // Bulk shape: many recipients and no reply reference.
     let recipients = m.to.len() + m.cc.len();
     if recipients > 20 && m.in_reply_to.is_empty() {
@@ -297,6 +391,58 @@ mod tests {
             Disposition::Spam,
             "past the hourly window low-score strangers go to spam"
         );
+    }
+
+    #[test]
+    fn postage_is_minted_verified_and_bound_to_the_recipient() {
+        let id = vec![7u8; 16];
+        // Small difficulty keeps the test fast; the check is structural.
+        let label = mint_postage("hash1recipient", &id, 8, 1 << 20).unwrap();
+        assert!(label.starts_with(POSTAGE_LABEL_PREFIX));
+        let mut m = msg("hash1sender", 1);
+        m.message_id = id.clone();
+        m.labels.push(label);
+        assert!(postage_bits(&m, "hash1recipient") >= 8);
+        // The digest is bound to recipient and message id: changing either
+        // changes it (so a stamp cannot be reused across a mailing list).
+        let nonce = u64::from_str_radix(&m.labels[0][POSTAGE_LABEL_PREFIX.len()..], 16).unwrap();
+        assert_ne!(
+            postage_digest("hash1recipient", &id, nonce),
+            postage_digest("hash1other", &id, nonce)
+        );
+        assert_ne!(
+            postage_digest("hash1recipient", &id, nonce),
+            postage_digest("hash1recipient", &[8u8; 16], nonce)
+        );
+        assert_eq!(postage_bits(&msg("x", 1), "hash1recipient"), 0);
+        // A malformed stamp counts as none.
+        let mut bad = msg("x", 1);
+        bad.labels.push("postage:zz".into());
+        assert_eq!(postage_bits(&bad, "hash1recipient"), 0);
+        assert_eq!(leading_zero_bits(&[0, 0, 0b0001_0000]), 19);
+        assert_eq!(leading_zero_bits(&[0xff]), 0);
+    }
+
+    #[test]
+    fn postage_lifts_a_stranger_into_requests_more_firmly() {
+        let plain = trust_score(&SenderFacts::default(), &msg("hash1a", 1));
+        let stamped = trust_score(
+            &SenderFacts {
+                postage_bits: POSTAGE_BITS,
+                ..Default::default()
+            },
+            &msg("hash1a", 1),
+        );
+        assert_eq!(stamped - plain, 30);
+        // Postage does not launder a bulk blast.
+        let bulk = trust_score(
+            &SenderFacts {
+                postage_bits: POSTAGE_BITS,
+                ..Default::default()
+            },
+            &msg("hash1a", 50),
+        );
+        assert!(bulk < stamped);
     }
 
     #[test]

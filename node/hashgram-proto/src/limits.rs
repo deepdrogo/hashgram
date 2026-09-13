@@ -93,6 +93,22 @@ pub const MAX_EVENT_PAGE: u32 = 200;
 /// Most ids per attestation or event query.
 pub const MAX_QUERY_IDS: usize = 100;
 
+/// Most index rows a node walks to fill one filtered timeline page. Bounds
+/// the cost of a page whose filters match almost nothing.
+pub const MAX_TIMELINE_SCAN: usize = 5_000;
+
+/// Most entries per list in a social digest.
+pub const MAX_DIGEST_ENTRIES: u32 = 50;
+
+/// Longest window a social digest may look back over, in seconds: 30 days.
+pub const MAX_DIGEST_WINDOW_SECS: u64 = 30 * 24 * 3600;
+
+/// Window a social digest uses when the request names none: 7 days.
+pub const DEFAULT_DIGEST_WINDOW_SECS: u64 = 7 * 24 * 3600;
+
+/// Most events a node aggregates for one digest.
+pub const MAX_DIGEST_SCAN: usize = 20_000;
+
 /// Length of a BLAKE3 hash, an ed25519 public key and an envelope id.
 pub const HASH_LEN: usize = 32;
 

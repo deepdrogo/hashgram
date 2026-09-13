@@ -245,7 +245,7 @@ async fn handle_request(shared: &Arc<Shared>, peer: PeerId, request: pb::Request
             ),
         },
 
-        B::EventFetch(_) | B::EventPublish(_) => match &shared.services.social {
+        B::EventFetch(_) | B::EventPublish(_) | B::SocialDigest(_) => match &shared.services.social {
             Some(s) => s.handle(shared, peer, body).await,
             None => err("unsupported", "this node does not keep social events"),
         },

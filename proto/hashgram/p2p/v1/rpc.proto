@@ -30,6 +30,7 @@ message Request {
 
     EventFetch event_fetch = 20;
     EventPublish event_publish = 21;
+    SocialDigest social_digest = 22;
 
     BlobGetManifest blob_get_manifest = 30;
     BlobGetChunk blob_get_chunk = 31;
@@ -114,6 +115,7 @@ message Response {
 
     EventFetchResult event_fetch = 20;
     EventPublishResult event_publish = 21;
+    SocialDigestResult social_digest = 22;
 
     BlobManifestResult blob_get_manifest = 30;
     BlobChunk blob_get_chunk = 31;

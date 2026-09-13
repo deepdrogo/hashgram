@@ -1051,7 +1051,7 @@ async fn identity(ctx: &Ctx, cmd: IdentityCmd) -> anyhow::Result<()> {
         }
         IdentityCmd::PublishKeys => {
             let mut acct = ctx.account()?;
-            let messaging = Messaging::open(&acct)?;
+            let mut messaging = Messaging::open(&acct)?;
             let link = ctx.link().await?;
             let n = messaging.publish_key_package(&link, &ctx.network).await?;
             messaging.persist(&mut acct)?;

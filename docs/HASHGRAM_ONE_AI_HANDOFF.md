@@ -170,14 +170,92 @@ module's doc comment explains its model.
 §6: G1 (score submitter of forged receipts), G2 (prune challenges), G3–G6
 pagination/checks, `x/identity` `MsgUpdateParams`, `x/storagemarket`.
 
-## 12. Desktop readiness
+## 12. Desktop (Hashgram One for Windows, `apps/desktop`, v0.2.2)
 
-The SDK surface the desktop needs exists and is exercised end to end by
-`hashgram-client one` and the e2e script. `docs/DESKTOP_APP_MASTER_PROMPT.md`
-is the standalone build prompt; `docs/DESKTOP_APP_IMPLEMENTATION_CHECKLIST.md`
-the staged plan. The previous app (`apps/desktop`, v0.1.1) still compiles
-against the unchanged legacy SDK modules; its messaging/reels/channels/calls
-screens are to be removed by the desktop task, not by platform work.
+Built 2026-09-12 to `docs/DESKTOP_APP_MASTER_PROMPT.md` on branch
+`hashgram-one`; progress is ticked in
+`docs/DESKTOP_APP_IMPLEMENTATION_CHECKLIST.md`, developer notes in
+`apps/desktop/README.md`.
+
+**Shape.** Tauri 2 + SolidJS. The Rust crate `hashgram-desktop` depends on
+`hashgram-sdk` only; the legacy `chat/`, `social_hub/`, `commands_social/`,
+`net/`, `chain_access/` modules and the Messages/Calls/Reels/Channels/
+Founder/Supply screens were deleted. One `HashgramOne` per unlocked
+session behind `tokio::sync::Mutex<Option<_>>` (`state.rs`); every command
+locks, acts, `save()`s. The network `Link` is started at boot and kept
+across lock/unlock (`session::spawn_link` → `HashgramOne::with_link`), so
+the chain proxy (`chain_proxy.rs`, loopback gateway for a node on this PC)
+and Network → overview work while locked. A sync task runs
+`sync().round()` → `save()` → emits `sync:phase` / `sync:event` /
+`sync:tick`, sleeps `next_delay()`, and is woken by `sync_now`.
+Since v0.2.1 housekeeping also treats two consecutive 15-second snapshots
+with no store peer as a dead transport, shuts it down with a timeout, starts
+a fresh link and reattaches the open session. This fixes recovery after a
+Windows network-adapter or Internet outage without restarting the app.
+v0.2.2 closes the remaining half-open case in `hashgram-p2p`: three
+consecutive failed pings force a verified peer's local connection closed,
+which clears the stale verified map and re-enables bootstrap redial.
+`views.rs` strips key material (BlobRef key/nonce, Drive object keys,
+capability keys) before anything reaches the webview; unit tests assert it.
+
+**SDK additions made for the desktop** (all in `sdk/rust/hashgram-sdk`,
+with tests):
+
+* `HashgramOne::bootstrap_of`, `HashgramOne::connect_link(&Config) ->
+  Arc<Link>`, `HashgramOne::with_link(config, account, link)`,
+  `HashgramOne::replace_link(&mut self, link, chain_api)` — a link shared
+  between the locked shell and the unlocked facade (`app.rs`).
+* `backup::export_backup_contents(&VaultContents, ..)` — backup export
+  from an open vault without re-deriving from the mnemonic.
+* `People::my_display_name()`.
+* `people.rs`: reverse lookup reads `registrations[]` then `names`
+  (the Go shape); lookup returns `None` when `found == false` or the owner
+  is empty (before this, a missing name resolved to an empty owner).
+* `hashgram-app::space::State`: an event whose `sequence` skips ahead of
+  the actor's last seen one (and is not `Create`) is now `Rejected::Pending`
+  instead of being dropped, and pending events are retried in
+  `(at_ms, sequence, event_id)` order — out-of-order delivery over the
+  mailbox no longer leaves a member with an empty Space (test
+  `out_of_order_delivery_converges_to_the_same_state`). Caveat: an actor
+  whose earlier event is genuinely lost keeps its later events pending
+  until it is re-fetched; there is no timeout yet.
+* `node/hashgram-devtools` mock gateway: single registry seeded by
+  `--device/--username`, `POST /devnet/identity`, lookup/reverse/
+  availability/identity answers in the Go shape (merged from `main`).
+
+**Tests.** `apps/desktop/src-tauri/tests/no_plaintext.rs` (vault, redb mail
+record and draft, Drive manifest + ciphertext, keyring, UI cache, settings
+— no subject/body/file name/key bytes on disk), `tests/devnet.rs` (spawns
+`mock-gateway` + `hashgram-node` from `node/target/debug`; two backends over
+the real swarm: mail with inline + live Drive attachment → Requests → accept
+→ reply → receipt, live update, Space create/invite/rule violation/promote,
+locked semantics), vitest (38 tests: nav order, no IPv4, `chain_api = None`,
+no "mining", 24 words, no forgot-password reset, CSP/capabilities, iframe
+sandbox, format parity with `format_hash`/`parse_amount`, forbidden view
+fields, component behaviour). Real-app smoke on Mainnet 2026-09-12:
+onboarding → vault → Mail, link to the genesis node + indexer, wallet and
+network reads over the relay, 27 MiB Drive upload committed, lock / wrong
+passphrase / unlock. v0.2.1 adds an inactive-device guard in the shell,
+Feed, Mail and usernames, a sync-aware Mail settings read, safe local
+sign-out, actionable error mapping, and a reconnect-health unit test.
+
+**Known issues / desktop TODOs.**
+
+* Drive upload is capped at 256 MiB (`cmd_drive::MAX_UPLOAD_BYTES`) until
+  the SDK streaming wrapper (§13 item 2) exists; drag-drop uploads go
+  through base64 and are capped at 32 MiB, larger files use the Upload
+  button (path-based).
+* Authenticode is architected, not enabled: `release.ps1` signs when
+  `HASHGRAM_CODESIGN_THUMBPRINT` is set and bakes `HASHGRAM_CODESIGNED=1`;
+  About shows "unsigned preview" otherwise. The workflow imports an
+  optional PFX secret.
+* `hashgram-mail-gateway` `smtp::server::tests::listener_accepts_limits_and_stops`
+  fails on Windows on a pristine tree (pre-existing, unrelated to the
+  desktop; passes on Linux where the gateway runs).
+* Mail search uses the SDK's bounded scan; the sealed UI cache only keeps
+  recent searches. A local index is still to do for very large mailboxes.
+* Windows Hello is wired (`winsec.rs`, DPAPI + `UserConsentVerifier`) but
+  was only exercised on the developer machine; no automated test.
 
 ## 13. Incomplete items / high-priority TODOs
 
@@ -212,8 +290,10 @@ screens are to be removed by the desktop task, not by platform work.
 
 ## 15. Git
 
-Branch `hashgram-one`, 16 commits on top of `main` (`17c1f1e`), pushed to
-`origin` (`deepdrogo/hashgram_windows`) on 2026-09-12. Open a PR against
+Branch `hashgram-one`, pushed to `origin` (`deepdrogo/hashgram_windows`)
+on 2026-09-12; `main` (Windows p2p fixes) is merged into it, and the
+desktop rebuild (Rust backend, frontend, space-log fix, devnet test,
+release tooling) sits on top. Open a PR against
 `main` when reviewed. The genesis node runs the release binaries built
 from this branch (`/usr/local/bin/hashgram-node`, previous binary kept as
 `hashgram-node.prev`). The public `deepdrogo/hashgram`

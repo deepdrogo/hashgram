@@ -16,6 +16,9 @@ fn main() {
         .unwrap_or_else(|| "unknown".to_owned());
     println!("cargo:rustc-env=HASHGRAM_COMMIT={commit}");
     println!("cargo:rerun-if-env-changed=HASHGRAM_COMMIT");
+    // About shows "signed" / "unsigned preview" from this flag; release.ps1
+    // sets it only when an Authenticode certificate is going to be applied.
+    println!("cargo:rerun-if-env-changed=HASHGRAM_CODESIGNED");
     println!("cargo:rerun-if-changed=../../../.git/HEAD");
 
     // Sidecars (hashgram-node, its service wrapper) are copied into

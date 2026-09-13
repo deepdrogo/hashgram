@@ -1,10 +1,10 @@
-//! The local database: SQLite in WAL mode, one connection behind a mutex.
-//!
-//! Plain columns hold only public data (addresses, heights, peer ids).
-//! Anything private — a decrypted message, a display name we typed, a
-//! contact note — goes through `crate::crypto::seal` with the vault-held
-//! database key before it is written. A test scans the file for a test
-//! message and a test mnemonic and fails if either is found.
+//! The UI-cache database: SQLite in WAL mode, one connection behind a
+//! mutex. It holds nothing the SDK's encrypted store (`local.redb`) holds:
+//! submitted transactions the wallet screen watches, recent searches, and
+//! sealed per-key UI values (list orderings, thumbnails metadata). A private
+//! value goes through `crate::crypto::seal` with the vault-held key before
+//! it is written; a test scans the file for a test secret and fails if it
+//! is found.
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -23,15 +23,6 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value BLOB NOT NULL
 );
-CREATE TABLE IF NOT EXISTS tx_cache (
-    hash      TEXT PRIMARY KEY,
-    address   TEXT NOT NULL,
-    height    INTEGER NOT NULL,
-    timestamp TEXT NOT NULL,
-    kind      TEXT NOT NULL,
-    body      BLOB NOT NULL
-);
-CREATE INDEX IF NOT EXISTS tx_cache_addr ON tx_cache(address, height DESC);
 CREATE TABLE IF NOT EXISTS pending_tx (
     hash       TEXT PRIMARY KEY,
     submitted  INTEGER NOT NULL,
@@ -40,71 +31,19 @@ CREATE TABLE IF NOT EXISTS pending_tx (
     height     INTEGER NOT NULL DEFAULT 0,
     raw_log    TEXT NOT NULL DEFAULT ''
 );
-CREATE TABLE IF NOT EXISTS peer_meta (
-    peer_id    TEXT PRIMARY KEY,
-    first_seen INTEGER NOT NULL,
-    last_seen  INTEGER NOT NULL,
-    discovery  TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS contacts (
-    address   TEXT PRIMARY KEY,
-    sealed    BLOB NOT NULL,
-    updated   INTEGER NOT NULL
-);
 CREATE TABLE IF NOT EXISTS recent_search (
     query   TEXT PRIMARY KEY,
     at      INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS messages (
-    id        TEXT PRIMARY KEY,
-    group_id  TEXT NOT NULL,
-    sender    TEXT NOT NULL,
-    device    TEXT NOT NULL,
-    ts        INTEGER NOT NULL,
-    kind      TEXT NOT NULL,
-    sealed    BLOB NOT NULL,
-    state     TEXT NOT NULL DEFAULT 'sent',
-    expires   INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS messages_group ON messages(group_id, ts DESC);
-CREATE TABLE IF NOT EXISTS conversations (
-    group_id  TEXT PRIMARY KEY,
-    sealed    BLOB NOT NULL,
-    updated   INTEGER NOT NULL,
-    unread    INTEGER NOT NULL DEFAULT 0
-);
-CREATE TABLE IF NOT EXISTS social_events (
-    id        TEXT PRIMARY KEY,
-    author    TEXT NOT NULL,
-    sequence  INTEGER NOT NULL,
-    kind      TEXT NOT NULL,
-    ts        INTEGER NOT NULL,
-    verified  INTEGER NOT NULL,
-    body      BLOB NOT NULL
-);
-CREATE INDEX IF NOT EXISTS social_author ON social_events(author, sequence DESC);
-CREATE INDEX IF NOT EXISTS social_ts ON social_events(ts DESC);
-CREATE TABLE IF NOT EXISTS follows (
-    address  TEXT PRIMARY KEY,
-    since    INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS blocks (
-    address  TEXT PRIMARY KEY,
-    mode     TEXT NOT NULL,
-    since    INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS blob_cache (
-    cid       TEXT PRIMARY KEY,
-    mime      TEXT NOT NULL,
-    size      INTEGER NOT NULL,
-    path      TEXT NOT NULL,
-    last_used INTEGER NOT NULL
+CREATE TABLE IF NOT EXISTS ui_sealed (
+    key     TEXT PRIMARY KEY,
+    sealed  BLOB NOT NULL,
+    updated INTEGER NOT NULL
 );
 "#;
 
 impl Db {
-    /// Opens (creating) the database with WAL and a busy timeout, so a
-    /// second process or a slow disk yields a wait, not a lock error.
+    /// Opens (creating) the database with WAL and a busy timeout.
     pub fn open(path: &Path) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -115,8 +54,7 @@ impl Db {
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
-             PRAGMA temp_store = MEMORY;
-             PRAGMA foreign_keys = ON;",
+             PRAGMA temp_store = MEMORY;",
         )
         .map_err(|e| e.to_string())?;
         conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
@@ -156,31 +94,27 @@ impl Db {
         })
     }
 
-    /// Stores a sealed contact record (display name, note) for an address.
-    pub fn contact_put(&self, key: &DbKey, address: &str, json: &[u8]) -> Result<(), String> {
-        let sealed = crate::crypto::seal(key, address.as_bytes(), json)?;
+    /// Stores a sealed UI value under `key` (AAD = key).
+    pub fn sealed_put(&self, db_key: &DbKey, key: &str, json: &[u8]) -> Result<(), String> {
+        let sealed = crate::crypto::seal(db_key, key.as_bytes(), json)?;
         self.with(|c| {
             c.execute(
-                "INSERT INTO contacts(address, sealed, updated) VALUES(?1, ?2, ?3)
-                 ON CONFLICT(address) DO UPDATE SET sealed = excluded.sealed, updated = excluded.updated",
-                params![address, sealed, now()],
+                "INSERT INTO ui_sealed(key, sealed, updated) VALUES(?1, ?2, ?3)
+                 ON CONFLICT(key) DO UPDATE SET sealed = excluded.sealed, updated = excluded.updated",
+                params![key, sealed, now()],
             )
             .map(|_| ())
         })
     }
 
-    /// Reads a contact record.
-    pub fn contact_get(&self, key: &DbKey, address: &str) -> Result<Option<Vec<u8>>, String> {
+    /// Reads a sealed UI value.
+    pub fn sealed_get(&self, db_key: &DbKey, key: &str) -> Result<Option<Vec<u8>>, String> {
         let sealed: Option<Vec<u8>> = self.with(|c| {
-            c.query_row(
-                "SELECT sealed FROM contacts WHERE address = ?1",
-                params![address],
-                |r| r.get(0),
-            )
-            .optional()
+            c.query_row("SELECT sealed FROM ui_sealed WHERE key = ?1", params![key], |r| r.get(0))
+                .optional()
         })?;
         match sealed {
-            Some(s) => Ok(Some(crate::crypto::open(key, address.as_bytes(), &s)?)),
+            Some(s) => Ok(Some(crate::crypto::open(db_key, key.as_bytes(), &s)?)),
             None => Ok(None),
         }
     }
@@ -198,13 +132,7 @@ impl Db {
     }
 
     /// Updates a transaction's state.
-    pub fn pending_update(
-        &self,
-        hash: &str,
-        state: &str,
-        height: u64,
-        raw_log: &str,
-    ) -> Result<(), String> {
+    pub fn pending_update(&self, hash: &str, state: &str, height: u64, raw_log: &str) -> Result<(), String> {
         self.with(|c| {
             c.execute(
                 "UPDATE pending_tx SET state = ?2, height = ?3, raw_log = ?4 WHERE hash = ?1",
@@ -235,31 +163,6 @@ impl Db {
         })
     }
 
-    /// Notes a peer sighting and how it was discovered (first sighting wins
-    /// for the discovery layer).
-    pub fn peer_seen(&self, peer_id: &str, discovery: &str) -> Result<(), String> {
-        self.with(|c| {
-            c.execute(
-                "INSERT INTO peer_meta(peer_id, first_seen, last_seen, discovery) VALUES(?1, ?2, ?2, ?3)
-                 ON CONFLICT(peer_id) DO UPDATE SET last_seen = excluded.last_seen",
-                params![peer_id, now(), discovery],
-            )
-            .map(|_| ())
-        })
-    }
-
-    /// Discovery layer recorded for a peer.
-    pub fn peer_discovery(&self, peer_id: &str) -> Result<Option<String>, String> {
-        self.with(|c| {
-            c.query_row(
-                "SELECT discovery FROM peer_meta WHERE peer_id = ?1",
-                params![peer_id],
-                |r| r.get(0),
-            )
-            .optional()
-        })
-    }
-
     /// Records a search.
     pub fn search_note(&self, query: &str) -> Result<(), String> {
         self.with(|c| {
@@ -283,11 +186,6 @@ impl Db {
             let rows = st.query_map([], |r| r.get::<_, String>(0))?;
             rows.collect()
         })
-    }
-
-    /// Forgets everything peer-related (the "forget peers" button).
-    pub fn forget_peers(&self) -> Result<(), String> {
-        self.with(|c| c.execute("DELETE FROM peer_meta", []).map(|_| ()))
     }
 }
 
@@ -329,7 +227,7 @@ mod tests {
     }
 
     #[test]
-    fn opens_with_wal_and_stores_sealed_contacts() {
+    fn opens_with_wal_and_stores_sealed_values() {
         let p = tmp("wal");
         let db = Db::open(&p).unwrap();
         let mode: String = db
@@ -337,13 +235,11 @@ mod tests {
             .unwrap();
         assert_eq!(mode.to_lowercase(), "wal");
         let key = crate::crypto::generate_key().unwrap();
-        db.contact_put(&key, "hash1abc", br#"{"name":"Very Secret Friend"}"#)
-            .unwrap();
+        db.sealed_put(&key, "mail/order", br#"{"name":"Very Secret Friend"}"#).unwrap();
         assert_eq!(
-            db.contact_get(&key, "hash1abc").unwrap().unwrap(),
+            db.sealed_get(&key, "mail/order").unwrap().unwrap(),
             br#"{"name":"Very Secret Friend"}"#
         );
-        // The plaintext is nowhere in the file (WAL included).
         drop(db);
         let mut bytes = std::fs::read(&p).unwrap();
         if let Ok(w) = std::fs::read(p.with_extension("db-wal")) {
