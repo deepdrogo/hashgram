@@ -101,7 +101,7 @@ and [HASHGRAM_ONE_AI_HANDOFF.md](docs/HASHGRAM_ONE_AI_HANDOFF.md).
 ## Hashgram One for Windows
 
 The complete desktop client is now public:
-**[Hashgram One v0.2.0 for Windows](https://github.com/deepdrogo/hashgram_windows/releases/tag/v0.2.0)**.
+**[Hashgram One v0.2.1 for Windows](https://github.com/deepdrogo/hashgram_windows/releases/tag/v0.2.1)**.
 It ships Mail, Drive, People, Feed, private Circles, role-based Spaces, Earn,
 Wallet, Network and Settings over this repository's `HashgramOne` SDK.
 
@@ -118,7 +118,7 @@ Wallet, Network and Settings over this repository's `HashgramOne` SDK.
 
 The application is **Tauri 2 + SolidJS + Rust**, runs on Windows 10/11 x64,
 keeps cryptographic material behind typed Tauri commands, seals local state,
-and updates from minisign-verified GitHub Release artefacts. The v0.2.0
+and updates from minisign-verified GitHub Release artefacts. The v0.2.1
 preview is not Authenticode-signed yet, so the release page publishes
 SHA-256 checksums and states the SmartScreen limitation explicitly.
 
@@ -501,7 +501,7 @@ node/                   Rust workspace
 sdk/rust/hashgram-sdk/  the client SDK — HashgramOne facade, mail, drive, people, feed, circles, spaces,
                         devices, sync engine, wallet, provider, network, encrypted store, backup, leases, ai
 services/mail-gateway/  external SMTP compatibility gateway
-apps/desktop/           legacy in-tree Windows app; current Hashgram One v0.2.0 lives in deepdrogo/hashgram_windows
+apps/desktop/           legacy in-tree Windows app; current Hashgram One v0.2.1 lives in deepdrogo/hashgram_windows
 deploy/                 hardened systemd units, Prometheus rules, Grafana dashboards
 scripts/                install/ · launch/ · testnet/ · dev/ (check-docs.sh keeps docs honest)
 docs/                   written from the code; says "not built" where it is not
@@ -518,7 +518,7 @@ The SDK is Rust and has no UI. Everything a client needs is behind
 
 | | |
 | --- | --- |
-| **Hashgram One desktop for Windows** — public v0.2.0 application, screenshots, installer, security boundaries and signed updater | [deepdrogo/hashgram_windows](https://github.com/deepdrogo/hashgram_windows) · [latest release](https://github.com/deepdrogo/hashgram_windows/releases/latest) |
+| **Hashgram One desktop for Windows** — public v0.2.1 application, screenshots, installer, security boundaries and signed updater | [deepdrogo/hashgram_windows](https://github.com/deepdrogo/hashgram_windows) · [latest release](https://github.com/deepdrogo/hashgram_windows/releases/latest) |
 | Reference CLI exercising every flow | [`node/hashgram-client/src/one.rs`](node/hashgram-client/src/one.rs) |
 | SDK reference | [`sdk/rust/hashgram-sdk/src/app.rs`](sdk/rust/hashgram-sdk/src/app.rs) and module docs |
 | Sync model a client must implement | [docs/SYNC_ENGINE.md](docs/SYNC_ENGINE.md) |
